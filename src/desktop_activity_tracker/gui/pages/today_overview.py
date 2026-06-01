@@ -284,7 +284,7 @@ class TodayOverviewPage(QWidget):
 
         for key, current in mapping.items():
             card = self.metric_cards[key]
-            card.set_value(fmt_seconds(current), self._delta_text(current, history, key))
+            card.set_value(_compact_duration(current), self._delta_text(current, history, key))
             card.set_sparkline([day[key] for day in history])
 
     def _delta_text(self, current: int, history: list[dict], key: str):
@@ -295,7 +295,7 @@ class TodayOverviewPage(QWidget):
         if diff == 0:
             return "较昨日 持平"
         arrow = "↑" if diff > 0 else "↓"
-        return f"较昨日 {arrow} {fmt_seconds(abs(diff))}"
+        return f"较昨日 {arrow} {_compact_duration(abs(diff))}"
 
     def _update_score_card(self, work_sec, ent_sec, effective, stats, today):
         score = _calculate_efficiency_score(work_sec, ent_sec, effective)
@@ -384,3 +384,15 @@ class TodayOverviewPage(QWidget):
 
             self.focus_container.addWidget(row)
             self.focus_rows.append(row)
+
+
+def _compact_duration(total_seconds: int) -> str:
+    total_seconds = int(total_seconds or 0)
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+    if hours:
+        return f"{hours}h{minutes:02d}m"
+    if minutes:
+        return f"{minutes}m{seconds:02d}s"
+    return f"{seconds}s"

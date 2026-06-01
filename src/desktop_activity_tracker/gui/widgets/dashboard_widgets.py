@@ -76,10 +76,16 @@ class MetricCard(QFrame):
 
         root = QVBoxLayout(self)
         root.setContentsMargins(14, 12, 14, 10)
-        root.setSpacing(6)
+        root.setSpacing(5)
 
-        head = QHBoxLayout()
-        head.setSpacing(8)
+        title_label = QLabel(title)
+        title_label.setStyleSheet(
+            f"font-size: 12px; font-weight: 700; color: {COLORS['text_secondary']};"
+        )
+        root.addWidget(title_label)
+
+        value_row = QHBoxLayout()
+        value_row.setSpacing(8)
 
         icon_label = QLabel(icon)
         icon_label.setAlignment(Qt.AlignCenter)
@@ -95,32 +101,21 @@ class MetricCard(QFrame):
             }}
             """
         )
-        head.addWidget(icon_label, 0)
-
-        text_col = QVBoxLayout()
-        text_col.setSpacing(2)
-
-        title_label = QLabel(title)
-        title_label.setStyleSheet(
-            f"font-size: 12px; font-weight: 700; color: {COLORS['text_secondary']};"
-        )
-        text_col.addWidget(title_label)
+        value_row.addWidget(icon_label, 0)
 
         self.value_label = QLabel("--")
+        self.value_label.setMinimumWidth(0)
         self.value_label.setStyleSheet(
-            f"font-size: 30px; font-weight: 800; color: {COLORS['text']};"
+            f"font-size: 28px; font-weight: 800; color: {COLORS['text']};"
         )
-        text_col.addWidget(self.value_label)
+        value_row.addWidget(self.value_label, 1)
+        root.addLayout(value_row)
 
         self.delta_label = QLabel("较昨日 --")
         self.delta_label.setStyleSheet(
             f"font-size: 11px; color: {COLORS['text_muted']};"
         )
-        text_col.addWidget(self.delta_label)
-        text_col.addStretch()
-
-        head.addLayout(text_col, 1)
-        root.addLayout(head)
+        root.addWidget(self.delta_label)
 
         self.sparkline = MiniSparkline(accent)
         root.addWidget(self.sparkline)
