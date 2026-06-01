@@ -186,6 +186,48 @@ def cmd_export(config, args):
                 print(f"已同步到 Obsidian: {dest}")
 
 
+def cmd_weekly(config, args):
+    db_path = database.get_db_path(config)
+    if not os.path.exists(db_path):
+        print("数据库不存在，请先运行 start 命令开始记录。")
+        return
+
+    reports_weekly_dir = os.path.join(resolve_reports_dir(), "weekly")
+    today = datetime.now().date()
+    year = args.year or today.year
+    week = args.week or today.isocalendar()[1]
+
+    try:
+        filepath = exporter.export_weekly_report(db_path, year, week, reports_weekly_dir)
+        print(f"已导出周报: {filepath}")
+        obsidian_path = config.get("obsidian_output_path", "").strip()
+        if obsidian_path:
+            exporter.sync_to_obsidian(filepath, obsidian_path)
+    except Exception as e:
+        print(f"[ERROR] 周报生成失败: {e}")
+
+
+def cmd_monthly(config, args):
+    db_path = database.get_db_path(config)
+    if not os.path.exists(db_path):
+        print("数据库不存在，请先运行 start 命令开始记录。")
+        return
+
+    reports_monthly_dir = os.path.join(resolve_reports_dir(), "monthly")
+    today = datetime.now().date()
+    year = args.year or today.year
+    month = args.month or today.month
+
+    try:
+        filepath = exporter.export_monthly_report(db_path, year, month, reports_monthly_dir)
+        print(f"已导出月报: {filepath}")
+        obsidian_path = config.get("obsidian_output_path", "").strip()
+        if obsidian_path:
+            exporter.sync_to_obsidian(filepath, obsidian_path)
+    except Exception as e:
+        print(f"[ERROR] 月报生成失败: {e}")
+
+
 # ── GUI ──────────────────────────────────────────────────────────────
 
 def cmd_gui():
@@ -259,6 +301,14 @@ def main():
     export_parser.add_argument("--format", type=str, choices=["csv", "md"], default="md",
                                help="导出格式: csv 或 md (默认md)")
 
+    weekly_parser = subparsers.add_parser("weekly", help="生成周报")
+    weekly_parser.add_argument("--year", type=int, help="ISO 年份 (默认今年)")
+    weekly_parser.add_argument("--week", type=int, help="ISO 周数 (默认本周)")
+
+    monthly_parser = subparsers.add_parser("monthly", help="生成月报")
+    monthly_parser.add_argument("--year", type=int, help="年份 (默认今年)")
+    monthly_parser.add_argument("--month", type=int, help="月份 1-12 (默认本月)")
+
     args = parser.parse_args()
 
     # Default: launch GUI
@@ -281,6 +331,10 @@ def main():
         cmd_report(config, args)
     elif args.command == "export":
         cmd_export(config, args)
+    elif args.command == "weekly":
+        cmd_weekly(config, args)
+    elif args.command == "monthly":
+        cmd_monthly(config, args)
 
 
 if __name__ == "__main__":

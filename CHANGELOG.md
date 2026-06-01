@@ -6,6 +6,24 @@
 
 ---
 
+## v0.9.0 - 2026-06-01
+
+### Added
+
+- `database.query_date_range_stats()` — 多日聚合统计查询（按日+按分类+按软件）
+- `exporter.export_weekly_report()` — ISO 周报 Markdown 生成
+- `exporter.export_monthly_report()` — 月报 Markdown 生成
+- `exporter._sparkline()` — Unicode 文字趋势图
+- `exporter._week_dates()` / `_month_dates()` — 日期范围工具
+- Reports 页面新增"本周周报"和"本月月报"按钮
+- CLI `weekly` 和 `monthly` 命令（支持 `--year`/`--week`/`--month`）
+- 周报包含：每日趋势表 + Sparkline 图 + 周效率评分 + 建议
+- 月报包含：每周趋势汇总 + 分类占比 + 日均分析
+
+### Changed
+
+- Reports 页面 UI 重构：生成按钮组合为工具栏，三种报告一键生成
+
 ## v0.8.1 - 2026-06-01
 
 ### Changed

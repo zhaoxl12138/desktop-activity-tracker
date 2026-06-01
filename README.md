@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.8.0-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-0.9.0-blue" alt="version">
   <img src="https://img.shields.io/badge/python-3.10+-green" alt="python">
   <img src="https://img.shields.io/badge/platform-Windows-lightgrey" alt="platform">
   <img src="https://img.shields.io/badge/license-MIT-brightgreen" alt="license">
@@ -47,7 +47,7 @@ Desktop Activity Tracker 是一款 Windows 桌面时间追踪工具，通过监�
 
 ## 当前开发状态
 
-> **v0.8.0** — GUI + 系统托盘已完成，核心功能可用。
+> **v0.9.0** — 周报/月报已完成，支持趋势分析和 Sparkline 可视化。
 
 详见 [ROADMAP.md](docs/ROADMAP.md) 和 [CHANGELOG.md](CHANGELOG.md)。
 

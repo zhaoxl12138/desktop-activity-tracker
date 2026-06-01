@@ -203,3 +203,282 @@ def sync_to_obsidian(filepath, obsidian_output_path):
     except Exception as e:
         print(f"[WARN] Obsidian 同步失败: {e}")
         return None
+
+
+# ── Weekly / Monthly report helpers ─────────────────────────────────
+
+def _week_dates(year, week_number):
+    """Return list of 7 date strings (Mon-Sun) for an ISO week number."""
+    from datetime import date, timedelta
+    # Find the Monday of the given ISO week
+    jan4 = date(year, 1, 4)
+    monday = jan4 - timedelta(days=jan4.isoweekday() - 1) + timedelta(weeks=week_number - 1)
+    return [(monday + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+
+
+def _month_dates(year, month):
+    """Return list of date strings for all days in a month."""
+    from datetime import date, timedelta
+    import calendar
+    days_in_month = calendar.monthrange(year, month)[1]
+    first = date(year, month, 1)
+    return [(first + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days_in_month)]
+
+
+def _sparkline(values, width=20, max_val=None):
+    """Return a text-based sparkline bar using Unicode block characters."""
+    if not values:
+        return ""
+    max_val = max_val or max(values) or 1
+    chars = " ▁▂▃▄▅▆▇█"
+    result = []
+    for v in values:
+        idx = min(8, int(v / max_val * 8)) if max_val > 0 else 0
+        result.append(chars[idx])
+    return "".join(result)
+
+
+def _calculate_weekly_efficiency(daily):
+    """Return 0-100 score and grade for the week."""
+    work_total = sum(d["work_seconds"] for d in daily)
+    video_total = sum(d["video_seconds"] for d in daily)
+    eff_total = sum(d["effective_seconds"] for d in daily)
+    if eff_total < 3600:
+        return None, "数据不足"
+    ratio = work_total / eff_total if eff_total > 0 else 0
+    score = round(ratio * 100)
+    if video_total > 5400 * 7:
+        penalty = min(30, (video_total - 5400 * 7) // (1800 * 7) * 5)
+        score = max(0, score - penalty)
+    score = min(100, score)
+    if score >= 80:
+        grade = "优秀"
+    elif score >= 60:
+        grade = "良好"
+    elif score >= 40:
+        grade = "一般"
+    else:
+        grade = "需改进"
+    return score, grade
+
+
+def export_weekly_report(db_path, year, week_number, output_dir):
+    """Generate a weekly summary Markdown report.
+
+    Args:
+        db_path: path to SQLite database
+        year: ISO year (e.g. 2026)
+        week_number: ISO week number (1-53)
+        output_dir: directory to write the .md file
+
+    Returns path to the generated report file.
+    """
+    dates = _week_dates(year, week_number)
+    stats = database.query_date_range_stats(db_path, dates)
+    daily = stats["daily"]
+    totals = stats["totals"]
+    os.makedirs(output_dir, exist_ok=True)
+
+    start_date = dates[0]
+    end_date = dates[-1]
+    filename = f"{start_date}_{end_date}_weekly.md"
+    filepath = os.path.join(output_dir, filename)
+
+    score, grade = _calculate_weekly_efficiency(daily)
+    days_with_data = sum(1 for d in daily if d["effective_seconds"] > 0)
+
+    lines = []
+    lines.append(f"# {year}年第{week_number}周 个人数字行为周报")
+    lines.append("")
+    lines.append(f"**{start_date} ~ {end_date}** | 有效天数: {days_with_data}/7")
+    lines.append("")
+
+    # ── 总览 ──
+    lines.append("## 总览")
+    lines.append("")
+    lines.append(f"- 总电脑使用：{fmt_seconds(totals['total_seconds'])}")
+    lines.append(f"- 有效时间：{fmt_seconds(totals['effective_seconds'])}")
+    lines.append(f"- 学习/工作：{fmt_seconds(totals['work_seconds'])}")
+    lines.append(f"- 视频娱乐：{fmt_seconds(totals['video_seconds'])}")
+    lines.append(f"- 日均有效：{fmt_seconds(totals['effective_seconds'] // max(days_with_data, 1))}")
+    lines.append("")
+
+    if score is not None:
+        lines.append(f"**周效率评分: {score}/100 ({grade})**")
+        lines.append("")
+
+    # ── 每日趋势 ──
+    lines.append("## 每日趋势")
+    lines.append("")
+    lines.append("| 日期 | 有效时长 | 学习工作 | 视频娱乐 | 日效率 |")
+    lines.append("|---|---:|---:|---:|---:|")
+    work_spark = []
+    video_spark = []
+    for d in daily:
+        date_label = d["date"][-5:]  # MM-DD
+        eff = d["effective_seconds"]
+        w = d["work_seconds"]
+        v = d["video_seconds"]
+        day_score = round(w / eff * 100) if eff > 0 else 0
+        lines.append(f"| {date_label} | {fmt_seconds(eff)} | {fmt_seconds(w)} | {fmt_seconds(v)} | {day_score}% |")
+        work_spark.append(w)
+        video_spark.append(v)
+    lines.append("")
+
+    # Sparklines
+    max_val = max(max(work_spark), max(video_spark)) or 1
+    lines.append(f"学习/工作趋势: `{_sparkline(work_spark, width=14, max_val=max_val)}`")
+    lines.append(f"视频娱乐趋势: `{_sparkline(video_spark, width=14, max_val=max_val)}`")
+    lines.append("")
+
+    # ── 分类统计 ──
+    lines.append("## 分类统计")
+    lines.append("")
+    lines.append("| 分类 | 有效时长 | 日均 |")
+    lines.append("|---|---:|---:|")
+    for cat in stats["by_category"]:
+        daily_avg = (cat["effective_seconds"] or 0) // max(days_with_data, 1)
+        lines.append(f"| {cat['category_name']} | {fmt_seconds(cat['effective_seconds'])} | {fmt_seconds(daily_avg)} |")
+    lines.append("")
+
+    # ── 软件排行 ──
+    lines.append("## 软件排行 (本周 TOP 10)")
+    lines.append("")
+    for app in stats["by_app"][:10]:
+        lines.append(f"- **{app['process_name']}**：{fmt_seconds(app['effective_seconds'])}")
+    lines.append("")
+
+    # ── 建议 ──
+    lines.append("## 建议")
+    lines.append("")
+    video_days = sum(1 for d in daily if d["video_seconds"] > 5400)
+    work_days = sum(1 for d in daily if d["work_seconds"] > 7200)
+    if video_days >= 4:
+        lines.append(f"- 本周有 {video_days} 天娱乐时间超过90分钟，建议下周控制")
+    if work_days < 3 and days_with_data >= 5:
+        lines.append(f"- 本周仅 {work_days} 天学习/工作时间超过2小时，建议增加学习投入")
+    if days_with_data < 5:
+        lines.append(f"- 本周仅 {days_with_data} 天有有效记录，建议提高电脑利用率")
+    if not totals["video_seconds"] and not totals["work_seconds"]:
+        lines.append("- 数据不足，请保持记录以获取分析建议")
+    lines.append("")
+
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+    return filepath
+
+
+def export_monthly_report(db_path, year, month, output_dir):
+    """Generate a monthly summary Markdown report.
+
+    Args:
+        db_path: path to SQLite database
+        year: year (e.g. 2026)
+        month: month (1-12)
+        output_dir: directory to write the .md file
+
+    Returns path to the generated report file.
+    """
+    dates = _month_dates(year, month)
+    stats = database.query_date_range_stats(db_path, dates)
+    daily = stats["daily"]
+    totals = stats["totals"]
+    os.makedirs(output_dir, exist_ok=True)
+
+    filename = f"{year}-{month:02d}_monthly.md"
+    filepath = os.path.join(output_dir, filename)
+
+    days_with_data = sum(1 for d in daily if d["effective_seconds"] > 0)
+    total_days = len(dates)
+    daily_effective = [d["effective_seconds"] for d in daily if d["effective_seconds"] > 0]
+    avg_daily_eff = sum(daily_effective) // max(len(daily_effective), 1)
+
+    # Efficiency
+    work_total = totals["work_seconds"]
+    video_total = totals["video_seconds"]
+    eff_total = totals["effective_seconds"]
+    score, grade = _calculate_weekly_efficiency(daily)  # same logic works for month
+
+    lines = []
+    lines.append(f"# {year}年{month}月 个人数字行为月报")
+    lines.append("")
+    lines.append(f"**{dates[0]} ~ {dates[-1]}** | 有效天数: {days_with_data}/{total_days}")
+    lines.append("")
+
+    # ── 总览 ──
+    lines.append("## 总览")
+    lines.append("")
+    lines.append(f"- 总电脑使用：{fmt_seconds(totals['total_seconds'])}")
+    lines.append(f"- 有效时间：{fmt_seconds(eff_total)}")
+    lines.append(f"- 学习/工作：{fmt_seconds(work_total)}")
+    lines.append(f"- 视频娱乐：{fmt_seconds(video_total)}")
+    lines.append(f"- 日均有效：{fmt_seconds(avg_daily_eff)}")
+    lines.append(f"- 日均学习/工作：{fmt_seconds(work_total // max(days_with_data, 1))}")
+    lines.append(f"- 日均视频娱乐：{fmt_seconds(video_total // max(days_with_data, 1))}")
+    lines.append("")
+
+    if score is not None:
+        lines.append(f"**月效率评分: {score}/100 ({grade})**")
+        lines.append("")
+
+    # ── 每周趋势 ──
+    lines.append("## 每周趋势")
+    lines.append("")
+    # Group days by ISO week
+    from collections import defaultdict
+    weeks = defaultdict(lambda: {"work": 0, "video": 0, "eff": 0, "days": 0})
+    for d in daily:
+        from datetime import date as dt_date
+        d_obj = dt_date.fromisoformat(d["date"])
+        iso_year, iso_week, _ = d_obj.isocalendar()
+        wkey = f"{iso_year}-W{iso_week:02d}"
+        weeks[wkey]["work"] += d["work_seconds"]
+        weeks[wkey]["video"] += d["video_seconds"]
+        weeks[wkey]["eff"] += d["effective_seconds"]
+        weeks[wkey]["days"] += 1
+
+    lines.append("| 周 | 有效时长 | 学习工作 | 视频娱乐 | 周效率 |")
+    lines.append("|---|---:|---:|---:|---:|")
+    for wkey in sorted(weeks.keys()):
+        w = weeks[wkey]
+        w_score = round(w["work"] / w["eff"] * 100) if w["eff"] > 0 else 0
+        lines.append(f"| {wkey} | {fmt_seconds(w['eff'])} | {fmt_seconds(w['work'])} | {fmt_seconds(w['video'])} | {w_score}% |")
+    lines.append("")
+
+    # ── 分类统计 ──
+    lines.append("## 分类统计")
+    lines.append("")
+    lines.append("| 分类 | 有效时长 | 日均 | 占比 |")
+    lines.append("|---|---:|---:|---:|")
+    for cat in stats["by_category"]:
+        daily_avg = (cat["effective_seconds"] or 0) // max(days_with_data, 1)
+        pct = round(cat["effective_seconds"] / eff_total * 100) if eff_total > 0 else 0
+        lines.append(f"| {cat['category_name']} | {fmt_seconds(cat['effective_seconds'])} | {fmt_seconds(daily_avg)} | {pct}% |")
+    lines.append("")
+
+    # ── 软件排行 ──
+    lines.append("## 软件排行 (本月 TOP 15)")
+    lines.append("")
+    for app in stats["by_app"][:15]:
+        pct = round(app["effective_seconds"] / eff_total * 100) if eff_total > 0 else 0
+        lines.append(f"- **{app['process_name']}**：{fmt_seconds(app['effective_seconds'])} ({pct}%)")
+    lines.append("")
+
+    # ── 建议 ──
+    lines.append("## 建议")
+    lines.append("")
+    if days_with_data < 15:
+        lines.append(f"- 本月仅 {days_with_data} 天有记录，建议保持每日开机记录习惯")
+    if video_total > 5400 * 30:
+        lines.append("- 本月娱乐时间偏高，建议每月娱乐控制在 45 小时以内")
+    if work_total > 0 and work_total / max(eff_total, 1) < 0.4:
+        lines.append("- 本月学习/工作占比偏低 (<40%)，下月可以设定学习目标")
+    if not totals["video_seconds"] and not totals["work_seconds"]:
+        lines.append("- 数据不足，请保持记录以获取分析建议")
+    lines.append("")
+
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+    return filepath

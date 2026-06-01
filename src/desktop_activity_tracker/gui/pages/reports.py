@@ -2,11 +2,11 @@
 
 import os
 import glob
-from datetime import datetime
+from datetime import datetime, date
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget,
-    QTableWidgetItem, QHeaderView, QPushButton, QMessageBox, QTabWidget
+    QTableWidgetItem, QHeaderView, QPushButton, QMessageBox, QTabWidget, QFrame
 )
 from PySide6.QtCore import QTimer
 
@@ -29,36 +29,52 @@ class ReportsPage(QWidget):
         lbl.setStyleSheet("font-size: 18px; font-weight: bold; color: #2C3E50;")
         layout.addWidget(lbl)
 
-        # Buttons
-        btn_layout = QHBoxLayout()
-        btn_gen = QPushButton("生成今日日报")
-        btn_gen.setStyleSheet(BUTTON_PRIMARY_STYLE)
-        btn_gen.clicked.connect(self._generate_today)
+        # ── Generation buttons ──
+        gen_frame = QFrame()
+        gen_frame.setStyleSheet("background: #F5F6FA; border-radius: 6px; padding: 8px;")
+        gen_layout = QHBoxLayout(gen_frame)
+        gen_layout.setContentsMargins(8, 4, 8, 4)
+
+        gen_layout.addWidget(QLabel("生成报告:"))
+
+        btn_daily = QPushButton("今日日报")
+        btn_daily.setStyleSheet(BUTTON_PRIMARY_STYLE)
+        btn_daily.clicked.connect(self._generate_daily)
+
+        btn_weekly = QPushButton("本周周报")
+        btn_weekly.setStyleSheet(BUTTON_PRIMARY_STYLE)
+        btn_weekly.clicked.connect(self._generate_weekly)
+
+        btn_monthly = QPushButton("本月月报")
+        btn_monthly.setStyleSheet(BUTTON_PRIMARY_STYLE)
+        btn_monthly.clicked.connect(self._generate_monthly)
+
+        gen_layout.addWidget(btn_daily)
+        gen_layout.addWidget(btn_weekly)
+        gen_layout.addWidget(btn_monthly)
+        gen_layout.addStretch()
+
         btn_open_dir = QPushButton("打开报告目录")
         btn_open_dir.setStyleSheet(BUTTON_SECONDARY_STYLE)
         btn_open_dir.clicked.connect(lambda: os.startfile(self.reports_dir) if os.path.exists(self.reports_dir) else None)
-        btn_obsidian = QPushButton("复制到 Obsidian")
+
+        btn_obsidian = QPushButton("同步到 Obsidian")
         btn_obsidian.setStyleSheet(BUTTON_SECONDARY_STYLE)
         btn_obsidian.clicked.connect(self._sync_obsidian)
-        btn_layout.addWidget(btn_gen)
-        btn_layout.addWidget(btn_open_dir)
-        btn_layout.addWidget(btn_obsidian)
-        btn_layout.addStretch()
-        layout.addLayout(btn_layout)
 
-        # Tabs: daily / weekly / monthly
+        gen_layout.addWidget(btn_open_dir)
+        gen_layout.addWidget(btn_obsidian)
+        layout.addWidget(gen_frame)
+
+        # ── Tabs: daily / weekly / monthly ──
         self.tabs = QTabWidget()
-        self.tab_daily = QTableWidget()
-        self.tab_weekly = QTableWidget()
-        self.tab_monthly = QTableWidget()
-        for tab, name in [(self.tab_daily, "日报"), (self.tab_weekly, "周报"), (self.tab_monthly, "月报")]:
-            tab.setColumnCount(3)
-            tab.setHorizontalHeaderLabels(["日期", "文件", "大小"])
-            tab.horizontalHeader().setStretchLastSection(True)
-            tab.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-            tab.setEditTriggers(QTableWidget.NoEditTriggers)
-            tab.setStyleSheet(TABLE_STYLE)
-            self.tabs.addTab(tab, name)
+        self.tab_daily = self._make_table()
+        self.tab_weekly = self._make_table()
+        self.tab_monthly = self._make_table()
+
+        self.tabs.addTab(self.tab_daily, "日报")
+        self.tabs.addTab(self.tab_weekly, "周报")
+        self.tabs.addTab(self.tab_monthly, "月报")
         layout.addWidget(self.tabs)
 
         self.timer = QTimer(self)
@@ -66,19 +82,37 @@ class ReportsPage(QWidget):
         self.timer.start(60000)
         self.refresh()
 
+    def _make_table(self):
+        table = QTableWidget()
+        table.setColumnCount(3)
+        table.setHorizontalHeaderLabels(["日期/标识", "文件名", "大小"])
+        table.horizontalHeader().setStretchLastSection(True)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setStyleSheet(TABLE_STYLE)
+        return table
+
     def refresh(self):
-        for tab, subdir in [(self.tab_daily, "daily"), (self.tab_weekly, "weekly"), (self.tab_monthly, "monthly")]:
+        for tab, subdir in [
+            (self.tab_daily, "daily"),
+            (self.tab_weekly, "weekly"),
+            (self.tab_monthly, "monthly"),
+        ]:
             d = os.path.join(self.reports_dir, subdir)
             files = sorted(glob.glob(os.path.join(d, "*.md")), reverse=True)[:50]
             tab.setRowCount(len(files))
             for i, f in enumerate(files):
                 fname = os.path.basename(f)
-                tab.setItem(i, 0, QTableWidgetItem(fname.replace('.md', '')))
+                # Show a short label
+                label = fname.replace(".md", "").replace("_weekly", "").replace("_monthly", "")
+                tab.setItem(i, 0, QTableWidgetItem(label))
                 tab.setItem(i, 1, QTableWidgetItem(fname))
                 size_kb = os.path.getsize(f) // 1024 if os.path.exists(f) else 0
                 tab.setItem(i, 2, QTableWidgetItem(f"{size_kb} KB"))
 
-    def _generate_today(self):
+    # ── Generation actions ──
+
+    def _generate_daily(self):
         today = datetime.now().strftime("%Y-%m-%d")
         daily_dir = os.path.join(self.reports_dir, "daily")
         try:
@@ -88,6 +122,31 @@ class ReportsPage(QWidget):
             self.refresh()
         except Exception as e:
             QMessageBox.warning(self, "生成失败", str(e))
+
+    def _generate_weekly(self):
+        today = date.today()
+        iso_year, iso_week, _ = today.isocalendar()
+        weekly_dir = os.path.join(self.reports_dir, "weekly")
+        try:
+            path = exporter.export_weekly_report(self.db_path, iso_year, iso_week, weekly_dir)
+            self._sync_one(path)
+            QMessageBox.information(self, "生成成功", f"周报已保存\n{path}")
+            self.refresh()
+        except Exception as e:
+            QMessageBox.warning(self, "生成失败", str(e))
+
+    def _generate_monthly(self):
+        today = date.today()
+        monthly_dir = os.path.join(self.reports_dir, "monthly")
+        try:
+            path = exporter.export_monthly_report(self.db_path, today.year, today.month, monthly_dir)
+            self._sync_one(path)
+            QMessageBox.information(self, "生成成功", f"月报已保存\n{path}")
+            self.refresh()
+        except Exception as e:
+            QMessageBox.warning(self, "生成失败", str(e))
+
+    # ── Obsidian sync ──
 
     def _sync_obsidian(self):
         if not self.obsidian_path:

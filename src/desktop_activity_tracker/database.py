@@ -177,3 +177,112 @@ def query_entertainment_trend(db_path, days=3):
 
     result_map = {r["date"]: r["entertainment_seconds"] or 0 for r in rows}
     return [{"date": d, "entertainment_seconds": result_map.get(d, 0)} for d in dates]
+
+
+def query_date_range_stats(db_path, dates):
+    """Return per-day and aggregated stats for a range of dates.
+
+    Args:
+        db_path: path to SQLite database
+        dates: list of date strings like ['2026-05-26', '2026-05-27', ...]
+
+    Returns dict with:
+        - dates: list of input dates
+        - daily: [{date, effective_seconds, work_seconds, video_seconds, idle_seconds}, ...]
+        - by_category: [{category_key, category_name, effective_seconds}, ...] aggregated
+        - by_app: [{process_name, category_key, effective_seconds}, ...] aggregated
+        - totals: {effective_seconds, idle_seconds, total_seconds, work_seconds, video_seconds}
+    """
+    if not dates:
+        return {"dates": [], "daily": [], "by_category": [], "by_app": [], "totals": {}}
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    placeholders = ",".join("?" * len(dates))
+
+    # Per-day stats
+    daily_rows = conn.execute(f"""
+        SELECT date,
+               SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds,
+               SUM(CASE WHEN is_effective = 0 THEN duration_seconds ELSE 0 END) as idle_seconds,
+               SUM(duration_seconds) as total_seconds
+        FROM activity_logs
+        WHERE date IN ({placeholders})
+        GROUP BY date
+        ORDER BY date
+    """, dates).fetchall()
+
+    # Work and video seconds per day
+    work_video_rows = conn.execute(f"""
+        SELECT date,
+               SUM(CASE WHEN category_key IN ('ai_tools','coding','reading') AND is_effective
+                   THEN duration_seconds ELSE 0 END) as work_seconds,
+               SUM(CASE WHEN category_key = 'video' AND is_effective
+                   THEN duration_seconds ELSE 0 END) as video_seconds
+        FROM activity_logs
+        WHERE date IN ({placeholders})
+        GROUP BY date
+        ORDER BY date
+    """, dates).fetchall()
+
+    # Aggregated by category
+    cat_rows = conn.execute(f"""
+        SELECT category_key, category_name,
+               SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds,
+               SUM(CASE WHEN is_effective = 0 THEN duration_seconds ELSE 0 END) as idle_seconds,
+               SUM(duration_seconds) as total_seconds
+        FROM activity_logs
+        WHERE date IN ({placeholders})
+        GROUP BY category_key, category_name
+        ORDER BY effective_seconds DESC
+    """, dates).fetchall()
+
+    # Aggregated by app
+    app_rows = conn.execute(f"""
+        SELECT process_name, category_key,
+               SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds,
+               COUNT(*) as samples
+        FROM activity_logs
+        WHERE date IN ({placeholders}) AND is_effective = 1
+        GROUP BY process_name
+        ORDER BY effective_seconds DESC
+        LIMIT 20
+    """, dates).fetchall()
+
+    conn.close()
+
+    # Build daily map
+    daily_map = {r["date"]: dict(r) for r in daily_rows}
+    wv_map = {r["date"]: dict(r) for r in work_video_rows}
+
+    daily = []
+    for d in dates:
+        entry = daily_map.get(d, {"effective_seconds": 0, "idle_seconds": 0, "total_seconds": 0})
+        wv = wv_map.get(d, {"work_seconds": 0, "video_seconds": 0})
+        daily.append({
+            "date": d,
+            "effective_seconds": entry.get("effective_seconds", 0) or 0,
+            "idle_seconds": entry.get("idle_seconds", 0) or 0,
+            "total_seconds": entry.get("total_seconds", 0) or 0,
+            "work_seconds": wv.get("work_seconds", 0) or 0,
+            "video_seconds": wv.get("video_seconds", 0) or 0,
+        })
+
+    totals_effective = sum(d["effective_seconds"] for d in daily)
+    totals_idle = sum(d["idle_seconds"] for d in daily)
+    totals_work = sum(d["work_seconds"] for d in daily)
+    totals_video = sum(d["video_seconds"] for d in daily)
+
+    return {
+        "dates": dates,
+        "daily": daily,
+        "by_category": [dict(r) for r in cat_rows],
+        "by_app": [dict(r) for r in app_rows],
+        "totals": {
+            "effective_seconds": totals_effective,
+            "idle_seconds": totals_idle,
+            "total_seconds": totals_effective + totals_idle,
+            "work_seconds": totals_work,
+            "video_seconds": totals_video,
+        },
+    }
