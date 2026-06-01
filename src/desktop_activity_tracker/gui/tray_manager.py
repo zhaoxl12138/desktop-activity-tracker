@@ -104,11 +104,10 @@ class TrayManager:
         self.tray.activated.connect(self._on_tray_activated)
 
     def _on_tray_activated(self, reason):
-        if reason == QSystemTrayIcon.DoubleClick:
+        # Left-click or double-click → open main window
+        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
             self._open_window()
-        elif reason == QSystemTrayIcon.Trigger:
-            # Single left-click: show context menu (with quit option)
-            self.tray.contextMenu().popup(self.tray.geometry().center())
+        # Right-click → shows context menu automatically with 退出程序
 
     def _open_window(self):
         if self.main_window:
