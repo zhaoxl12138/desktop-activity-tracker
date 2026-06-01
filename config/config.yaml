@@ -130,6 +130,10 @@ categories:
       - Snipaste.exe
       - Resilio Sync.exe
       - clash-verge.exe
+      - explorer.exe
+      - Taskmgr.exe
+      - ApplicationFrameHost.exe
+      - ShellExperienceHost.exe
   video:
     active_rule: passive_allowed
     display_name: 视频娱乐
@@ -182,7 +186,9 @@ display_name_mapping:
   360ChromeX.exe: 360浏览器
   Doubao.exe: 豆包
   MobaXterm1_CHS1.exe: MobaXterm
-db_path: usage.db
+  explorer.exe: 文件资源管理器
+  Taskmgr.exe: 任务管理器
+db_path: D:\OfficeSoftware\desktop-activity-tracker\usage.db
 idle_threshold_seconds: 60
 obsidian_output_path: E:\obsidian_github\Daylog\时间追踪\桌面活动日报
 reports_dir: D:\OfficeSoftware\desktop-activity-tracker\reports

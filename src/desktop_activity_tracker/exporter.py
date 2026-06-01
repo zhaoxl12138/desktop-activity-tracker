@@ -182,7 +182,7 @@ def export_markdown(db_path, date_str, output_dir):
         lines.append("|---|---|---:|---:|---:|---|---:|")
         for b in active_blocks:
             cat_label = b.dominant_category
-            top_label = b.top_app or "-"
+            top_label = b.top_title or b.top_app or "-"
             lines.append(
                 f"| {b.slot} | {cat_label} | {b.effective_seconds // 60}分 | "
                 f"{b.entertainment_seconds // 60}分 | {b.idle_seconds // 60}分 | "

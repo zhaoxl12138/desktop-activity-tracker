@@ -120,7 +120,7 @@ class SessionTracker:
         # ~10s. We track the peak idle across phantom resets.
         self._last_raw_idle: float = 0.0
         self._effective_idle: float = 0.0
-        self._phantom_recovery_ticks: int = 0
+        self._phantom_active: bool = False
 
     # ── Public API ──────────────────────────────────────────────────
 
@@ -234,33 +234,39 @@ class SessionTracker:
         if self._current.active_rule == "passive_allowed":
             self._current.effective_seconds += self.sample_interval
             self._effective_idle = 0.0
+            self._phantom_active = False
         else:
-            # Phantom-reset filter: some systems have drivers/services
-            # generating spurious HID events that reset GetLastInputInfo()
-            # every ~10s. A sharp drop from >5s to <1s is treated as a
-            # phantom reset — the effective idle is NOT reset to 0.
-            if idle_seconds >= self._last_raw_idle - 1:
-                if idle_seconds < 2 and self._last_raw_idle < 2 and self._phantom_recovery_ticks <= 0:
-                    # Both readings are very low AND not recovering from
-                    # a phantom reset → genuine user activity
+            # Phantom-reset filter.
+            #
+            # Some Windows systems have drivers/services that generate
+            # spurious HID events, resetting GetLastInputInfo() every
+            # ~8-12s.  This means raw idle_seconds can never exceed ~9s
+            # between resets — a simple threshold will never fire.
+            #
+            # When a phantom reset is detected we enter "phantom active"
+            # mode and accumulate _effective_idle by wall-clock time on
+            # every tick, ignoring the resetting raw value.  We exit
+            # phantom mode once idle_seconds has grown past 15s (proof
+            # that this is genuine idle, not a recovery bounce).
+            is_phantom = (idle_seconds < 1 and self._last_raw_idle > 5)
+
+            if is_phantom:
+                self._effective_idle += self.sample_interval
+                self._phantom_active = True
+            elif self._phantom_active:
+                self._effective_idle += self.sample_interval
+                if idle_seconds > 15:
+                    self._phantom_active = False
+            elif idle_seconds >= self._last_raw_idle - 1:
+                # Idle accumulating or stable — normal tracking
+                if idle_seconds < 2 and self._last_raw_idle < 2:
                     self._effective_idle = idle_seconds
                 else:
-                    # Idle is accumulating or stable — normal tracking,
-                    # or recovering from a phantom reset
                     self._effective_idle = max(self._effective_idle, idle_seconds)
-            elif idle_seconds < 1 and self._last_raw_idle > 5:
-                # Probable phantom reset: idle dropped >5s to near-zero
-                # in one tick. Keep the previous effective idle level and
-                # enter recovery mode to prevent subsequent premature reset.
-                self._effective_idle += self.sample_interval
-                self._phantom_recovery_ticks = 2
             else:
-                # Genuine user input — reset effective idle
+                # Genuine user input — idle is decreasing
                 self._effective_idle = idle_seconds
-                self._phantom_recovery_ticks = 0
-
-            if self._phantom_recovery_ticks > 0:
-                self._phantom_recovery_ticks -= 1
+                self._phantom_active = False
 
             self._last_raw_idle = idle_seconds
 

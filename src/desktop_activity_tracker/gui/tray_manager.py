@@ -23,9 +23,13 @@ class TrayManager:
         self.main_window = None
 
         # Try to load an icon, fallback to system default
+        if getattr(sys, 'frozen', False):
+            base = sys._MEIPASS
+        else:
+            base = get_app_root()
         icon_paths = [
-            os.path.join(get_app_root(), "assets", "icon.ico"),
-            os.path.join(get_app_root(), "icon.ico"),
+            os.path.join(base, "assets", "icon.ico"),
+            os.path.join(base, "icon.ico"),
         ]
         icon = None
         for p in icon_paths:
@@ -33,8 +37,10 @@ class TrayManager:
                 icon = QIcon(p)
                 break
 
+        if icon:
+            app.setWindowIcon(icon)
         self.tray = QSystemTrayIcon(icon or app.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
-        self.tray.setToolTip("Desktop Activity Tracker\n启动中...")
+        self.tray.setToolTip("DayLens\n启动中...")
 
         self._build_menu()
         self.tray.show()
@@ -44,6 +50,12 @@ class TrayManager:
         self.tooltip_timer.timeout.connect(self._update_tooltip)
         self.tooltip_timer.start(60000)
         self._update_tooltip()
+
+        # Auto-generate daily report every 5 minutes
+        self.report_timer = QTimer()
+        self.report_timer.timeout.connect(self._auto_generate_report)
+        self.report_timer.start(300000)
+        self._auto_generate_report()
 
     def set_main_window(self, window):
         self.main_window = window
@@ -60,9 +72,9 @@ class TrayManager:
         )
         popup.setStyleSheet("""
             QWidget {
-                background: #FFFFFF;
-                border: 1px solid #CBD5E1;
-                border-radius: 8px;
+                background: #0E203D;
+                border: 1px solid #2C4772;
+                border-radius: 10px;
             }
             QPushButton {
                 background: transparent;
@@ -70,20 +82,20 @@ class TrayManager:
                 padding: 8px 28px 8px 14px;
                 text-align: left;
                 font-size: 13px;
-                color: #1E293B;
+                color: #B8C4D9;
             }
             QPushButton:hover {
-                background: #EFF6FF;
-                color: #1E40AF;
+                background: #122A52;
+                color: #F4F8FF;
                 border-radius: 4px;
             }
             QPushButton#btnQuit {
-                color: #DC2626;
+                color: #EF4444;
                 font-weight: 600;
             }
             QPushButton#btnQuit:hover {
-                background: #FEF2F2;
-                color: #B91C1C;
+                background: #321827;
+                color: #F87171;
             }
         """)
 
@@ -103,7 +115,7 @@ class TrayManager:
 
         sep = QWidget()
         sep.setFixedHeight(1)
-        sep.setStyleSheet("background: #E2E8F0; margin: 2px 8px;")
+        sep.setStyleSheet("background: #2C4772; margin: 2px 8px;")
         layout.addWidget(sep)
 
         btn_quit = QPushButton("退出程序")
@@ -152,6 +164,21 @@ class TrayManager:
             else:
                 w.pause()
 
+    def _auto_generate_report(self):
+        """Silent auto-generation every 5 minutes — overwrites today's report."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        reports_dir = os.path.join(get_app_root(), "reports", "daily")
+        os.makedirs(reports_dir, exist_ok=True)
+        from .. import exporter as exp
+        try:
+            exp.export_markdown(self.db_path, today, reports_dir)
+            obsidian_path = self.config.get("obsidian_output_path", "").strip()
+            if obsidian_path:
+                md_file = os.path.join(reports_dir, f"{today}.md")
+                exp.sync_to_obsidian(md_file, obsidian_path)
+        except Exception:
+            pass  # silent — don't bother the user on auto-save errors
+
     def _generate_report(self):
         today = datetime.now().strftime("%Y-%m-%d")
         reports_dir = os.path.join(get_app_root(), "reports", "daily")
@@ -163,9 +190,9 @@ class TrayManager:
             if obsidian_path:
                 md_file = os.path.join(reports_dir, f"{today}.md")
                 exp.sync_to_obsidian(md_file, obsidian_path)
-            self.tray.showMessage("Desktop Activity Tracker", f"日报已生成\n{today}.md")
+            self.tray.showMessage("DayLens", f"日报已生成\n{today}.md")
         except Exception as e:
-            self.tray.showMessage("Desktop Activity Tracker", f"生成失败: {e}")
+            self.tray.showMessage("DayLens", f"生成失败: {e}")
 
     def _open_reports(self):
         reports_dir = os.path.join(get_app_root(), "reports")
@@ -194,7 +221,7 @@ class TrayManager:
             if self.main_window and hasattr(self.main_window, 'worker') and self.main_window.worker.is_paused():
                 status = "已暂停"
             tooltip = (
-                f"Desktop Activity Tracker\n"
+                f"DayLens\n"
                 f"今日有效: {fmt_seconds(effective)}\n"
                 f"学习/工作: {fmt_seconds(work_sec)}\n"
                 f"娱乐: {fmt_seconds(video_sec)}\n"

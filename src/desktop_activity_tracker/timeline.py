@@ -89,7 +89,7 @@ def build_timeline(db_path, date_str):
                             proc, title, cat_key, cat_name,
                             row["session_id"])
 
-    # Finalise each block — cap at 1800s (30 min) to handle overlapping sessions
+    # Finalise each block — normalize to exactly 30 min (1800s)
     for b in blocks:
         total = b.effective_seconds + b.idle_seconds
         if total > 1800:
@@ -98,6 +98,8 @@ def build_timeline(db_path, date_str):
             b.idle_seconds = round(b.idle_seconds * scale)
             b.entertainment_seconds = round(b.entertainment_seconds * scale)
             b.work_seconds = round(b.work_seconds * scale)
+        elif 0 < total < 1800:
+            b.idle_seconds += 1800 - total
         _finalise_block(b)
 
     return blocks

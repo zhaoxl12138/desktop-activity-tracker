@@ -80,11 +80,13 @@ class RecordingWorker(QThread):
                 win_info = window_detector.get_foreground_window_info()
 
                 # Skip self — don't track the tracker's own window
-                if win_info and win_info.get("process_name", "").lower() == "python.exe":
-                    title = win_info.get("window_title", "")
-                    if "Desktop Activity Tracker" in title:
-                        self._sleep_check(int(self.sample_interval * 1000))
-                        continue
+                proc_lower = (win_info.get("process_name") or "").lower() if win_info else ""
+                if proc_lower in {"daylens.exe", "desktop-activity-tracker.exe"}:
+                    self._sleep_check(int(self.sample_interval * 1000))
+                    continue
+                if proc_lower == "python.exe" and "DayLens" in (win_info.get("window_title") or ""):
+                    self._sleep_check(int(self.sample_interval * 1000))
+                    continue
 
                 snapshot = tracker.tick(idle_sec, win_info)
 

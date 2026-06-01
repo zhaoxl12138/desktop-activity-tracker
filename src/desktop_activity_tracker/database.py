@@ -6,6 +6,9 @@ from datetime import datetime, timedelta
 
 from . import get_app_root
 
+# Process names of the tracker itself — excluded from all queries
+_SELF_PROCS = {"daylens.exe", "desktop-activity-tracker.exe"}
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS activity_logs (
@@ -228,9 +231,14 @@ def _query_date_stats_from_logs(db_path, date_str):
     return {
         "totals": dict(totals),
         "by_category": [dict(r) for r in by_category],
-        "by_app": [dict(r) for r in by_app],
-        "by_app_detail": [dict(r) for r in by_app_detail],
+        "by_app": _filter_self([dict(r) for r in by_app]),
+        "by_app_detail": _filter_self([dict(r) for r in by_app_detail]),
     }
+
+
+def _filter_self(rows):
+    """Remove rows where process_name is the tracker itself."""
+    return [r for r in rows if r.get("process_name", "").lower() not in _SELF_PROCS]
 
 
 # ── Session-based queries (v1.1+) ──
@@ -289,8 +297,8 @@ def _query_date_stats_from_sessions(db_path, date_str):
     return {
         "totals": dict(totals),
         "by_category": [dict(r) for r in by_category],
-        "by_app": [dict(r) for r in by_app],
-        "by_app_detail": [dict(r) for r in by_app_detail],
+        "by_app": _filter_self([dict(r) for r in by_app]),
+        "by_app_detail": _filter_self([dict(r) for r in by_app_detail]),
     }
 
 
@@ -382,6 +390,51 @@ def query_session_count(db_path, date_str):
     ).fetchone()
     conn.close()
     return row[0] if row else 0
+
+
+def query_today_sessions(db_path, date_str):
+    """Return all activity_sessions for a date, ordered by start_time."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """SELECT session_id, start_time, end_time, process_name,
+                  normalized_title, category_key, category_name,
+                  duration_seconds, effective_seconds, idle_seconds
+           FROM activity_sessions
+           WHERE date = ? AND effective_seconds > 0
+           ORDER BY start_time""",
+        (date_str,)
+    ).fetchall()
+    conn.close()
+    return _filter_self([dict(r) for r in rows])
+
+
+def count_consecutive_days(db_path):
+    """Return consecutive days (including today) with activity data."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT DISTINCT date FROM activity_sessions ORDER BY date DESC"
+    ).fetchall()
+    conn.close()
+
+    if not rows:
+        return 0
+
+    dates = [r["date"] for r in rows]
+    today = datetime.now().strftime("%Y-%m-%d")
+    if dates[0] != today:
+        return 0
+
+    count = 1
+    for i in range(1, len(dates)):
+        d1 = datetime.strptime(dates[i - 1], "%Y-%m-%d")
+        d2 = datetime.strptime(dates[i], "%Y-%m-%d")
+        if (d1 - d2).days == 1:
+            count += 1
+        else:
+            break
+    return count
 
 
 def query_date_range_stats(db_path, dates):

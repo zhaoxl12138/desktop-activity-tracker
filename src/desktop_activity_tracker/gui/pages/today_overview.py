@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from ... import database, timeline
+from ...database import count_consecutive_days, query_today_sessions
 from ...exporter import _calculate_efficiency_score, _generate_suggestions
 from ...utils import fmt_seconds
 from ..style import COLORS, DASHBOARD_CARD_STYLE, SUBTLE_TAG_STYLE
@@ -146,8 +147,8 @@ class TodayOverviewPage(QWidget):
         card.setStyleSheet(DASHBOARD_CARD_STYLE)
         card.setFixedHeight(235)
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(6)
+        layout.setContentsMargins(14, 10, 14, 10)
+        layout.setSpacing(2)
 
         title = QLabel("效率评分")
         title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {COLORS['text']};")
@@ -158,13 +159,14 @@ class TodayOverviewPage(QWidget):
 
         self.score_grade = QLabel("数据不足")
         self.score_grade.setAlignment(Qt.AlignCenter)
-        self.score_grade.setMaximumHeight(28)
+        self.score_grade.setMaximumHeight(24)
         self.score_grade.setStyleSheet(SUBTLE_TAG_STYLE)
         layout.addWidget(self.score_grade, 0)
 
         self.score_detail = QLabel("活跃数据不足 30 分钟，暂不评分。")
         self.score_detail.setWordWrap(True)
         self.score_detail.setStyleSheet(f"font-size: 12px; color: {COLORS['text_secondary']};")
+        self.score_detail.setMaximumHeight(32)
         layout.addWidget(self.score_detail)
         return card
 
@@ -174,15 +176,41 @@ class TodayOverviewPage(QWidget):
         card.setStyleSheet(DASHBOARD_CARD_STYLE)
         card.setFixedHeight(235)
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(8)
+        layout.setContentsMargins(16, 10, 16, 10)
+        layout.setSpacing(6)
 
-        title = QLabel("今日专注时段")
+        header = QHBoxLayout()
+        header.setSpacing(10)
+        title = QLabel("今日专注")
         title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {COLORS['text']};")
-        layout.addWidget(title)
+        header.addWidget(title)
+        header.addStretch()
+        self.consecutive_label = QLabel("")
+        self.consecutive_label.setStyleSheet(
+            f"font-size: 11px; color: {COLORS['primary']}; font-weight: 700;"
+        )
+        header.addWidget(self.consecutive_label)
+        layout.addLayout(header)
+
+        self.longest_focus_label = QLabel("")
+        self.longest_focus_label.setWordWrap(True)
+        self.longest_focus_label.setVisible(False)
+        self.longest_focus_label.setStyleSheet(
+            f"""
+            QLabel {{
+                font-size: 12px; font-weight: 700;
+                color: {COLORS['coding_green']};
+                background: {COLORS['panel_bg_alt']};
+                border: 1px solid {COLORS['border_light']};
+                border-radius: 8px;
+                padding: 6px 10px;
+            }}
+            """
+        )
+        layout.addWidget(self.longest_focus_label)
 
         self.focus_container = QVBoxLayout()
-        self.focus_container.setSpacing(8)
+        self.focus_container.setSpacing(6)
         layout.addLayout(self.focus_container)
         layout.addStretch()
         return card
@@ -242,22 +270,93 @@ class TodayOverviewPage(QWidget):
 
             self._update_score_card(work_sec, ent_sec, effective, stats, today)
 
+            # Session-based timeline
+            sessions = query_today_sessions(self.db_path, today)
+            self.timeline_widget.set_sessions(sessions, self.display_name_mapping)
+
+            # Focus blocks (still uses 30-min aggregation for detection)
             tl = timeline.build_timeline(self.db_path, today)
             focus_blocks = timeline.identify_focus_blocks(tl)
             self._update_focus_blocks(focus_blocks)
 
-            self.timeline_widget.set_blocks(tl)
+            # Consecutive days
+            cons = count_consecutive_days(self.db_path)
+            if cons >= 3:
+                self.consecutive_label.setText(f"🔥 连续 {cons} 天")
+                self.consecutive_label.setVisible(True)
+            elif cons >= 1:
+                self.consecutive_label.setText(f"第 {cons} 天")
+                self.consecutive_label.setVisible(True)
+            else:
+                self.consecutive_label.setVisible(False)
 
-            top_apps = []
-            for item in stats.get("by_app", [])[:5]:
+            # Merge by resolved display name, then take top 5
+            merged: dict[str, int] = {}
+            for item in stats.get("by_app", []):
                 pname = item.get("process_name") or "Unknown"
-                display = self.display_name_mapping.get(pname, pname)
-                top_apps.append((pname, display, item.get("effective_seconds", 0) or 0))
+                display = self._resolve_display(pname, stats.get("by_app_detail", []))
+                secs = item.get("effective_seconds", 0) or 0
+                merged[display] = merged.get(display, 0) + secs
+            sorted_apps = sorted(merged.items(), key=lambda x: -x[1])[:5]
+            top_apps = [(name, name, secs) for name, secs in sorted_apps]
             self.top_app_card.set_items(top_apps)
         except Exception:
             import traceback
 
             traceback.print_exc()
+
+    def _resolve_display(self, process_name, app_details):
+        """Resolve a display name using mapping + window title heuristics.
+
+        For wrapper processes (terminal, cmd, etc.), check if the most-used
+        window title reveals the actual tool being used (e.g. Claude Code).
+        """
+        pname = process_name or ""
+        # Normalize Python variants to a single label
+        import re
+        if re.match(r'^python\d*w?\.exe$', pname, re.IGNORECASE):
+            return "Python"
+        # Check explicit mapping first
+        mapped = self.display_name_mapping.get(pname)
+        if mapped and mapped != pname:
+            return mapped
+
+        # Wrapper processes — try to identify the actual tool from titles
+        WRAPPER_PROCS = {
+            "WindowsTerminal.exe", "cmd.exe", "powershell.exe",
+            "Code.exe", "Cursor.exe",
+        }
+        if pname not in WRAPPER_PROCS:
+            return mapped or pname
+
+        # Find the top window title for this process
+        best_title = ""
+        best_sec = 0
+        for d in app_details:
+            if d.get("process_name") == pname:
+                sec = d.get("effective_seconds", 0) or 0
+                if sec > best_sec:
+                    best_sec = sec
+                    best_title = d.get("window_title", "") or ""
+
+        if not best_title:
+            return mapped or pname
+
+        # Known tool patterns in window titles
+        TOOL_PATTERNS = [
+            ("Claude Code", "Claude Code"),
+            ("Codex", "Codex"),
+            ("Cursor", "Cursor"),
+            ("Trae", "Trae"),
+            ("GitHub", "GitHub"),
+            ("GitLab", "GitLab"),
+            ("Docker", "Docker"),
+        ]
+        for pattern, label in TOOL_PATTERNS:
+            if pattern.lower() in best_title.lower():
+                return label
+
+        return mapped or pname
 
     def _load_metric_history(self, days: int):
         today = datetime.now().date()
@@ -340,33 +439,24 @@ class TodayOverviewPage(QWidget):
             grade = "需改进"
             accent = COLORS["danger_red"]
 
-        # Build score breakdown
-        parts = []
         if effective > 0:
             work_ratio = int(round(work_sec / effective * 100))
-            parts.append(f"学习占比 {work_ratio}% → {min(100, work_ratio)}分 基准分")
+            ent_ratio = int(round(ent_sec / effective * 100))
         else:
-            parts.append("暂无有效数据")
-
-        if ent_sec > 5400:
-            penalty = min(30, (ent_sec - 5400) // 1800 * 5)
-            over_min = (ent_sec - 5400) // 60
-            parts.append(f"娱乐 {int(over_min)}分钟 超过90分钟 → -{penalty}分")
-        elif ent_sec > 0:
-            ent_min = ent_sec // 60
-            parts.append(f"娱乐 {int(ent_min)}分钟 未超90分钟 → 无惩罚")
-
-        parts.append(f"最终得分 {score}/100")
+            work_ratio = 0
+            ent_ratio = 0
 
         suggestions, _, _ = _generate_suggestions(self.db_path, today, stats)
-        if suggestions:
-            if len(suggestions[0]) > 40:
-                parts.append(suggestions[0][:40] + "...")
-            else:
-                parts.append(suggestions[0])
+        if suggestions and ent_sec > 5400:
+            hint = "建议控制娱乐时间"
+        elif suggestions:
+            s = suggestions[0]
+            hint = s[:24] + "…" if len(s) > 24 else s
+        else:
+            hint = "继续保持"
 
         self.score_gauge.set_score(score, accent)
-        self.score_grade.setText(f"{grade} · {score}/100")
+        self.score_grade.setText(f"{grade} · 学习占{work_ratio}% · 娱乐占{ent_ratio}%")
         self.score_grade.setStyleSheet(
             f"""
             QLabel {{
@@ -379,13 +469,28 @@ class TodayOverviewPage(QWidget):
             }}
             """
         )
-        self.score_detail.setText("\n".join(parts))
+        self.score_detail.setText(hint)
 
     def _update_focus_blocks(self, focus_blocks):
         while self.focus_rows:
             row = self.focus_rows.pop()
             self.focus_container.removeWidget(row)
             row.deleteLater()
+
+        # Longest focus
+        if focus_blocks:
+            longest = max(focus_blocks, key=lambda f: f.duration_minutes)
+            apps_display = []
+            for app in longest.top_apps[:2]:
+                apps_display.append(self.display_name_mapping.get(app, app))
+            apps_text = " / ".join(apps_display) if apps_display else "未识别"
+            self.longest_focus_label.setText(
+                f"⚡ 最长专注 {longest.start_slot}-{longest.end_slot}  "
+                f"{longest.duration_minutes}分钟 · {longest.main_category} · {apps_text}"
+            )
+            self.longest_focus_label.setVisible(True)
+        else:
+            self.longest_focus_label.setVisible(False)
 
         if not focus_blocks:
             placeholder = QLabel("今日暂未识别到连续专注时段。")
@@ -394,7 +499,7 @@ class TodayOverviewPage(QWidget):
             self.focus_rows.append(placeholder)
             return
 
-        for focus in focus_blocks[:3]:
+        for focus in focus_blocks[:2]:
             row = QFrame()
             row.setStyleSheet(
                 f"""
@@ -415,7 +520,10 @@ class TodayOverviewPage(QWidget):
             head.setStyleSheet(f"font-size: 14px; font-weight: 700; color: {COLORS['text']};")
             line.addWidget(head)
 
-            apps = " / ".join(focus.top_apps[:3]) if focus.top_apps else "主应用未识别"
+            apps_display = []
+            for app in focus.top_apps[:3]:
+                apps_display.append(self.display_name_mapping.get(app, app))
+            apps = " / ".join(apps_display) if apps_display else "主应用未识别"
             sub = QLabel(f"{focus.main_category} · {apps}")
             sub.setStyleSheet(f"font-size: 12px; color: {COLORS['text_secondary']};")
             line.addWidget(sub)

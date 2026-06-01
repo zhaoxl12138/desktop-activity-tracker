@@ -108,7 +108,7 @@ def cmd_start(config, config_path):
         on_flush=on_flush,
     )
 
-    print(f"Desktop Activity Tracker v1.2.0")
+    print(f"DayLens v1.4.0")
     print(f"配置: {config_path}")
     print(f"数据库: {db_path}")
     print(f"采样间隔: {sample_interval}s | 刷盘间隔: {flush_interval}s")
@@ -273,7 +273,7 @@ def _ensure_single_instance():
             kernel32.CloseHandle(handle)
         ctypes.windll.user32.MessageBoxW(0,
             "程序已在运行中，请查看系统托盘图标。",
-            "Desktop Activity Tracker", 0x40)
+            "DayLens", 0x40)
         return False, None
     return True, handle
 
@@ -342,7 +342,7 @@ def cmd_gui():
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Desktop Activity Tracker - 个人数字行为分析系统",
+        description="DayLens - 个人数字行为分析系统",
         prog="python -m desktop_activity_tracker.main"
     )
     subparsers = parser.add_subparsers(dest="command", help="可用命令")

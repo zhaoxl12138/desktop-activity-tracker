@@ -81,7 +81,7 @@ class MainWindow(QMainWindow):
         self.reports_dir = reports_dir
         self.worker = worker
 
-        self.setWindowTitle("Desktop Activity Tracker")
+        self.setWindowTitle("DayLens")
         self.setStyleSheet(GLOBAL_STYLE + INPUT_STYLE)
         self.resize(1440, 860)
         self.setMinimumSize(1280, 780)
@@ -120,7 +120,7 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 20, 0, 14)
         layout.setSpacing(0)
 
-        brand = QLabel("Activity Tracker")
+        brand = QLabel("DayLens")
         brand.setStyleSheet(
             f"""
             font-size: 20px;
@@ -405,6 +405,6 @@ class MainWindow(QMainWindow):
         self.hide()
         if hasattr(self, "tray"):
             self.tray.showMessage(
-                "Desktop Activity Tracker",
+                "DayLens",
                 "程序已最小化到系统托盘。\n右键托盘图标可重新打开。",
             )

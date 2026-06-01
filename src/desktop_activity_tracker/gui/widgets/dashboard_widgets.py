@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...utils import fmt_seconds
-from ..style import COLORS, DASHBOARD_CARD_STYLE
+from ..style import COLORS, DASHBOARD_CARD_STYLE, get_category_color
 
 
 class MiniSparkline(QWidget):
@@ -210,13 +210,13 @@ class DonutChartWidget(QWidget):
 
 
 class ScoreGaugeWidget(QWidget):
-    """Circular score gauge."""
+    """Hero circular score gauge with large prominent number."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._score: int | None = None
         self._accent = COLORS["coding_green"]
-        self.setMinimumSize(150, 138)
+        self.setMinimumSize(120, 120)
 
     def set_score(self, score: int | None, accent: str):
         self._score = score
@@ -228,9 +228,12 @@ class ScoreGaugeWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        side = max(112, min(self.width(), self.height()) - 22)
-        rect = QRectF((self.width() - side) / 2, (self.height() - side) / 2, side, side)
-        width = max(11.0, side * 0.1)
+        w, h = self.width(), self.height()
+        side = min(w, h) - 22
+        side = max(96, min(156, side))
+        rect = QRectF((w - side) / 2, (h - side) / 2, side, side)
+        width = max(8.0, side * 0.09)
+        inner_radius = (side - width) / 2
 
         base = QPen(QColor(COLORS["border"]), width)
         base.setCapStyle(Qt.RoundCap)
@@ -247,24 +250,20 @@ class ScoreGaugeWidget(QWidget):
         painter.setPen(fg)
         painter.drawArc(rect, 225 * 16, int(-270 * 16 * (value / 100.0)))
 
+        # Draw text centered in the clear inner area — scale to fit inside arc
+        pts = max(22, min(40, int(inner_radius * 0.75)))
         painter.setPen(QColor(COLORS["text"]))
         f = painter.font()
-        f.setPointSize(24)
+        f.setPointSize(pts)
         f.setBold(True)
         painter.setFont(f)
         label = "--" if self._score is None else str(value)
-        painter.drawText(self.rect().adjusted(0, -8, 0, 0), Qt.AlignCenter, label)
+        painter.drawText(self.rect().adjusted(0, -6, 0, 0), Qt.AlignCenter, label)
 
-        f2 = painter.font()
-        f2.setPointSize(10)
-        f2.setBold(False)
-        painter.setFont(f2)
-        painter.setPen(QColor(COLORS["text_muted"]))
-        painter.drawText(self.rect().adjusted(0, 28, 0, 0), Qt.AlignCenter, "/ 100")
 
 
 class TimelineWidget(QFrame):
-    """Timeline view showing 30-minute activity blocks with category colors."""
+    """Timeline view with switchable block/session modes."""
 
     CATEGORY_COLORS = {
         "AI工具": "#7B68EE",
@@ -282,6 +281,7 @@ class TimelineWidget(QFrame):
         "混合": "#95A5A6",
         "未使用电脑": "#C0CADB",
         "其他": "#95A5A6",
+        "空闲": COLORS["idle_gray"],
     }
 
     def __init__(self, parent: QWidget | None = None):
@@ -316,7 +316,7 @@ class TimelineWidget(QFrame):
         root.addWidget(scroll)
 
     def set_blocks(self, blocks):
-        """Set timeline from list of TimeBlock objects."""
+        """Set timeline from list of TimeBlock objects (30-min aggregation)."""
         while self._rows:
             row = self._rows.pop()
             self._content_layout.removeWidget(row)
@@ -341,7 +341,6 @@ class TimelineWidget(QFrame):
             row_layout.setContentsMargins(0, 0, 0, 0)
             row_layout.setSpacing(6)
 
-            # Extract start time from slot "09:00-09:30"
             start_time = block.slot.split("-")[0] if "-" in block.slot else block.slot
             time_label = QLabel(start_time)
             time_label.setFixedWidth(36)
@@ -352,9 +351,7 @@ class TimelineWidget(QFrame):
 
             dot = QFrame()
             dot.setFixedSize(8, 8)
-            dot.setStyleSheet(
-                f"background: {color}; border-radius: 4px;"
-            )
+            dot.setStyleSheet(f"background: {color}; border-radius: 4px;")
             row_layout.addWidget(dot)
 
             cat_name = block.dominant_category or "其他"
@@ -371,6 +368,81 @@ class TimelineWidget(QFrame):
             row_layout.addWidget(apps_label, 1)
 
             dur_label = QLabel(f"{block.effective_seconds // 60}分钟")
+            dur_label.setFixedWidth(42)
+            dur_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            dur_label.setStyleSheet(
+                f"font-size: 11px; color: {COLORS['text_muted']};"
+            )
+            row_layout.addWidget(dur_label)
+
+            self._content_layout.insertWidget(self._content_layout.count() - 1, row)
+            self._rows.append(row)
+
+    def set_sessions(self, sessions, display_name_mapping=None):
+        """Set timeline from session rows (session-based view).
+
+        Each session dict has: start_time, end_time, process_name,
+        display_name, category_key, category_name, duration_seconds,
+        effective_seconds.
+        """
+        while self._rows:
+            row = self._rows.pop()
+            self._content_layout.removeWidget(row)
+            row.deleteLater()
+
+        if not sessions:
+            placeholder = QLabel("暂无会话数据")
+            placeholder.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
+            self._content_layout.insertWidget(0, placeholder)
+            self._rows.append(placeholder)
+            return
+
+        mapping = display_name_mapping or {}
+
+        for s in reversed(sessions):
+            cat_name = s.get("category_name") or "其他"
+            cat_key = s.get("category_key") or "other"
+            color = self.CATEGORY_COLORS.get(cat_name, get_category_color(cat_key))
+
+            row = QWidget()
+            row.setStyleSheet("background: transparent;")
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(6)
+
+            # Time range "13:00-14:00"
+            start = s.get("start_time", "") or ""
+            end = s.get("end_time", "") or ""
+            start_short = start[-8:-3] if len(start) >= 8 else start
+            end_short = end[-8:-3] if len(end) >= 8 else end
+            time_text = f"{start_short}-{end_short}" if start_short and end_short else start_short
+            time_label = QLabel(time_text)
+            time_label.setFixedWidth(70)
+            time_label.setStyleSheet(
+                f"font-size: 11px; color: {COLORS['text_secondary']}; font-weight: 600;"
+            )
+            row_layout.addWidget(time_label)
+
+            dot = QFrame()
+            dot.setFixedSize(8, 8)
+            dot.setStyleSheet(f"background: {color}; border-radius: 4px;")
+            row_layout.addWidget(dot)
+
+            # App display name
+            proc = s.get("process_name") or ""
+            display = mapping.get(proc, proc) or proc
+            app_label = QLabel(display)
+            app_label.setMinimumWidth(64)
+            app_label.setStyleSheet(f"font-size: 12px; color: {COLORS['text']}; font-weight: 600;")
+            row_layout.addWidget(app_label)
+
+            cat_label = QLabel(cat_name)
+            cat_label.setStyleSheet(f"font-size: 11px; color: {color}; font-weight: 700;")
+            row_layout.addWidget(cat_label, 1)
+
+            # Duration
+            eff = s.get("effective_seconds", 0) or 0
+            dur_label = QLabel(f"{max(1, eff // 60)}分钟")
             dur_label.setFixedWidth(42)
             dur_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             dur_label.setStyleSheet(
