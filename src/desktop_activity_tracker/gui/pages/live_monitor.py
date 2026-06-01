@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QBrush
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -140,7 +141,7 @@ class LiveMonitorPage(QWidget):
             f"""
             QLabel {{
                 color: {color};
-                background: #F8FAFF;
+                background: {COLORS['panel_bg']};
                 border: 1px solid {COLORS['border_light']};
                 border-radius: 13px;
                 padding: 5px 10px;
@@ -156,7 +157,7 @@ class LiveMonitorPage(QWidget):
         tile.setStyleSheet(
             f"""
             QFrame {{
-                background: #F8FAFF;
+                background: {COLORS['panel_bg']};
                 border: 1px solid {COLORS['border_light']};
                 border-radius: 14px;
             }}
@@ -199,7 +200,7 @@ class LiveMonitorPage(QWidget):
             f"""
             QLabel {{
                 color: {category_color};
-                background: #F8FAFF;
+                background: {COLORS['panel_bg']};
                 border: 1px solid {COLORS['border_light']};
                 border-radius: 13px;
                 padding: 5px 10px;
@@ -219,8 +220,8 @@ class LiveMonitorPage(QWidget):
                 f"""
                 QLabel {{
                     color: {COLORS['success_green']};
-                    background: #ECFDF5;
-                    border: 1px solid #CFF7E2;
+                    background: #0F2A23;
+                    border: 1px solid {COLORS['success_green']};
                     border-radius: 14px;
                     padding: 5px 12px;
                     font-size: 12px;
@@ -234,8 +235,8 @@ class LiveMonitorPage(QWidget):
                 f"""
                 QLabel {{
                     color: {COLORS['warning_yellow']};
-                    background: #FFF7ED;
-                    border: 1px solid #FED7AA;
+                    background: #332510;
+                    border: 1px solid {COLORS['warning_yellow']};
                     border-radius: 14px;
                     padding: 5px 12px;
                     font-size: 12px;
@@ -250,9 +251,14 @@ class LiveMonitorPage(QWidget):
             time_text = timestamp[-8:] if len(timestamp) >= 8 else timestamp
             normalized_title = item.get("normalized_title", "") or item.get("window_title", "")
             is_effective = "是" if item.get("is_effective") else "否"
+            row_cat_key = item.get("category_key", "other") or "other"
+            row_color = get_category_color(row_cat_key)
 
             self.table.setItem(row, 0, QTableWidgetItem(time_text))
             self.table.setItem(row, 1, QTableWidgetItem(item.get("process_name", "")))
             self.table.setItem(row, 2, QTableWidgetItem(normalized_title))
-            self.table.setItem(row, 3, QTableWidgetItem(item.get("category_name", "")))
+            category_item = QTableWidgetItem(f"● {item.get('category_name', '')}")
+            category_item.setForeground(QBrush(QColor(row_color)))
+            category_item.setToolTip(f"分类颜色：{row_color}")
+            self.table.setItem(row, 3, category_item)
             self.table.setItem(row, 4, QTableWidgetItem(is_effective))
