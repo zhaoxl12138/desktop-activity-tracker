@@ -5,7 +5,8 @@ from datetime import datetime
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel,
-    QListWidget, QListWidgetItem, QStackedWidget, QPushButton, QMessageBox
+    QListWidget, QListWidgetItem, QStackedWidget, QPushButton, QMessageBox,
+    QSizePolicy
 )
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont
@@ -14,8 +15,9 @@ from .. import database
 from ..utils import fmt_seconds
 
 from .style import (
-    COLORS, SIDEBAR_STYLE, TOP_BAR_STYLE, BOTTOM_BAR_STYLE,
-    BUTTON_PRIMARY_STYLE, BUTTON_SECONDARY_STYLE
+    COLORS, GLOBAL_STYLE, SIDEBAR_STYLE, TOP_BAR_STYLE, BOTTOM_BAR_STYLE,
+    BUTTON_PRIMARY_STYLE, BUTTON_SECONDARY_STYLE, BUTTON_DANGER_STYLE,
+    SECTION_TITLE, INPUT_STYLE
 )
 from .pages.today_overview import TodayOverviewPage
 from .pages.live_monitor import LiveMonitorPage
@@ -27,13 +29,13 @@ from .pages.settings import SettingsPage
 
 
 NAV_ITEMS = [
-    ("今日概览", "today"),
-    ("实时监控", "live"),
-    ("软件统计", "software"),
-    ("分类统计", "category"),
-    ("日报/周报", "reports"),
-    ("规则配置", "rules"),
-    ("设置", "settings"),
+    ("\U0001F4CA  今日概览", "today"),
+    ("\U0001F4E1  实时监控", "live"),
+    ("\U0001F4BB  软件统计", "software"),
+    ("\U0001F4CA  分类统计", "category"),
+    ("\U0001F4C4  日报/周报", "reports"),
+    ("⚙️  规则配置", "rules"),
+    ("\U0001F527  设置", "settings"),
 ]
 
 
@@ -48,8 +50,9 @@ class MainWindow(QMainWindow):
         self.worker = worker
 
         self.setWindowTitle("Desktop Activity Tracker")
-        self.resize(900, 620)
-        self.setMinimumSize(800, 540)
+        self.setStyleSheet(GLOBAL_STYLE + INPUT_STYLE)
+        self.resize(960, 700)
+        self.setMinimumSize(860, 580)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -60,23 +63,69 @@ class MainWindow(QMainWindow):
         # ── Top bar ──
         root_layout.addWidget(self._build_top_bar())
 
-        # ── Main content: sidebar + pages ──
+        # ── Main content ──
         content = QHBoxLayout()
         content.setContentsMargins(0, 0, 0, 0)
         content.setSpacing(0)
+        content.addWidget(self._build_sidebar())
+        content.addWidget(self._build_pages(), 1)
+        root_layout.addLayout(content, 1)
+
+        # ── Bottom bar ──
+        root_layout.addWidget(self._build_bottom_bar())
+
+        self.worker.sample_updated.connect(self._on_sample)
+        self.nav_list.setCurrentRow(0)
+
+        self.refresh_timer = QTimer(self)
+        self.refresh_timer.timeout.connect(self._update_top_bar)
+        self.refresh_timer.start(30000)
+
+    def _build_sidebar(self):
+        frame = QFrame()
+        frame.setFixedWidth(210)
+        frame.setStyleSheet(f"background: {COLORS['sidebar_bg']};")
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(0, 12, 0, 12)
+        layout.setSpacing(0)
+
+        # Brand / logo area
+        brand = QLabel("Activity\nTracker")
+        brand.setStyleSheet(f"""
+            font-size: 16px; font-weight: 800; color: {COLORS['text_inverse']};
+            padding: 12px 20px 20px 20px;
+        """)
+        layout.addWidget(brand)
+
+        # Divider
+        div = QFrame()
+        div.setFixedHeight(1)
+        div.setStyleSheet(f"background: {COLORS['sidebar_hover']}; margin: 0 12px;")
+        layout.addWidget(div)
 
         self.nav_list = QListWidget()
-        self.nav_list.setFixedWidth(160)
         self.nav_list.setStyleSheet(SIDEBAR_STYLE)
-        self.nav_list.setFont(QFont("Microsoft YaHei", 10))
+        self.nav_list.setFont(QFont("Microsoft YaHei", 9))
+        self.nav_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.nav_list.setWordWrap(True)
         for name, key in NAV_ITEMS:
             item = QListWidgetItem(name)
             item.setData(Qt.UserRole, key)
             self.nav_list.addItem(item)
         self.nav_list.currentRowChanged.connect(self._on_nav_changed)
+        layout.addWidget(self.nav_list)
 
+        layout.addStretch()
+
+        # Version label
+        ver = QLabel("v1.2.0")
+        ver.setStyleSheet(f"font-size: 10px; color: {COLORS['text_muted']}; padding: 8px 16px;")
+        layout.addWidget(ver)
+
+        return frame
+
+    def _build_pages(self):
         self.stack = QStackedWidget()
-
         self.pages = {}
         self.pages['today'] = TodayOverviewPage(self.db_path)
         self.pages['live'] = LiveMonitorPage()
@@ -89,134 +138,147 @@ class MainWindow(QMainWindow):
 
         for _, key in NAV_ITEMS:
             self.stack.addWidget(self.pages[key])
+        return self.stack
 
-        content.addWidget(self.nav_list)
-        content.addWidget(self.stack, 1)
-        root_layout.addLayout(content)
-
-        # ── Bottom status bar ──
-        root_layout.addWidget(self._build_bottom_bar())
-
-        # Connect worker signal
-        self.worker.sample_updated.connect(self._on_sample)
-
-        # Select first page
-        self.nav_list.setCurrentRow(0)
-
-        # Summary refresh timer
-        self.refresh_timer = QTimer(self)
-        self.refresh_timer.timeout.connect(self._update_top_bar)
-        self.refresh_timer.start(30000)
+    # ── Top bar ──────────────────────────────────────────────────────
 
     def _build_top_bar(self):
         bar = QFrame()
         bar.setObjectName("topBar")
         bar.setStyleSheet(TOP_BAR_STYLE)
-        bar.setFixedHeight(60)
+        bar.setFixedHeight(52)
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(16, 8, 16, 8)
+        layout.setContentsMargins(20, 0, 16, 0)
 
-        title = QLabel("Desktop Activity Tracker")
-        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #2C3E50;")
+        title = QLabel("今日概览")
+        title.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {COLORS['text']};")
+        self.lbl_page_title = title
         layout.addWidget(title)
 
         self.top_summary = QLabel()
-        self.top_summary.setStyleSheet("font-size: 13px; color: #7F8C8D;")
+        self.top_summary.setStyleSheet(f"font-size: 13px; color: {COLORS['text_secondary']};")
         self._update_top_bar()
         layout.addWidget(self.top_summary)
-
         layout.addStretch()
 
-        self.btn_pause = QPushButton("暂停")
+        self.btn_pause = QPushButton("⏸  暂停")
         self.btn_pause.setStyleSheet(BUTTON_SECONDARY_STYLE)
+        self.btn_pause.setCursor(Qt.PointingHandCursor)
         self.btn_pause.clicked.connect(self._toggle_pause)
         layout.addWidget(self.btn_pause)
 
-        btn_report = QPushButton("生成日报")
-        btn_report.setStyleSheet(BUTTON_SECONDARY_STYLE)
+        btn_report = QPushButton("\U0001F4C4  生成日报")
+        btn_report.setStyleSheet(BUTTON_PRIMARY_STYLE)
+        btn_report.setCursor(Qt.PointingHandCursor)
         btn_report.clicked.connect(self._quick_report)
         layout.addWidget(btn_report)
-
         return bar
+
+    # ── Bottom bar ───────────────────────────────────────────────────
 
     def _build_bottom_bar(self):
         bar = QFrame()
         bar.setObjectName("bottomBar")
         bar.setStyleSheet(BOTTOM_BAR_STYLE)
-        bar.setFixedHeight(28)
-
-        self.lbl_status = QLabel("状态: 记录中")
-        self.lbl_status.setStyleSheet("color: #2ECC71; font-weight: bold;")
+        bar.setFixedHeight(32)
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(16, 2, 16, 2)
+        layout.setContentsMargins(20, 0, 16, 0)
+
+        # Status indicator dot + text
+        dot = QLabel()
+        dot.setFixedSize(8, 8)
+        dot.setStyleSheet(
+            f"background: {COLORS['success_green']}; border-radius: 4px;"
+        )
+        self._status_dot = dot
+        layout.addWidget(dot)
+
+        self.lbl_status = QLabel("记录中")
+        self.lbl_status.setStyleSheet(
+            f"font-size: 12px; color: {COLORS['success_green']}; font-weight: 600;"
+        )
         layout.addWidget(self.lbl_status)
-        layout.addStretch()
+        layout.addSpacing(20)
+
         self.lbl_time = QLabel()
+        self.lbl_time.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
         layout.addWidget(self.lbl_time)
+        layout.addStretch()
 
         btn_quit = QPushButton("退出程序")
-        btn_quit.setFixedHeight(22)
-        btn_quit.setStyleSheet(
-            "QPushButton { font-size: 11px; padding: 0 8px; background: #E74C3C; color: #FFF; border: none; border-radius: 3px; }"
-            "QPushButton:hover { background: #C0392B; }"
-        )
+        btn_quit.setStyleSheet(BUTTON_DANGER_STYLE)
+        btn_quit.setCursor(Qt.PointingHandCursor)
         btn_quit.clicked.connect(self._quit_app)
         layout.addWidget(btn_quit)
-
         return bar
 
-    def _quit_app(self):
-        reply = QMessageBox.question(
-            self, "确认退出", "确定要退出程序吗？\n系统托盘图标也会关闭。",
-            QMessageBox.Yes | QMessageBox.No
-        )
-        if reply != QMessageBox.Yes:
-            return
-        if self.worker:
-            self.worker.stop()
-            self.worker.wait(3000)
-        from PySide6.QtWidgets import QApplication
-        QApplication.instance().quit()
+    # ── Navigation ───────────────────────────────────────────────────
 
     def _on_nav_changed(self, row):
         if 0 <= row < self.stack.count():
             self.stack.setCurrentIndex(row)
+            name = NAV_ITEMS[row][0]
+            # Strip emoji prefix
+            clean = name.split('  ')[-1] if '  ' in name else name
+            self.lbl_page_title.setText(clean)
 
     def _on_sample(self, sample):
         if self.stack.currentWidget() is self.pages.get('live'):
             self.pages['live'].on_sample_updated(sample)
-        now = datetime.now().strftime("%H:%M:%S")
-        self.lbl_time.setText(f"最后采样: {now}")
+        self.lbl_time.setText(
+            f"\U0001F552 {datetime.now().strftime('%H:%M:%S')}"
+        )
+
+    # ── Pause / Resume ───────────────────────────────────────────────
 
     def _toggle_pause(self):
         if self.worker.is_paused():
             self.worker.resume()
-            self.btn_pause.setText("暂停")
-            self.lbl_status.setText("状态: 记录中")
-            self.lbl_status.setStyleSheet("color: #2ECC71; font-weight: bold;")
+            self.btn_pause.setText("⏸  暂停")
+            self.btn_pause.setStyleSheet(BUTTON_SECONDARY_STYLE)
+            self.lbl_status.setText("记录中")
+            self.lbl_status.setStyleSheet(
+                f"font-size: 12px; color: {COLORS['success_green']}; font-weight: 600;"
+            )
+            self._status_dot.setStyleSheet(
+                f"background: {COLORS['success_green']}; border-radius: 4px;"
+            )
         else:
             self.worker.pause()
-            self.btn_pause.setText("恢复")
-            self.lbl_status.setText("状态: 已暂停")
-            self.lbl_status.setStyleSheet("color: #E67E22; font-weight: bold;")
+            self.btn_pause.setText("▶  恢复")
+            self.btn_pause.setStyleSheet(BUTTON_PRIMARY_STYLE)
+            self.lbl_status.setText("已暂停")
+            self.lbl_status.setStyleSheet(
+                f"font-size: 12px; color: {COLORS['warning_yellow']}; font-weight: 600;"
+            )
+            self._status_dot.setStyleSheet(
+                f"background: {COLORS['warning_yellow']}; border-radius: 4px;"
+            )
+
+    # ── Top stats ────────────────────────────────────────────────────
 
     def _update_top_bar(self):
         today = datetime.now().strftime("%Y-%m-%d")
         try:
             stats = database.query_date_stats(self.db_path, today)
-            effective = stats['totals'].get('effective_seconds', 0) or 0
+            totals = stats.get('totals', {})
+            effective = totals.get('effective_seconds', 0) or 0
             work_cats = {"ai_tools", "coding", "reading", "creative"}
-            work_sec = sum(c['effective_seconds'] for c in stats['by_category'] if c['category_key'] in work_cats)
-            video_sec = sum(c['effective_seconds'] for c in stats['by_category'] if c['category_key'] in ('video', 'gaming'))
+            work_sec = sum(c.get('effective_seconds', 0) or 0 for c in stats.get('by_category', [])
+                          if c.get('category_key') in work_cats)
+            video_sec = sum(c.get('effective_seconds', 0) or 0 for c in stats.get('by_category', [])
+                           if c.get('category_key') in ('video', 'gaming'))
             self.top_summary.setText(
-                f"今日有效: {fmt_seconds(effective)}  |  "
-                f"学习/工作: {fmt_seconds(work_sec)}  |  "
-                f"娱乐: {fmt_seconds(video_sec)}"
+                f"\U0001F3AF {fmt_seconds(effective)}  |  "
+                f"\U0001F4AA {fmt_seconds(work_sec)}  |  "
+                f"\U0001F3AE {fmt_seconds(video_sec)}"
             )
         except Exception as e:
             import sys, traceback
             print(f"[MainWindow] _update_top_bar error: {e}", file=sys.stderr)
             traceback.print_exc()
+
+    # ── Quick report ─────────────────────────────────────────────────
 
     def _quick_report(self):
         today = datetime.now().strftime("%Y-%m-%d")
@@ -232,17 +294,30 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "生成失败", str(e))
 
+    # ── Quit ─────────────────────────────────────────────────────────
+
+    def _quit_app(self):
+        reply = QMessageBox.question(
+            self, "确认退出", "确定要退出程序吗？\n系统托盘图标也会关闭。",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+        if self.worker:
+            self.worker.stop()
+            self.worker.wait(3000)
+        from PySide6.QtWidgets import QApplication
+        QApplication.instance().quit()
+
+    # ── Close → tray ─────────────────────────────────────────────────
+
     def closeEvent(self, event):
-        """Minimize to tray instead of quitting."""
         event.ignore()
         self.hide()
-        from PySide6.QtWidgets import QSystemTrayIcon
-        tray_icons = QSystemTrayIcon.isSystemTrayAvailable()
-        if tray_icons:
-            if hasattr(self, 'tray'):
-                self.tray.showMessage(
-                    "Desktop Activity Tracker",
-                    "程序已最小化到系统托盘\n"
-                    + "右键点击任务栏右侧的时钟图标可打开菜单\n"
-                    + "如未显示，请点击 ^ 箭头查看隐藏图标"
-                )
+        if hasattr(self, 'tray'):
+            self.tray.showMessage(
+                "Desktop Activity Tracker",
+                "程序已最小化到系统托盘\n"
+                + "右键点击右侧托盘图标可打开菜单\n"
+                + "如未显示，请点击 ^ 箭头"
+            )

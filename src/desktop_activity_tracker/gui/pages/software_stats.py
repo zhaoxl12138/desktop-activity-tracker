@@ -7,10 +7,11 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget,
     QTableWidgetItem, QHeaderView, QPushButton, QMessageBox
 )
+from PySide6.QtCore import Qt
 
 from ... import database
 from ...utils import fmt_seconds
-from ..style import TABLE_STYLE, BUTTON_PRIMARY_STYLE, BUTTON_SECONDARY_STYLE
+from ..style import COLORS, TABLE_STYLE, BUTTON_PRIMARY_STYLE, BUTTON_SECONDARY_STYLE, SECTION_TITLE
 
 
 class SoftwareStatsPage(QWidget):
@@ -20,21 +21,27 @@ class SoftwareStatsPage(QWidget):
         self.reports_dir = reports_dir
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(16)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(14)
 
         title = QLabel("软件统计")
-        title.setStyleSheet("font-size: 18px; font-weight: bold; color: #2C3E50;")
+        title.setStyleSheet(SECTION_TITLE)
         layout.addWidget(title)
 
         # Buttons
         btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+
         btn_export_csv = QPushButton("导出 CSV")
         btn_export_csv.setStyleSheet(BUTTON_SECONDARY_STYLE)
+        btn_export_csv.setCursor(Qt.PointingHandCursor)
         btn_export_csv.clicked.connect(self._export_csv)
+
         btn_export_md = QPushButton("导出 Markdown")
-        btn_export_md.setStyleSheet(BUTTON_SECONDARY_STYLE)
+        btn_export_md.setStyleSheet(BUTTON_PRIMARY_STYLE)
+        btn_export_md.setCursor(Qt.PointingHandCursor)
         btn_export_md.clicked.connect(self._export_md)
+
         btn_layout.addWidget(btn_export_csv)
         btn_layout.addWidget(btn_export_md)
         btn_layout.addStretch()
@@ -48,7 +55,7 @@ class SoftwareStatsPage(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setStyleSheet(TABLE_STYLE)
-        layout.addWidget(self.table)
+        layout.addWidget(self.table, 1)
 
         self.refresh()
 
@@ -62,9 +69,7 @@ class SoftwareStatsPage(QWidget):
             for i, app in enumerate(details):
                 self.table.setItem(i, 0, QTableWidgetItem(app.get("process_name", "")))
                 title = app.get("window_title", "") or "-"
-                keyword = title[:40]
-                self.table.setItem(i, 1, QTableWidgetItem(keyword))
-                # Look up category for this process
+                self.table.setItem(i, 1, QTableWidgetItem(title[:40]))
                 cat_name = ""
                 for a in stats.get("by_app", []):
                     if a["process_name"] == app["process_name"]:

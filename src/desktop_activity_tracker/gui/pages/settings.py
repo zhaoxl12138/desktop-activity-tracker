@@ -7,11 +7,49 @@ from datetime import datetime
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QSpinBox,
-    QPushButton, QCheckBox, QFileDialog, QMessageBox, QGroupBox
+    QPushButton, QCheckBox, QFileDialog, QMessageBox, QGroupBox, QScrollArea
 )
 from PySide6.QtCore import Qt
 
-from ..style import BUTTON_PRIMARY_STYLE, BUTTON_SECONDARY_STYLE
+from ..style import (
+    COLORS, SECTION_TITLE, BUTTON_PRIMARY_STYLE, BUTTON_SECONDARY_STYLE, INPUT_STYLE
+)
+
+
+GROUP_STYLE = f"""
+    QGroupBox {{
+        font-size: 14px;
+        font-weight: 700;
+        color: {COLORS['text']};
+        border: 1px solid {COLORS['border']};
+        border-radius: 8px;
+        margin-top: 14px;
+        padding: 24px 16px 16px 16px;
+    }}
+    QGroupBox::title {{
+        subcontrol-origin: margin;
+        left: 16px;
+        padding: 0 8px;
+        color: {COLORS['text']};
+    }}
+"""
+
+BROWSE_BTN_STYLE = f"""
+    QPushButton {{
+        background: {COLORS['card_bg']};
+        color: {COLORS['text_secondary']};
+        border: 1px solid {COLORS['border']};
+        border-radius: 6px;
+        font-size: 14px;
+        font-weight: 700;
+        padding: 4px 0;
+    }}
+    QPushButton:hover {{
+        background: {COLORS['bg']};
+        border-color: {COLORS['primary']};
+        color: {COLORS['primary']};
+    }}
+"""
 
 
 class SettingsPage(QWidget):
@@ -22,25 +60,37 @@ class SettingsPage(QWidget):
         self.reports_dir = reports_dir
         self._load_config()
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 20)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # Scroll area wrapping the content
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+
+        content = QWidget()
+        content.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(16)
 
         lbl = QLabel("设置")
-        lbl.setStyleSheet("font-size: 18px; font-weight: bold; color: #2C3E50;")
+        lbl.setStyleSheet(SECTION_TITLE)
         layout.addWidget(lbl)
 
         # ── Basic settings ──
         g1 = QGroupBox("基础设置")
-        g1.setStyleSheet("QGroupBox { font-size: 14px; font-weight: bold; padding-top: 12px; }")
+        g1.setStyleSheet(GROUP_STYLE)
         g1l = QVBoxLayout(g1)
-        g1l.setSpacing(10)
+        g1l.setContentsMargins(16, 20, 16, 16)
+        g1l.setSpacing(12)
 
         self.chk_autostart = QCheckBox("开机自启动")
-        self.chk_autostart.setStyleSheet("font-size: 13px;")
         g1l.addWidget(self.chk_autostart)
 
         h1 = QHBoxLayout()
+        h1.setSpacing(10)
         h1.addWidget(QLabel("采样间隔 (秒):"))
         self.spin_interval = QSpinBox()
         self.spin_interval.setRange(1, 60)
@@ -50,6 +100,7 @@ class SettingsPage(QWidget):
         g1l.addLayout(h1)
 
         h2 = QHBoxLayout()
+        h2.setSpacing(10)
         h2.addWidget(QLabel("空闲阈值 (秒):"))
         self.spin_idle = QSpinBox()
         self.spin_idle.setRange(10, 600)
@@ -62,8 +113,9 @@ class SettingsPage(QWidget):
 
         # ── Path settings ──
         g2 = QGroupBox("路径设置")
-        g2.setStyleSheet("QGroupBox { font-size: 14px; font-weight: bold; padding-top: 12px; }")
+        g2.setStyleSheet(GROUP_STYLE)
         g2l = QVBoxLayout(g2)
+        g2l.setContentsMargins(16, 20, 16, 16)
         g2l.setSpacing(10)
 
         for label_text, default_val, attr in [
@@ -72,9 +124,11 @@ class SettingsPage(QWidget):
             ("Obsidian 输出路径:", "", "edit_obsidian"),
         ]:
             h = QHBoxLayout()
-            h.addWidget(QLabel(label_text))
+            h.setSpacing(8)
+            lbl = QLabel(label_text)
+            lbl.setFixedWidth(120)
+            h.addWidget(lbl)
             edit = QLineEdit()
-            edit.setStyleSheet("padding: 4px; font-size: 13px;")
             if attr == "edit_db":
                 edit.setText(self.config.get("db_path", default_val))
             elif attr == "edit_reports":
@@ -83,9 +137,11 @@ class SettingsPage(QWidget):
                 edit.setText(self.config.get("obsidian_output_path", default_val))
                 edit.setPlaceholderText("例如: E:\\obsidian_github\\LifeOS\\TimeTracker")
             setattr(self, attr, edit)
-            h.addWidget(edit)
+            h.addWidget(edit, 1)
             btn = QPushButton("...")
-            btn.setFixedWidth(30)
+            btn.setFixedWidth(36)
+            btn.setStyleSheet(BROWSE_BTN_STYLE)
+            btn.setCursor(Qt.PointingHandCursor)
             btn.clicked.connect(lambda checked, e=edit: self._browse_dir(e))
             h.addWidget(btn)
             g2l.addLayout(h)
@@ -94,17 +150,24 @@ class SettingsPage(QWidget):
 
         # ── Data management ──
         g3 = QGroupBox("数据管理")
-        g3.setStyleSheet("QGroupBox { font-size: 14px; font-weight: bold; padding-top: 12px; }")
+        g3.setStyleSheet(GROUP_STYLE)
         g3l = QVBoxLayout(g3)
+        g3l.setContentsMargins(16, 20, 16, 16)
         g3l.setSpacing(10)
 
         data_btns = QHBoxLayout()
+        data_btns.setSpacing(10)
+
         btn_backup = QPushButton("备份数据库")
         btn_backup.setStyleSheet(BUTTON_SECONDARY_STYLE)
+        btn_backup.setCursor(Qt.PointingHandCursor)
         btn_backup.clicked.connect(self._backup_db)
+
         btn_clean = QPushButton("清理30天前记录")
         btn_clean.setStyleSheet(BUTTON_SECONDARY_STYLE)
+        btn_clean.setCursor(Qt.PointingHandCursor)
         btn_clean.clicked.connect(self._clean_old)
+
         data_btns.addWidget(btn_backup)
         data_btns.addWidget(btn_clean)
         data_btns.addStretch()
@@ -116,8 +179,12 @@ class SettingsPage(QWidget):
         layout.addStretch()
         btn_save = QPushButton("保存设置")
         btn_save.setStyleSheet(BUTTON_PRIMARY_STYLE)
+        btn_save.setCursor(Qt.PointingHandCursor)
         btn_save.clicked.connect(self._save_all)
         layout.addWidget(btn_save, 0, Qt.AlignRight)
+
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
 
     def _load_config(self):
         with open(self.config_path, "r", encoding="utf-8") as f:

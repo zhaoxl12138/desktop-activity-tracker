@@ -47,6 +47,28 @@ class TrayManager:
 
     def _build_menu(self):
         menu = QMenu()
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background: #FFFFFF;
+                border: 1px solid #E2E8F0;
+                border-radius: 8px;
+                padding: 4px;
+                font-size: 13px;
+            }}
+            QMenu::item {{
+                padding: 8px 32px 8px 16px;
+                border-radius: 4px;
+            }}
+            QMenu::item:selected {{
+                background: #EFF6FF;
+                color: #1E40AF;
+            }}
+            QMenu::separator {{
+                height: 1px;
+                background: #E2E8F0;
+                margin: 4px 8px;
+            }}
+        """)
 
         self.action_open = QAction("打开主界面")
         self.action_open.triggered.connect(self._open_window)
@@ -74,7 +96,7 @@ class TrayManager:
 
         menu.addSeparator()
 
-        action_quit = QAction("退出")
+        action_quit = QAction("退出程序")
         action_quit.triggered.connect(self._quit)
         menu.addAction(action_quit)
 
@@ -84,6 +106,9 @@ class TrayManager:
     def _on_tray_activated(self, reason):
         if reason == QSystemTrayIcon.DoubleClick:
             self._open_window()
+        elif reason == QSystemTrayIcon.Trigger:
+            # Single left-click: show context menu (with quit option)
+            self.tray.contextMenu().popup(self.tray.geometry().center())
 
     def _open_window(self):
         if self.main_window:
@@ -132,10 +157,13 @@ class TrayManager:
         try:
             today = datetime.now().strftime("%Y-%m-%d")
             stats = database.query_date_stats(self.db_path, today)
-            effective = stats['totals'].get('effective_seconds', 0) or 0
+            totals = stats.get('totals', {})
+            effective = totals.get('effective_seconds', 0) or 0
             work_cats = {"ai_tools", "coding", "reading", "creative"}
-            work_sec = sum(c['effective_seconds'] for c in stats['by_category'] if c['category_key'] in work_cats)
-            video_sec = sum(c['effective_seconds'] for c in stats['by_category'] if c['category_key'] in ('video', 'gaming'))
+            work_sec = sum(c.get('effective_seconds', 0) or 0 for c in stats.get('by_category', [])
+                          if c.get('category_key') in work_cats)
+            video_sec = sum(c.get('effective_seconds', 0) or 0 for c in stats.get('by_category', [])
+                           if c.get('category_key') in ('video', 'gaming'))
             status = "记录中"
             if self.main_window and hasattr(self.main_window, 'worker') and self.main_window.worker.is_paused():
                 status = "已暂停"

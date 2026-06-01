@@ -12,28 +12,22 @@ from ..style import COLORS, TABLE_STYLE, get_category_color
 class LiveMonitorPage(QWidget):
     def __init__(self):
         super().__init__()
-        self._samples = []  # last 20 samples
+        self._samples = []
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(8)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(16)
 
-        # Title row
-        title = QLabel("实时监控")
-        title.setStyleSheet("font-size: 18px; font-weight: bold; color: #2C3E50;")
-        layout.addWidget(title)
-
-        # Compact 4-column info grid
+        # Compact info panel — 2 rows × 4 columns in a styled card
         info = QFrame()
         info.setStyleSheet(
-            "background: #FFFFFF; border: 1px solid #E0E0E0; border-radius: 6px; padding: 10px;"
+            f"background: {COLORS['card_bg']}; border: 1px solid {COLORS['border']};"
+            f"border-radius: 10px; padding: 14px 18px;"
         )
         grid = QGridLayout(info)
-        grid.setContentsMargins(8, 6, 8, 6)
-        grid.setVerticalSpacing(4)
-        grid.setHorizontalSpacing(16)
-
-        cell_style = "font-size: 12px; color: #2C3E50;"
+        grid.setContentsMargins(12, 10, 12, 10)
+        grid.setVerticalSpacing(6)
+        grid.setHorizontalSpacing(20)
 
         self.lbl_process = QLabel("--")
         self.lbl_title = QLabel("--")
@@ -44,29 +38,28 @@ class LiveMonitorPage(QWidget):
         self.lbl_idle = QLabel("--")
         self.lbl_status = QLabel("--")
 
-        widgets = [
+        items = [
             ("进程", self.lbl_process), ("窗口", self.lbl_title),
             ("分类", self.lbl_category), ("前台停留", self.lbl_duration),
             ("有效时间", self.lbl_effective), ("挂机时间", self.lbl_session_idle),
             ("空闲秒数", self.lbl_idle), ("状态", self.lbl_status),
         ]
-        for i, (label, widget) in enumerate(widgets):
+        for i, (label_text, widget) in enumerate(items):
             row, col = i % 4, (i // 4) * 2
-            lbl_key = QLabel(label)
-            lbl_key.setStyleSheet("font-size: 11px; color: #7F8C8D;")
-            widget.setStyleSheet(cell_style)
-            grid.addWidget(lbl_key, row, col)
+            lbl = QLabel(label_text)
+            lbl.setStyleSheet(f"font-size: 10px; color: {COLORS['text_muted']}; font-weight: 600;")
+            widget.setStyleSheet(f"font-size: 12px; color: {COLORS['text']}; font-weight: 600;")
+            grid.addWidget(lbl, row, col)
             grid.addWidget(widget, row, col + 1)
 
         layout.addWidget(info)
 
-        # History table fills remaining space
+        # History table
         self.table = QTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(["时间", "进程", "归一化标题", "分类", "有效"])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.horizontalHeader().setDefaultSectionSize(80)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setStyleSheet(TABLE_STYLE)
         self.table.setMinimumHeight(200)
@@ -84,23 +77,29 @@ class LiveMonitorPage(QWidget):
         dur = sample.get('duration_seconds', 0) or 0
         eff = sample.get('effective_seconds', 0) or 0
         sidle = sample.get('session_idle_seconds', 0) or 0
+        idle_s = sample.get('idle_seconds', 0) or 0
 
         self.lbl_process.setText(proc)
         self.lbl_title.setText(title)
         self.lbl_category.setText(cat_name)
-        self.lbl_category.setStyleSheet(f"font-size: 12px; color: {get_category_color(cat_key)}; font-weight: bold;")
+        self.lbl_category.setStyleSheet(
+            f"font-size: 12px; color: {get_category_color(cat_key)}; font-weight: 700;"
+        )
         self.lbl_duration.setText(fmt_seconds(dur))
         self.lbl_effective.setText(fmt_seconds(eff))
         self.lbl_session_idle.setText(fmt_seconds(sidle))
-        self.lbl_idle.setText(f"{sample.get('idle_seconds', 0):.0f}s")
+        self.lbl_idle.setText(f"{idle_s:.0f}s")
 
         if sample.get("is_effective"):
-            self.lbl_status.setText("有效计时")
-            self.lbl_status.setStyleSheet("font-size: 12px; color: #2ECC71; font-weight: bold;")
+            self.lbl_status.setText("● 有效")
+            self.lbl_status.setStyleSheet(
+                f"font-size: 12px; color: {COLORS['success_green']}; font-weight: 700;"
+            )
         else:
-            idle_s = sample.get('idle_seconds', 0) or 0
-            self.lbl_status.setText(f"挂机 {idle_s:.0f}s")
-            self.lbl_status.setStyleSheet("font-size: 12px; color: #E67E22; font-weight: bold;")
+            self.lbl_status.setText(f"◉ 挂机 {idle_s:.0f}s")
+            self.lbl_status.setStyleSheet(
+                f"font-size: 12px; color: {COLORS['warning_yellow']}; font-weight: 700;"
+            )
 
         self.table.setRowCount(len(self._samples))
         for i, s in enumerate(self._samples):

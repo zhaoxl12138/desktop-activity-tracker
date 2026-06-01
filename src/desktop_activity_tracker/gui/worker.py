@@ -78,6 +78,13 @@ class RecordingWorker(QThread):
                 idle_sec = activity_detector.get_idle_seconds()
                 win_info = window_detector.get_foreground_window_info()
 
+                # Skip self — don't track the tracker's own window
+                if win_info and win_info.get("process_name", "").lower() == "python.exe":
+                    title = win_info.get("window_title", "")
+                    if "Desktop Activity Tracker" in title:
+                        self.msleep(int(self.sample_interval * 1000))
+                        continue
+
                 snapshot = tracker.tick(idle_sec, win_info)
 
                 if snapshot is not None:

@@ -8,6 +8,9 @@ build/
 *.egg
 *.spec
 
+# Exe
+*.exe
+
 # Virtual environments
 .venv/
 venv/
@@ -16,10 +19,8 @@ ENV/
 
 # Database
 *.db
-data/*.db
-
-# Logs
-logs/*.log
+*.db-shm
+*.db-wal
 
 # Generated reports
 reports/*.csv
@@ -39,9 +40,3 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
-
-# Keep directory structure
-!data/.gitkeep
-!reports/.gitkeep
-!logs/.gitkeep
-!assets/.gitkeep

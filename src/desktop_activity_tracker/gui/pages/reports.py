@@ -8,10 +8,10 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget,
     QTableWidgetItem, QHeaderView, QPushButton, QMessageBox, QTabWidget, QFrame
 )
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
 
 from ... import exporter
-from ..style import TABLE_STYLE, BUTTON_PRIMARY_STYLE, BUTTON_SECONDARY_STYLE
+from ..style import COLORS, TABLE_STYLE, BUTTON_PRIMARY_STYLE, BUTTON_SECONDARY_STYLE, SECTION_TITLE
 
 
 class ReportsPage(QWidget):
@@ -22,31 +22,40 @@ class ReportsPage(QWidget):
         self.obsidian_path = obsidian_path
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(16)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(14)
 
         lbl = QLabel("报告管理")
-        lbl.setStyleSheet("font-size: 18px; font-weight: bold; color: #2C3E50;")
+        lbl.setStyleSheet(SECTION_TITLE)
         layout.addWidget(lbl)
 
-        # ── Generation buttons ──
+        # Generation buttons row
         gen_frame = QFrame()
-        gen_frame.setStyleSheet("background: #F5F6FA; border-radius: 6px; padding: 8px;")
+        gen_frame.setStyleSheet(
+            f"background: {COLORS['bg']}; border: 1px solid {COLORS['border']};"
+            f"border-radius: 8px; padding: 4px;"
+        )
         gen_layout = QHBoxLayout(gen_frame)
-        gen_layout.setContentsMargins(8, 4, 8, 4)
+        gen_layout.setContentsMargins(12, 8, 12, 8)
+        gen_layout.setSpacing(10)
 
-        gen_layout.addWidget(QLabel("生成报告:"))
+        gen_label = QLabel("生成报告:")
+        gen_label.setStyleSheet(f"font-size: 13px; color: {COLORS['text_secondary']}; font-weight: 600;")
+        gen_layout.addWidget(gen_label)
 
         btn_daily = QPushButton("今日日报")
         btn_daily.setStyleSheet(BUTTON_PRIMARY_STYLE)
+        btn_daily.setCursor(Qt.PointingHandCursor)
         btn_daily.clicked.connect(self._generate_daily)
 
         btn_weekly = QPushButton("本周周报")
         btn_weekly.setStyleSheet(BUTTON_PRIMARY_STYLE)
+        btn_weekly.setCursor(Qt.PointingHandCursor)
         btn_weekly.clicked.connect(self._generate_weekly)
 
         btn_monthly = QPushButton("本月月报")
         btn_monthly.setStyleSheet(BUTTON_PRIMARY_STYLE)
+        btn_monthly.setCursor(Qt.PointingHandCursor)
         btn_monthly.clicked.connect(self._generate_monthly)
 
         gen_layout.addWidget(btn_daily)
@@ -56,18 +65,43 @@ class ReportsPage(QWidget):
 
         btn_open_dir = QPushButton("打开报告目录")
         btn_open_dir.setStyleSheet(BUTTON_SECONDARY_STYLE)
+        btn_open_dir.setCursor(Qt.PointingHandCursor)
         btn_open_dir.clicked.connect(lambda: os.startfile(self.reports_dir) if os.path.exists(self.reports_dir) else None)
 
         btn_obsidian = QPushButton("同步到 Obsidian")
         btn_obsidian.setStyleSheet(BUTTON_SECONDARY_STYLE)
+        btn_obsidian.setCursor(Qt.PointingHandCursor)
         btn_obsidian.clicked.connect(self._sync_obsidian)
 
         gen_layout.addWidget(btn_open_dir)
         gen_layout.addWidget(btn_obsidian)
         layout.addWidget(gen_frame)
 
-        # ── Tabs: daily / weekly / monthly ──
+        # Tabs: daily / weekly / monthly
         self.tabs = QTabWidget()
+        self.tabs.setStyleSheet(f"""
+            QTabWidget::pane {{
+                border: 1px solid {COLORS['border']};
+                border-radius: 8px;
+                background: {COLORS['card_bg']};
+            }}
+            QTabBar::tab {{
+                padding: 10px 20px;
+                font-size: 13px;
+                font-weight: 600;
+                color: {COLORS['text_secondary']};
+                border: none;
+                border-bottom: 2px solid transparent;
+                margin-right: 2px;
+            }}
+            QTabBar::tab:selected {{
+                color: {COLORS['primary']};
+                border-bottom: 2px solid {COLORS['primary']};
+            }}
+            QTabBar::tab:hover:!selected {{
+                color: {COLORS['text']};
+            }}
+        """)
         self.tab_daily = self._make_table()
         self.tab_weekly = self._make_table()
         self.tab_monthly = self._make_table()
@@ -75,7 +109,7 @@ class ReportsPage(QWidget):
         self.tabs.addTab(self.tab_daily, "日报")
         self.tabs.addTab(self.tab_weekly, "周报")
         self.tabs.addTab(self.tab_monthly, "月报")
-        layout.addWidget(self.tabs)
+        layout.addWidget(self.tabs, 1)
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
@@ -103,7 +137,6 @@ class ReportsPage(QWidget):
             tab.setRowCount(len(files))
             for i, f in enumerate(files):
                 fname = os.path.basename(f)
-                # Show a short label
                 label = fname.replace(".md", "").replace("_weekly", "").replace("_monthly", "")
                 tab.setItem(i, 0, QTableWidgetItem(label))
                 tab.setItem(i, 1, QTableWidgetItem(fname))

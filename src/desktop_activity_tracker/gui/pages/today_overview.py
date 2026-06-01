@@ -6,11 +6,16 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, QTextEdit
 )
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QFont
 
 from ... import database
 from ...utils import fmt_seconds
 from ...exporter import _calculate_efficiency_score, _generate_suggestions
 from ..style import COLORS
+
+
+CARD_VALUE_STYLE = "font-size: 26px; font-weight: 800;"
+CARD_LABEL_STYLE = f"font-size: 12px; color: {COLORS['text_muted']};"
 
 
 class TodayOverviewPage(QWidget):
@@ -19,89 +24,109 @@ class TodayOverviewPage(QWidget):
         self.db_path = db_path
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(16)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(18)
 
-        title = QLabel("今日概览")
-        title.setStyleSheet("font-size: 18px; font-weight: bold; color: #2C3E50;")
-        layout.addWidget(title)
-
-        # 5 data cards — two rows
-        cards_grid = QVBoxLayout()
-        cards_grid.setSpacing(12)
+        # Card grid: row1 (3 cards) + row2 (2 cards, fill remaining space)
         self.cards = {}
 
         row1 = QHBoxLayout()
         row1.setSpacing(12)
-        for key, label, color in [
-            ("total", "总使用时长", COLORS["primary"]),
-            ("work", "学习/工作", COLORS["coding_green"]),
-            ("social", "社交通讯", "#1ABC9C"),
+        for key, label, icon, color in [
+            ("total", "总使用时长", "\U0001F552", COLORS["text"]),
+            ("work", "学习/工作", "\U0001F4AA", COLORS["coding_green"]),
+            ("social", "社交通讯", "\U0001F4AC", COLORS["social_teal"]),
         ]:
-            card = self._make_card(label, color)
-            row1.addWidget(card)
+            card = self._make_card(icon, label, color)
+            row1.addWidget(card, 1)
             self.cards[key] = card
-        cards_grid.addLayout(row1)
+        layout.addLayout(row1)
 
         row2 = QHBoxLayout()
         row2.setSpacing(12)
-        for key, label, color in [
-            ("entertainment", "视频娱乐", COLORS["video_orange"]),
-            ("idle", "挂机时间", COLORS["idle_gray"]),
+        for key, label, icon, color in [
+            ("entertainment", "视频娱乐", "\U0001F3AE", COLORS["video_orange"]),
+            ("idle", "挂机时间", "\U0001F4A4", COLORS["idle_gray"]),
         ]:
-            card = self._make_card(label, color)
-            row2.addWidget(card)
-            row2.addStretch()
+            card = self._make_card(icon, label, color)
+            row2.addWidget(card, 1)
             self.cards[key] = card
-        cards_grid.addLayout(row2)
+        layout.addLayout(row2)
 
-        layout.addLayout(cards_grid)
+        # Efficiency score
+        eff_frame = QFrame()
+        eff_frame.setStyleSheet(
+            f"background: {COLORS['card_bg']}; border: 1px solid {COLORS['border']};"
+            f"border-radius: 10px;"
+        )
+        eff_layout = QHBoxLayout(eff_frame)
+        eff_layout.setContentsMargins(24, 18, 24, 18)
+        eff_layout.setSpacing(16)
 
-        # Efficiency score row
-        eff_layout = QHBoxLayout()
+        eff_left = QVBoxLayout()
+        eff_left.setSpacing(4)
         self.eff_score = QLabel("--")
-        self.eff_score.setStyleSheet("font-size: 48px; font-weight: bold; color: #2C3E50;")
-        self.eff_grade = QLabel("等待数据...")
-        self.eff_grade.setStyleSheet("font-size: 14px; color: #7F8C8D; margin-left: 12px;")
-        eff_layout.addWidget(self.eff_score)
-        eff_layout.addWidget(self.eff_grade)
-        eff_layout.addStretch()
-        layout.addLayout(eff_layout)
+        self.eff_score.setFont(QFont("Microsoft YaHei", 42, QFont.Bold))
+        self.eff_score.setStyleSheet(f"color: {COLORS['primary']};")
+        eff_label = QLabel("效率评分")
+        eff_label.setStyleSheet(
+            f"font-size: 13px; color: {COLORS['text_secondary']}; font-weight: 600;"
+        )
+        eff_left.addWidget(self.eff_score)
+        eff_left.addWidget(eff_label)
 
-        # Suggestions block
+        self.eff_grade = QLabel("等待数据...")
+        self.eff_grade.setStyleSheet(
+            "font-size: 15px; font-weight: 700; padding: 6px 18px;"
+            "border-radius: 20px;"
+        )
+        eff_layout.addLayout(eff_left)
+        eff_layout.addStretch()
+        eff_layout.addWidget(self.eff_grade, 0, Qt.AlignVCenter)
+        layout.addWidget(eff_frame)
+
+        # Suggestions
         self.suggestion_text = QTextEdit()
         self.suggestion_text.setReadOnly(True)
-        self.suggestion_text.setMaximumHeight(100)
-        self.suggestion_text.setStyleSheet("font-size: 13px; color: #2C3E50; background: #F5F6FA; border: none; padding: 8px;")
+        self.suggestion_text.setMaximumHeight(80)
+        self.suggestion_text.setStyleSheet(
+            f"font-size: 13px; color: {COLORS['text_secondary']};"
+            f"background: {COLORS['card_bg']}; border: 1px solid {COLORS['border']};"
+            f"border-radius: 8px; padding: 12px;"
+        )
         layout.addWidget(self.suggestion_text)
-
-        layout.addStretch()
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
         self.timer.start(30000)
         self.refresh()
 
-    def _make_card(self, label, color):
+    def _make_card(self, icon, label, accent_color):
         card = QFrame()
-        card.setObjectName("dataCard")
-        card.setStyleSheet(f"""
-            QFrame#dataCard {{
-                background: #FFFFFF;
-                border: 1px solid #E0E0E0;
-                border-left: 4px solid {color};
-                border-radius: 8px;
-                padding: 16px;
-            }}
-        """)
+        card.setStyleSheet(
+            f"background: {COLORS['card_bg']}; border: 1px solid {COLORS['border']};"
+            f"border-radius: 10px;"
+        )
         layout = QVBoxLayout(card)
-        layout.setSpacing(6)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(8)
+
+        header = QHBoxLayout()
+        header.setSpacing(4)
+        icon_lbl = QLabel(icon)
+        icon_lbl.setStyleSheet("font-size: 16px;")
+        header.addWidget(icon_lbl)
+        header.addStretch()
+        layout.addLayout(header)
+
         value_label = QLabel("--")
-        value_label.setStyleSheet(f"font-size: 22px; font-weight: bold; color: {color};")
-        title_label = QLabel(label)
-        title_label.setStyleSheet("font-size: 12px; color: #7F8C8D;")
+        value_label.setStyleSheet(f"{CARD_VALUE_STYLE} color: {accent_color};")
         layout.addWidget(value_label)
+
+        title_label = QLabel(label)
+        title_label.setStyleSheet(CARD_LABEL_STYLE)
         layout.addWidget(title_label)
+
         card.value_label = value_label
         return card
 
@@ -115,9 +140,15 @@ class TodayOverviewPage(QWidget):
             total_sec = effective + idle_sec
 
             work_cats = {"ai_tools", "coding", "reading", "creative"}
-            work_sec = sum(c.get("effective_seconds", 0) or 0 for c in stats.get("by_category", []) if c["category_key"] in work_cats)
-            social_sec = sum(c.get("effective_seconds", 0) or 0 for c in stats.get("by_category", []) if c["category_key"] == "social")
-            video_sec = sum(c.get("effective_seconds", 0) or 0 for c in stats.get("by_category", []) if c["category_key"] in ("video", "gaming"))
+            work_sec = sum(c.get("effective_seconds", 0) or 0
+                          for c in stats.get("by_category", [])
+                          if c.get("category_key") in work_cats)
+            social_sec = sum(c.get("effective_seconds", 0) or 0
+                           for c in stats.get("by_category", [])
+                           if c.get("category_key") == "social")
+            video_sec = sum(c.get("effective_seconds", 0) or 0
+                          for c in stats.get("by_category", [])
+                          if c.get("category_key") in ("video", "gaming"))
 
             self.cards["total"].value_label.setText(fmt_seconds(total_sec))
             self.cards["work"].value_label.setText(fmt_seconds(work_sec))
@@ -129,22 +160,32 @@ class TodayOverviewPage(QWidget):
             if score is not None:
                 self.eff_score.setText(f"{score}")
                 if score >= 80:
-                    grade, color = "优秀", COLORS["coding_green"]
+                    grade, bg = "优秀", COLORS["coding_green"]
                 elif score >= 60:
-                    grade, color = "良好", COLORS["primary"]
+                    grade, bg = "良好", COLORS["primary"]
                 elif score >= 40:
-                    grade, color = "一般", COLORS["warning_yellow"]
+                    grade, bg = "一般", COLORS["warning_yellow"]
                 else:
-                    grade, color = "需改进", COLORS["danger_red"]
+                    grade, bg = "需改进", COLORS["danger_red"]
                 self.eff_grade.setText(grade)
-                self.eff_grade.setStyleSheet(f"font-size: 14px; color: {color}; margin-left: 12px;")
+                self.eff_grade.setStyleSheet(
+                    f"font-size: 15px; font-weight: 700; padding: 6px 18px;"
+                    f"background: {bg}; color: white; border-radius: 20px;"
+                )
             else:
                 self.eff_score.setText("--")
-                self.eff_grade.setText("数据不足（<30分钟）")
+                self.eff_grade.setText("数据不足")
+                self.eff_grade.setStyleSheet(
+                    f"font-size: 15px; font-weight: 700; padding: 6px 18px;"
+                    f"background: {COLORS['border']}; color: {COLORS['text_muted']};"
+                    f"border-radius: 20px;"
+                )
 
             suggestions, _, _ = _generate_suggestions(self.db_path, today, stats)
-            self.suggestion_text.setText("\n".join(f"• {s}" for s in suggestions) if suggestions else "暂无建议")
-        except Exception as e:
-            import sys, traceback
-            print(f"[TodayOverview] refresh error: {e}", file=sys.stderr)
+            self.suggestion_text.setText(
+                "\n".join(f"• {s}" for s in suggestions) if suggestions else ""
+            )
+            self.suggestion_text.setVisible(bool(suggestions))
+        except Exception:
+            import traceback
             traceback.print_exc()

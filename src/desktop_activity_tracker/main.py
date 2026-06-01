@@ -91,7 +91,7 @@ def cmd_start(config, config_path):
         on_flush=on_flush,
     )
 
-    print(f"Desktop Activity Tracker v1.1.0")
+    print(f"Desktop Activity Tracker v1.2.0")
     print(f"配置: {config_path}")
     print(f"数据库: {db_path}")
     print(f"采样间隔: {sample_interval}s | 刷盘间隔: {flush_interval}s")

@@ -1,6 +1,5 @@
 """Rule config page - edit software classification rules."""
 
-import os
 import yaml
 
 from PySide6.QtWidgets import (
@@ -9,7 +8,33 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
-from ..style import CARD_STYLE, BUTTON_PRIMARY_STYLE, BUTTON_SECONDARY_STYLE
+from ..style import (
+    COLORS, SECTION_TITLE, BUTTON_PRIMARY_STYLE, BUTTON_SECONDARY_STYLE, INPUT_STYLE
+)
+
+LIST_STYLE = f"""
+    QListWidget {{
+        background: {COLORS['card_bg']};
+        border: 1px solid {COLORS['border']};
+        border-radius: 8px;
+        font-size: 13px;
+        padding: 4px;
+        outline: none;
+    }}
+    QListWidget::item {{
+        padding: 10px 14px;
+        border-radius: 6px;
+        margin: 1px 4px;
+    }}
+    QListWidget::item:selected {{
+        background: {COLORS['primary']};
+        color: white;
+        font-weight: 600;
+    }}
+    QListWidget::item:hover:!selected {{
+        background: {COLORS['bg']};
+    }}
+"""
 
 
 class RuleConfigPage(QWidget):
@@ -19,66 +44,128 @@ class RuleConfigPage(QWidget):
         self._load_config()
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(16)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(14)
 
         lbl = QLabel("规则配置")
-        lbl.setStyleSheet("font-size: 18px; font-weight: bold; color: #2C3E50;")
+        lbl.setStyleSheet(SECTION_TITLE)
         layout.addWidget(lbl)
 
         splitter = QSplitter(Qt.Horizontal)
 
         # Left: category list
         left = QFrame()
-        left.setStyleSheet(CARD_STYLE)
+        left.setStyleSheet(
+            f"background: {COLORS['card_bg']}; border: 1px solid {COLORS['border']};"
+            f"border-radius: 10px; padding: 4px;"
+        )
         left_layout = QVBoxLayout(left)
-        left_layout.addWidget(QLabel("分类列表"))
+        left_layout.setContentsMargins(12, 12, 12, 12)
+        left_layout.setSpacing(8)
+
+        cat_header = QLabel("分类列表")
+        cat_header.setStyleSheet(
+            f"font-size: 13px; font-weight: 700; color: {COLORS['text_secondary']};"
+            f"padding: 2px 4px;"
+        )
+        left_layout.addWidget(cat_header)
+
         self.cat_list = QListWidget()
-        self.cat_list.setStyleSheet("font-size: 14px;")
+        self.cat_list.setStyleSheet(LIST_STYLE)
         self.cat_list.currentRowChanged.connect(self._on_cat_selected)
-        left_layout.addWidget(self.cat_list)
+        left_layout.addWidget(self.cat_list, 1)
         splitter.addWidget(left)
 
         # Right: editor
         right = QFrame()
-        right.setStyleSheet(CARD_STYLE)
+        right.setStyleSheet(
+            f"background: {COLORS['card_bg']}; border: 1px solid {COLORS['border']};"
+            f"border-radius: 10px; padding: 4px;"
+        )
         right_layout = QVBoxLayout(right)
-        right_layout.setSpacing(12)
+        right_layout.setContentsMargins(16, 16, 16, 16)
+        right_layout.setSpacing(10)
 
-        right_layout.addWidget(QLabel("分类名称"))
+        section_label_style = f"font-size: 12px; font-weight: 700; color: {COLORS['text_secondary']};"
+
+        lbl_name = QLabel("分类名称")
+        lbl_name.setStyleSheet(section_label_style)
+        right_layout.addWidget(lbl_name)
         self.edit_name = QLineEdit()
-        self.edit_name.setStyleSheet("padding: 6px; font-size: 13px;")
+        self.edit_name.setStyleSheet(INPUT_STYLE)
         right_layout.addWidget(self.edit_name)
 
-        right_layout.addWidget(QLabel("进程名（每行一个）"))
+        lbl_procs = QLabel("进程名（每行一个）")
+        lbl_procs.setStyleSheet(section_label_style)
+        right_layout.addWidget(lbl_procs)
         self.edit_processes = QTextEdit()
         self.edit_processes.setMaximumHeight(120)
-        self.edit_processes.setStyleSheet("font-size: 13px;")
+        self.edit_processes.setStyleSheet(
+            f"border: 1px solid {COLORS['border']}; border-radius: 6px;"
+            f"padding: 8px; font-size: 13px; background: {COLORS['card_bg']};"
+            f"color: {COLORS['text']};"
+        )
         right_layout.addWidget(self.edit_processes)
 
-        right_layout.addWidget(QLabel("标题关键词（每行一个）"))
+        lbl_kws = QLabel("标题关键词（每行一个）")
+        lbl_kws.setStyleSheet(section_label_style)
+        right_layout.addWidget(lbl_kws)
         self.edit_keywords = QTextEdit()
         self.edit_keywords.setMaximumHeight(120)
-        self.edit_keywords.setStyleSheet("font-size: 13px;")
+        self.edit_keywords.setStyleSheet(
+            f"border: 1px solid {COLORS['border']}; border-radius: 6px;"
+            f"padding: 8px; font-size: 13px; background: {COLORS['card_bg']};"
+            f"color: {COLORS['text']};"
+        )
         right_layout.addWidget(self.edit_keywords)
 
-        right_layout.addWidget(QLabel("计时规则"))
+        lbl_rule = QLabel("计时规则")
+        lbl_rule.setStyleSheet(section_label_style)
+        right_layout.addWidget(lbl_rule)
         self.edit_rule = QComboBox()
         self.edit_rule.addItems(["interactive_required (需要活跃)", "passive_allowed (允许被动观看)"])
+        self.edit_rule.setStyleSheet(f"""
+            QComboBox {{
+                border: 1px solid {COLORS['border']};
+                border-radius: 6px;
+                padding: 8px 12px;
+                font-size: 13px;
+                background: {COLORS['card_bg']};
+                color: {COLORS['text']};
+            }}
+            QComboBox:hover {{ border-color: {COLORS['primary']}; }}
+            QComboBox::drop-down {{ border: none; width: 24px; }}
+            QComboBox QAbstractItemView {{
+                background: {COLORS['card_bg']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 4px;
+                selection-background-color: {COLORS['primary']};
+                selection-color: white;
+                padding: 4px;
+            }}
+        """)
         right_layout.addWidget(self.edit_rule)
 
         right_layout.addStretch()
 
         btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
         btn_save = QPushButton("保存修改")
         btn_save.setStyleSheet(BUTTON_PRIMARY_STYLE)
+        btn_save.setCursor(Qt.PointingHandCursor)
         btn_save.clicked.connect(self._save_current)
+
         btn_add = QPushButton("添加分类")
         btn_add.setStyleSheet(BUTTON_SECONDARY_STYLE)
+        btn_add.setCursor(Qt.PointingHandCursor)
         btn_add.clicked.connect(self._add_category)
+
         btn_delete = QPushButton("删除分类")
         btn_delete.setStyleSheet(BUTTON_SECONDARY_STYLE)
+        btn_delete.setCursor(Qt.PointingHandCursor)
         btn_delete.clicked.connect(self._delete_current)
+
         btn_row.addStretch()
         btn_row.addWidget(btn_add)
         btn_row.addWidget(btn_delete)
@@ -87,7 +174,7 @@ class RuleConfigPage(QWidget):
 
         splitter.addWidget(right)
         splitter.setSizes([200, 500])
-        layout.addWidget(splitter)
+        layout.addWidget(splitter, 1)
 
         self._populate_list()
 
