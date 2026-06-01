@@ -24,8 +24,9 @@ GROUP_STYLE = f"""
         font-weight: 700;
         color: {COLORS['text']};
         border: 1px solid {COLORS['border']};
-        border-radius: 8px;
+        border-radius: 14px;
         margin-top: 14px;
+        background: {COLORS['card_bg']};
         padding: 24px 16px 16px 16px;
     }}
     QGroupBox::title {{
@@ -38,16 +39,16 @@ GROUP_STYLE = f"""
 
 BROWSE_BTN_STYLE = f"""
     QPushButton {{
-        background: {COLORS['card_bg']};
+        background: {COLORS['panel_bg_alt']};
         color: {COLORS['text_secondary']};
         border: 1px solid {COLORS['border']};
-        border-radius: 6px;
+        border-radius: 8px;
         font-size: 14px;
         font-weight: 700;
         padding: 4px 0;
     }}
     QPushButton:hover {{
-        background: {COLORS['bg']};
+        background: {COLORS['card_bg_alt']};
         border-color: {COLORS['primary']};
         color: {COLORS['primary']};
     }}

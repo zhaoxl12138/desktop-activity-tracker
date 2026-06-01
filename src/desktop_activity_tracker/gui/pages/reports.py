@@ -11,7 +11,14 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer
 
 from ... import exporter
-from ..style import COLORS, TABLE_STYLE, BUTTON_PRIMARY_STYLE, BUTTON_SECONDARY_STYLE, SECTION_TITLE
+from ..style import (
+    COLORS,
+    TABLE_STYLE,
+    BUTTON_PRIMARY_STYLE,
+    BUTTON_SECONDARY_STYLE,
+    SECTION_TITLE,
+    DASHBOARD_CARD_STYLE,
+)
 
 
 class ReportsPage(QWidget):
@@ -31,10 +38,8 @@ class ReportsPage(QWidget):
 
         # Generation buttons row
         gen_frame = QFrame()
-        gen_frame.setStyleSheet(
-            f"background: {COLORS['bg']}; border: 1px solid {COLORS['border']};"
-            f"border-radius: 8px; padding: 4px;"
-        )
+        gen_frame.setObjectName("dashboardCard")
+        gen_frame.setStyleSheet(DASHBOARD_CARD_STYLE)
         gen_layout = QHBoxLayout(gen_frame)
         gen_layout.setContentsMargins(12, 8, 12, 8)
         gen_layout.setSpacing(10)
@@ -82,7 +87,7 @@ class ReportsPage(QWidget):
         self.tabs.setStyleSheet(f"""
             QTabWidget::pane {{
                 border: 1px solid {COLORS['border']};
-                border-radius: 8px;
+                border-radius: 12px;
                 background: {COLORS['card_bg']};
             }}
             QTabBar::tab {{
@@ -90,12 +95,15 @@ class ReportsPage(QWidget):
                 font-size: 13px;
                 font-weight: 600;
                 color: {COLORS['text_secondary']};
-                border: none;
+                background: {COLORS['panel_bg']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 10px;
                 border-bottom: 2px solid transparent;
-                margin-right: 2px;
+                margin-right: 6px;
             }}
             QTabBar::tab:selected {{
-                color: {COLORS['primary']};
+                color: {COLORS['text_inverse']};
+                background: {COLORS['primary']};
                 border-bottom: 2px solid {COLORS['primary']};
             }}
             QTabBar::tab:hover:!selected {{

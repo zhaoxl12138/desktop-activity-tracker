@@ -29,6 +29,9 @@ The current Dashboard uses a restrained dark theme instead of a decorative skin.
 
 ## Next UI Work
 
-- Bring non-home pages closer to the dark theme.
 - Add screenshot smoke checks for the default window size.
 - Improve timeline hover/details after the current report data path is stable.
+
+## 2026-06-01 Follow-up
+
+Non-home pages now share the dark table, tab, input, group, and card language. Remaining UI work should focus on automated regression checks and targeted readability improvements instead of another broad theme pass.

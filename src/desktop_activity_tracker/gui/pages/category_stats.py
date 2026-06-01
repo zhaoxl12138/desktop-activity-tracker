@@ -25,7 +25,7 @@ class CategoryStatsPage(QWidget):
         self.error_lbl = QLabel()
         self.error_lbl.setStyleSheet(
             f"color: {COLORS['danger_red']}; font-size: 12px;"
-            f"background: #FEF2F2; border: 1px solid #FECACA;"
+            f"background: #3A1620; border: 1px solid {COLORS['danger_red']};"
             f"border-radius: 6px; padding: 10px;"
         )
         self.error_lbl.hide()
@@ -95,7 +95,7 @@ class CategoryStatsPage(QWidget):
                 card = QFrame()
                 card.setStyleSheet(
                     f"background: {COLORS['card_bg']}; border: 1px solid {COLORS['border']};"
-                    f"border-radius: 8px;"
+                    f"border-radius: 12px;"
                 )
                 card_layout = QHBoxLayout(card)
                 card_layout.setContentsMargins(16, 10, 16, 10)
@@ -122,7 +122,7 @@ class CategoryStatsPage(QWidget):
                 bar.setFixedHeight(16)
                 bar.setStyleSheet(f"""
                     QProgressBar {{
-                        background: {COLORS['border_light']};
+                        background: {COLORS['panel_bg']};
                         border: none;
                         border-radius: 8px;
                     }}

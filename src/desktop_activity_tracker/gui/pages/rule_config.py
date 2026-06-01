@@ -14,9 +14,9 @@ from ..style import (
 
 LIST_STYLE = f"""
     QListWidget {{
-        background: {COLORS['card_bg']};
+        background: {COLORS['panel_bg']};
         border: 1px solid {COLORS['border']};
-        border-radius: 8px;
+        border-radius: 10px;
         font-size: 13px;
         padding: 4px;
         outline: none;
@@ -32,7 +32,7 @@ LIST_STYLE = f"""
         font-weight: 600;
     }}
     QListWidget::item:hover:!selected {{
-        background: {COLORS['bg']};
+        background: {COLORS['panel_bg_alt']};
     }}
 """
 
@@ -57,7 +57,7 @@ class RuleConfigPage(QWidget):
         left = QFrame()
         left.setStyleSheet(
             f"background: {COLORS['card_bg']}; border: 1px solid {COLORS['border']};"
-            f"border-radius: 10px; padding: 4px;"
+            f"border-radius: 14px; padding: 4px;"
         )
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(12, 12, 12, 12)
@@ -80,7 +80,7 @@ class RuleConfigPage(QWidget):
         right = QFrame()
         right.setStyleSheet(
             f"background: {COLORS['card_bg']}; border: 1px solid {COLORS['border']};"
-            f"border-radius: 10px; padding: 4px;"
+            f"border-radius: 14px; padding: 4px;"
         )
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(16, 16, 16, 16)
@@ -102,7 +102,7 @@ class RuleConfigPage(QWidget):
         self.edit_processes.setMaximumHeight(120)
         self.edit_processes.setStyleSheet(
             f"border: 1px solid {COLORS['border']}; border-radius: 6px;"
-            f"padding: 8px; font-size: 13px; background: {COLORS['card_bg']};"
+            f"padding: 8px; font-size: 13px; background: {COLORS['panel_bg_alt']};"
             f"color: {COLORS['text']};"
         )
         right_layout.addWidget(self.edit_processes)
@@ -114,7 +114,7 @@ class RuleConfigPage(QWidget):
         self.edit_keywords.setMaximumHeight(120)
         self.edit_keywords.setStyleSheet(
             f"border: 1px solid {COLORS['border']}; border-radius: 6px;"
-            f"padding: 8px; font-size: 13px; background: {COLORS['card_bg']};"
+            f"padding: 8px; font-size: 13px; background: {COLORS['panel_bg_alt']};"
             f"color: {COLORS['text']};"
         )
         right_layout.addWidget(self.edit_keywords)
@@ -130,13 +130,13 @@ class RuleConfigPage(QWidget):
                 border-radius: 6px;
                 padding: 8px 12px;
                 font-size: 13px;
-                background: {COLORS['card_bg']};
+                background: {COLORS['panel_bg_alt']};
                 color: {COLORS['text']};
             }}
             QComboBox:hover {{ border-color: {COLORS['primary']}; }}
             QComboBox::drop-down {{ border: none; width: 24px; }}
             QComboBox QAbstractItemView {{
-                background: {COLORS['card_bg']};
+                background: {COLORS['panel_bg_alt']};
                 border: 1px solid {COLORS['border']};
                 border-radius: 4px;
                 selection-background-color: {COLORS['primary']};

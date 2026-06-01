@@ -251,12 +251,24 @@ QTableWidget, QTableView {{
     border: 1px solid {COLORS['border']};
     border-radius: 10px;
 }}
+QTableWidget::item, QTableView::item {{
+    padding: 8px;
+    border: none;
+}}
+QTableWidget::item:selected, QTableView::item:selected {{
+    background: {COLORS['primary']};
+    color: {COLORS['text_inverse']};
+}}
 QHeaderView::section {{
     background: {COLORS['card_bg_alt']};
     color: {COLORS['text_secondary']};
     border: none;
     padding: 8px;
     font-weight: 700;
+}}
+QCheckBox {{
+    color: {COLORS['text_secondary']};
+    spacing: 8px;
 }}
 """
 
