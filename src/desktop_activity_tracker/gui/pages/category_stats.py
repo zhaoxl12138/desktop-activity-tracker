@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QProgressBar
 )
 from PySide6.QtCore import Qt, QTimer
 
@@ -25,6 +25,11 @@ class CategoryStatsPage(QWidget):
         title.setStyleSheet("font-size: 18px; font-weight: bold; color: #2C3E50;")
         layout.addWidget(title)
 
+        self.error_lbl = QLabel()
+        self.error_lbl.setStyleSheet("color: #E74C3C; font-size: 12px;")
+        self.error_lbl.hide()
+        layout.addWidget(self.error_lbl)
+
         self.cards_layout = QVBoxLayout()
         self.cards_layout.setSpacing(10)
         layout.addLayout(self.cards_layout)
@@ -37,11 +42,11 @@ class CategoryStatsPage(QWidget):
         self.refresh()
 
     def refresh(self):
-        # Clear existing cards
         while self.cards_layout.count():
             item = self.cards_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+        self.error_lbl.hide()
 
         today = datetime.now().strftime("%Y-%m-%d")
         try:
@@ -61,27 +66,39 @@ class CategoryStatsPage(QWidget):
                 secs = cat.get("effective_seconds", 0) or 0
                 color = CATEGORY_COLOR_MAP.get(key, "#95A5A6")
                 ratio = secs / max_sec if max_sec > 0 else 0
+                # Minimum 3% visible bar for small categories
+                display_pct = max(3, int(ratio * 100))
 
                 card = QFrame()
-                card.setStyleSheet("background: #FFFFFF; border: 1px solid #E0E0E0; border-radius: 6px; padding: 10px;")
+                card.setStyleSheet(
+                    "background: #FFFFFF; border: 1px solid #E0E0E0; border-radius: 6px;")
                 card_layout = QHBoxLayout(card)
-                card_layout.setContentsMargins(12, 8, 12, 8)
+                card_layout.setContentsMargins(12, 10, 12, 10)
                 card_layout.setSpacing(12)
 
                 name_lbl = QLabel(name)
-                name_lbl.setStyleSheet("font-size: 13px; font-weight: bold; color: #2C3E50;")
+                name_lbl.setStyleSheet(
+                    "font-size: 13px; font-weight: bold; color: #2C3E50;")
                 name_lbl.setFixedWidth(100)
                 card_layout.addWidget(name_lbl)
 
-                bar_container = QFrame()
-                bar_container.setStyleSheet("background: #F0F0F0; border-radius: 4px;")
-                bar_container.setFixedHeight(20)
-                bar = QFrame(bar_container)
-                bar.setStyleSheet(f"background: {color}; border-radius: 4px;")
+                bar = QProgressBar()
+                bar.setRange(0, 100)
+                bar.setValue(display_pct)
+                bar.setTextVisible(False)
                 bar.setFixedHeight(20)
-                bar_width = max(10, int(ratio * 300))
-                bar.setFixedWidth(bar_width)
-                card_layout.addWidget(bar_container, 1)
+                bar.setStyleSheet(f"""
+                    QProgressBar {{
+                        background: #F0F0F0;
+                        border: none;
+                        border-radius: 4px;
+                    }}
+                    QProgressBar::chunk {{
+                        background: {color};
+                        border-radius: 4px;
+                    }}
+                """)
+                card_layout.addWidget(bar, 1)
 
                 time_lbl = QLabel(fmt_seconds(secs))
                 time_lbl.setStyleSheet("font-size: 13px; color: #2C3E50;")
@@ -90,5 +107,7 @@ class CategoryStatsPage(QWidget):
                 card_layout.addWidget(time_lbl)
 
                 self.cards_layout.addWidget(card)
-        except Exception:
-            pass
+        except Exception as e:
+            import traceback
+            self.error_lbl.setText(f"加载失败: {e}\n{traceback.format_exc()}")
+            self.error_lbl.show()

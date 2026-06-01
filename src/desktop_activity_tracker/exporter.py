@@ -29,14 +29,14 @@ def _generate_suggestions(db_path, today_date, stats):
     idle_sec = totals.get("idle_seconds", 0) or 0
     total_sec = effective_sec + idle_sec
 
-    work_cats = {"ai_tools", "coding", "reading"}
+    work_cats = {"ai_tools", "coding", "reading", "creative"}
     work_sec = sum(
         c["effective_seconds"] for c in stats["by_category"]
         if c["category_key"] in work_cats
     )
     video_sec = sum(
         c["effective_seconds"] for c in stats["by_category"]
-        if c["category_key"] == "video"
+        if c["category_key"] in ("video", "gaming")
     )
 
     # Rule 1: Today's entertainment > 90 min

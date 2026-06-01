@@ -75,8 +75,10 @@ class SoftwareStatsPage(QWidget):
                 self.table.setItem(i, 3, QTableWidgetItem(fmt_seconds(secs)))
                 pct = f"{round(secs / total_eff * 100)}%" if total_eff > 0 else "0%"
                 self.table.setItem(i, 4, QTableWidgetItem(pct))
-        except Exception:
-            pass
+        except Exception as e:
+            import sys, traceback
+            print(f"[SoftwareStats] refresh error: {e}", file=sys.stderr)
+            traceback.print_exc()
 
     def _export_csv(self):
         from ... import exporter

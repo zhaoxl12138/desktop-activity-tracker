@@ -24,7 +24,8 @@ from .classifier import Classifier
 from . import database
 from . import reporter
 from . import exporter
-from .utils import generate_default_config
+from .session_tracker import SessionTracker
+from .utils import generate_default_config, fmt_seconds
 
 
 CONFIG_FILENAME = "config/config.yaml"
@@ -50,16 +51,51 @@ def load_config(config_path):
 # ── Commands ────────────────────────────────────────────────────────
 
 def cmd_start(config, config_path):
-    sample_interval = config.get("sample_interval_seconds", 5)
+    tracker_cfg = config.get("tracker", {})
+    sample_interval = tracker_cfg.get("sample_interval_seconds",
+        config.get("sample_interval_seconds", 1))
+    flush_interval = tracker_cfg.get("flush_interval_seconds",
+        config.get("flush_interval_seconds", 10))
+    idle_threshold = tracker_cfg.get("idle_threshold_seconds",
+        config.get("idle_threshold_seconds", 60))
+    min_session = tracker_cfg.get("min_session_seconds",
+        config.get("min_session_seconds", 2))
+
     db_path = database.get_db_path(config)
 
     clf = Classifier(config_path)
     conn = database.init_db(db_path)
 
-    print(f"Desktop Activity Tracker v0.1.0")
+    def on_session_end(session):
+        database.insert_session(conn, session)
+
+    def on_flush(session):
+        if session._db_row_id > 0:
+            database.update_session(conn, session)
+        else:
+            session._db_row_id = database.insert_session(conn, session)
+
+    tracker_cfg_wrapped = {
+        "tracker": {
+            "sample_interval_seconds": sample_interval,
+            "flush_interval_seconds": flush_interval,
+            "idle_threshold_seconds": idle_threshold,
+            "min_session_seconds": min_session,
+        }
+    }
+
+    tracker = SessionTracker(
+        config=tracker_cfg_wrapped,
+        classifier=clf,
+        on_session_end=on_session_end,
+        on_flush=on_flush,
+    )
+
+    print(f"Desktop Activity Tracker v1.1.0")
     print(f"配置: {config_path}")
     print(f"数据库: {db_path}")
-    print(f"采样间隔: {sample_interval}s | 空闲阈值: {config.get('idle_threshold_seconds', 60)}s")
+    print(f"采样间隔: {sample_interval}s | 刷盘间隔: {flush_interval}s")
+    print(f"空闲阈值: {idle_threshold}s | 最短session: {min_session}s")
     print("按 Ctrl+C 停止...\n")
 
     running = True
@@ -75,65 +111,38 @@ def cmd_start(config, config_path):
 
     while running:
         try:
-            now = datetime.now()
             idle_sec = get_idle_seconds()
             win_info = get_foreground_window_info()
 
-            if win_info and (win_info.get("process_name") or win_info.get("window_title")):
-                cat = clf.classify(win_info.get("process_name", ""), win_info.get("window_title", ""))
-                is_effective = clf.is_effective(cat["active_rule"], idle_sec)
-                is_user_active = idle_sec <= clf.idle_threshold
+            snapshot = tracker.tick(idle_sec, win_info)
 
-                sample = {
-                    "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
-                    "date": now.strftime("%Y-%m-%d"),
-                    "process_name": win_info.get("process_name", ""),
-                    "exe_path": win_info.get("exe_path", ""),
-                    "window_title": win_info.get("window_title", ""),
-                    "category_key": cat["category_key"],
-                    "category_name": cat["category_name"],
-                    "active_rule": cat["active_rule"],
-                    "is_user_active": is_user_active,
-                    "is_effective": is_effective,
-                    "idle_seconds": round(idle_sec, 1),
-                    "duration_seconds": sample_interval,
-                }
-            else:
-                sample = {
-                    "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
-                    "date": now.strftime("%Y-%m-%d"),
-                    "process_name": "system",
-                    "exe_path": "",
-                    "window_title": "idle/desktop",
-                    "category_key": "other",
-                    "category_name": "空闲",
-                    "active_rule": "interactive_required",
-                    "is_user_active": False,
-                    "is_effective": False,
-                    "idle_seconds": round(idle_sec, 1),
-                    "duration_seconds": sample_interval,
-                }
+            if snapshot is not None:
+                s = snapshot
+                status = f"[{s['timestamp'][-8:]}] {s['process_name']} | {s['normalized_title'][:30] or s['window_title'][:30]} | {s['category_name']}"
+                if s["is_effective"]:
+                    status += " | effective=1"
+                    status += f" | dur={s['duration_seconds']}s eff={s['effective_seconds']}s"
+                else:
+                    status += f" | effective=0 idle={s['idle_seconds']:.0f}s"
 
-            database.insert_activity_log(conn, sample)
+                try:
+                    print(status)
+                except UnicodeEncodeError:
+                    print(status.encode('ascii', errors='replace').decode('ascii'))
 
-            status = f"[{sample['timestamp'][-8:]}] {sample['process_name']} | {sample['window_title'][:40]} | {sample['category_name']}"
-            if sample["is_effective"]:
-                status += " | effective=1"
-            else:
-                status += f" | effective=0 idle={sample['idle_seconds']}s"
-
-            print(status.encode(sys.stdout.encoding, errors='replace').decode(sys.stdout.encoding, errors='replace'))
-
-            for _ in range(sample_interval):
-                if not running:
-                    break
-                time.sleep(1)
+            time.sleep(sample_interval)
 
         except Exception as e:
             err_msg = str(e)
             if err_msg != last_error:
                 last_error = err_msg
                 print(f"[ERROR] {datetime.now().strftime('%H:%M:%S')} {err_msg}", file=sys.stderr)
+
+    # Final flush
+    sess = tracker.current_session
+    if sess is not None and sess.duration_seconds >= min_session:
+        sess.switch_reason = "shutdown"
+        on_session_end(sess)
 
     conn.close()
     print("数据库已安全关闭。")
@@ -253,14 +262,12 @@ def cmd_gui():
     # Ensure DB is initialized
     database.init_db(db_path)
 
-    sample_interval = config.get("sample_interval_seconds", 5)
-
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setFont(QFont("Microsoft YaHei", 10))
 
     # Start background recording thread
-    worker = RecordingWorker(config_path, db_path, sample_interval)
+    worker = RecordingWorker(config_path, db_path, config)
     worker.start()
 
     # Create tray icon
@@ -268,6 +275,7 @@ def cmd_gui():
 
     # Create main window
     window = MainWindow(app_root, config, db_path, config_path, reports_dir, worker)
+    window.tray = tray
     tray.set_main_window(window)
     window.show()
 

@@ -153,7 +153,30 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         self.lbl_time = QLabel()
         layout.addWidget(self.lbl_time)
+
+        btn_quit = QPushButton("退出程序")
+        btn_quit.setFixedHeight(22)
+        btn_quit.setStyleSheet(
+            "QPushButton { font-size: 11px; padding: 0 8px; background: #E74C3C; color: #FFF; border: none; border-radius: 3px; }"
+            "QPushButton:hover { background: #C0392B; }"
+        )
+        btn_quit.clicked.connect(self._quit_app)
+        layout.addWidget(btn_quit)
+
         return bar
+
+    def _quit_app(self):
+        reply = QMessageBox.question(
+            self, "确认退出", "确定要退出程序吗？\n系统托盘图标也会关闭。",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+        if self.worker:
+            self.worker.stop()
+            self.worker.wait(3000)
+        from PySide6.QtWidgets import QApplication
+        QApplication.instance().quit()
 
     def _on_nav_changed(self, row):
         if 0 <= row < self.stack.count():
@@ -182,16 +205,18 @@ class MainWindow(QMainWindow):
         try:
             stats = database.query_date_stats(self.db_path, today)
             effective = stats['totals'].get('effective_seconds', 0) or 0
-            work_cats = {"ai_tools", "coding", "reading"}
+            work_cats = {"ai_tools", "coding", "reading", "creative"}
             work_sec = sum(c['effective_seconds'] for c in stats['by_category'] if c['category_key'] in work_cats)
-            video_sec = sum(c['effective_seconds'] for c in stats['by_category'] if c['category_key'] == 'video')
+            video_sec = sum(c['effective_seconds'] for c in stats['by_category'] if c['category_key'] in ('video', 'gaming'))
             self.top_summary.setText(
                 f"今日有效: {fmt_seconds(effective)}  |  "
                 f"学习/工作: {fmt_seconds(work_sec)}  |  "
                 f"娱乐: {fmt_seconds(video_sec)}"
             )
-        except Exception:
-            pass
+        except Exception as e:
+            import sys, traceback
+            print(f"[MainWindow] _update_top_bar error: {e}", file=sys.stderr)
+            traceback.print_exc()
 
     def _quick_report(self):
         today = datetime.now().strftime("%Y-%m-%d")
@@ -211,5 +236,13 @@ class MainWindow(QMainWindow):
         """Minimize to tray instead of quitting."""
         event.ignore()
         self.hide()
-        if hasattr(self, 'tray'):
-            self.tray.showMessage("Desktop Activity Tracker", "程序已最小化到系统托盘\n右键托盘图标可退出")
+        from PySide6.QtWidgets import QSystemTrayIcon
+        tray_icons = QSystemTrayIcon.isSystemTrayAvailable()
+        if tray_icons:
+            if hasattr(self, 'tray'):
+                self.tray.showMessage(
+                    "Desktop Activity Tracker",
+                    "程序已最小化到系统托盘\n"
+                    + "右键点击任务栏右侧的时钟图标可打开菜单\n"
+                    + "如未显示，请点击 ^ 箭头查看隐藏图标"
+                )

@@ -6,6 +6,29 @@
 
 ---
 
+## v1.1.0 - 2026-06-01
+
+### Added
+
+- `session_tracker.py` — ActivitySession 数据类 + SessionTracker 状态机
+- 窗口标题归一化 `normalize_window_title()` — 消除浏览器标题抖动
+- `activity_sessions` 表 — session 粒度存储（替代逐秒 activity_logs）
+- `query_date_stats()` 优先从 sessions 表查询，空时 fallback 到旧 logs
+- 配置新增 `tracker:` 块（sample/flush/min_session）
+
+### Changed
+
+- 采样间隔 5s → 1s（session 聚合后写库，DB 写入量反而降低 ~95%）
+- RecordingWorker 重写为 SessionTracker 驱动
+- CLI `start` 命令适配新会话模型
+- 实时监控页扩展：归一化标题、前台停留、有效时间、挂机时间
+- 日报/周报/月报统计改从 `activity_sessions` 聚合
+
+### Fixed
+
+- 窗口标题微小变化（下载进度、通知计数）不再产生碎片 session
+- 窗口检测偶发失败（1次）不中断当前 session
+
 ## v1.0.0 - 2026-06-01
 
 ### Added

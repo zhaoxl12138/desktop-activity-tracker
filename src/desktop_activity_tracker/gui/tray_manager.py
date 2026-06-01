@@ -133,9 +133,9 @@ class TrayManager:
             today = datetime.now().strftime("%Y-%m-%d")
             stats = database.query_date_stats(self.db_path, today)
             effective = stats['totals'].get('effective_seconds', 0) or 0
-            work_cats = {"ai_tools", "coding", "reading"}
+            work_cats = {"ai_tools", "coding", "reading", "creative"}
             work_sec = sum(c['effective_seconds'] for c in stats['by_category'] if c['category_key'] in work_cats)
-            video_sec = sum(c['effective_seconds'] for c in stats['by_category'] if c['category_key'] == 'video')
+            video_sec = sum(c['effective_seconds'] for c in stats['by_category'] if c['category_key'] in ('video', 'gaming'))
             status = "记录中"
             if self.main_window and hasattr(self.main_window, 'worker') and self.main_window.worker.is_paused():
                 status = "已暂停"
@@ -147,5 +147,7 @@ class TrayManager:
                 f"状态: {status}"
             )
             self.tray.setToolTip(tooltip)
-        except Exception:
-            pass
+        except Exception as e:
+            import sys, traceback
+            print(f"[TrayManager] _update_tooltip error: {e}", file=sys.stderr)
+            traceback.print_exc()

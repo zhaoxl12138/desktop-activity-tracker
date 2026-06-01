@@ -22,10 +22,14 @@ COLORS = {
 }
 
 CATEGORY_COLOR_MAP = {
-    'ai_tools':        '#7B68EE',
-    'coding':          '#2ECC71',
-    'reading':         '#3498DB',
-    'video':           '#E67E22',
+    'ai_tools':        '#7B68EE',  # purple
+    'coding':          '#2ECC71',  # green
+    'reading':         '#3498DB',  # blue
+    'video':           '#E67E22',  # orange
+    'creative':        '#E91E63',  # pink
+    'social':          '#1ABC9C',  # teal
+    'tools':           '#607D8B',  # blue-grey
+    'gaming':          '#E74C3C',  # red
     'browser_general': '#95A5A6',
     'other':           '#95A5A6',
 }

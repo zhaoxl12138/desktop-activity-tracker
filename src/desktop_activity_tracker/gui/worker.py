@@ -1,28 +1,73 @@
-"""Background recording worker running in a QThread."""
+"""Background recording worker running in a QThread with SessionTracker."""
 
 from datetime import datetime
 
 from PySide6.QtCore import QThread, Signal
 
 from .. import window_detector, activity_detector, classifier, database
+from ..session_tracker import SessionTracker
 
 
 class RecordingWorker(QThread):
     sample_updated = Signal(dict)
     error_occurred = Signal(str)
 
-    def __init__(self, config_path, db_path, sample_interval):
+    def __init__(self, config_path, db_path, config):
         super().__init__()
         self.config_path = config_path
         self.db_path = db_path
-        self.sample_interval = sample_interval
+        self.config = config
         self._running = True
         self._paused = False
         self._last_error = ""
 
+        tracker_cfg = config.get("tracker", {})
+        self.sample_interval = tracker_cfg.get("sample_interval_seconds",
+            config.get("sample_interval_seconds", 1))
+        self.flush_interval = tracker_cfg.get("flush_interval_seconds",
+            config.get("flush_interval_seconds", 10))
+
     def run(self):
         clf = classifier.Classifier(self.config_path)
         conn = database.init_db(self.db_path)
+
+        def on_session_end(session):
+            try:
+                database.insert_session(conn, session)
+            except Exception as e:
+                import sys, traceback
+                print(f"[Worker] insert_session error: {e}", file=sys.stderr)
+                traceback.print_exc()
+
+        def on_flush(session):
+            try:
+                if session._db_row_id > 0:
+                    database.update_session(conn, session)
+                else:
+                    session._db_row_id = database.insert_session(conn, session)
+            except Exception as e:
+                import sys, traceback
+                print(f"[Worker] flush error: {e}", file=sys.stderr)
+                traceback.print_exc()
+
+        tracker_cfg = {
+            "tracker": {
+                "sample_interval_seconds": self.sample_interval,
+                "flush_interval_seconds": self.flush_interval,
+                "idle_threshold_seconds":
+                    self.config.get("tracker", {}).get("idle_threshold_seconds",
+                        self.config.get("idle_threshold_seconds", 60)),
+                "min_session_seconds":
+                    self.config.get("tracker", {}).get("min_session_seconds", 2),
+            }
+        }
+
+        tracker = SessionTracker(
+            config=tracker_cfg,
+            classifier=clf,
+            on_session_end=on_session_end,
+            on_flush=on_flush,
+        )
 
         while self._running:
             if self._paused:
@@ -30,52 +75,15 @@ class RecordingWorker(QThread):
                 continue
 
             try:
-                now = datetime.now()
                 idle_sec = activity_detector.get_idle_seconds()
                 win_info = window_detector.get_foreground_window_info()
 
-                if win_info and (win_info.get("process_name") or win_info.get("window_title")):
-                    cat = clf.classify(win_info.get("process_name", ""), win_info.get("window_title", ""))
-                    is_effective = clf.is_effective(cat["active_rule"], idle_sec)
-                    is_user_active = idle_sec <= clf.idle_threshold
+                snapshot = tracker.tick(idle_sec, win_info)
 
-                    sample = {
-                        "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
-                        "date": now.strftime("%Y-%m-%d"),
-                        "process_name": win_info.get("process_name", ""),
-                        "exe_path": win_info.get("exe_path", ""),
-                        "window_title": win_info.get("window_title", ""),
-                        "category_key": cat["category_key"],
-                        "category_name": cat["category_name"],
-                        "active_rule": cat["active_rule"],
-                        "is_user_active": is_user_active,
-                        "is_effective": is_effective,
-                        "idle_seconds": round(idle_sec, 1),
-                        "duration_seconds": self.sample_interval,
-                    }
-                else:
-                    sample = {
-                        "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
-                        "date": now.strftime("%Y-%m-%d"),
-                        "process_name": "system",
-                        "exe_path": "",
-                        "window_title": "idle/desktop",
-                        "category_key": "other",
-                        "category_name": "空闲",
-                        "active_rule": "interactive_required",
-                        "is_user_active": False,
-                        "is_effective": False,
-                        "idle_seconds": round(idle_sec, 1),
-                        "duration_seconds": self.sample_interval,
-                    }
+                if snapshot is not None:
+                    self.sample_updated.emit(snapshot)
 
-                database.insert_activity_log(conn, sample)
-                self.sample_updated.emit(sample)
-
-                for _ in range(self.sample_interval):
-                    if not self._running:
-                        break
-                    self.msleep(1000)
+                self.msleep(int(self.sample_interval * 1000))
 
             except Exception as e:
                 err_msg = str(e)
@@ -84,16 +92,22 @@ class RecordingWorker(QThread):
                     self.error_occurred.emit(err_msg)
                 self.msleep(self.sample_interval * 1000)
 
-        conn.close()
+        # Flush final session on shutdown
+        sess = tracker.current_session
+        if sess is not None and sess.duration_seconds >= tracker.min_session:
+            sess.switch_reason = "shutdown"
+            on_session_end(sess)
 
-    def stop(self):
-        self._running = False
+        conn.close()
 
     def pause(self):
         self._paused = True
 
     def resume(self):
         self._paused = False
+
+    def stop(self):
+        self._running = False
 
     def is_paused(self):
         return self._paused

@@ -1,5 +1,4 @@
-# Desktop Activity Tracker 配置文件示例
-# 复制为 config.yaml 并修改
+# Desktop Activity Tracker 配置文件
 
 # ── 记录器配置 ──
 tracker:
@@ -142,7 +141,7 @@ categories:
   # ── 社交通讯 ──────────────────────────────────────────
   social:
     display_name: "社交通讯"
-    active_rule: "interactive_required"
+    active_rule: "passive_allowed"
     match:
       process_names:
         - "weixin.exe"

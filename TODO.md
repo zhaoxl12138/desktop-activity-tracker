@@ -78,4 +78,16 @@
 - [x] PyInstaller 打包为单文件 EXE
 - [x] 无控制台窗口（-w 模式）
 - [x] 在 Win10/Win11 测试通过
-- [ ] 发布 GitHub Release
+- [x] 发布 GitHub Release
+
+## v1.1.0 ✅ — 记录逻辑优化
+
+- [x] 1 秒高频采样 + 会话聚合模型
+- [x] ActivitySession 数据结构和 SessionTracker 状态机
+- [x] 窗口标题归一化（消除标题抖动）
+- [x] activity_sessions 表替代逐秒 activity_logs
+- [x] 10 秒批量写库（数据库写入量降低 ~95%）
+- [x] 短 session 过滤（< 2 秒不写库）
+- [x] 实时监控页扩展（归一化标题、前台停留、有效时间、挂机时间）
+- [x] 统计查询兼容层（session 优先，logs fallback）
+- [x] 向后兼容（旧 activity_logs 表保留不删）
