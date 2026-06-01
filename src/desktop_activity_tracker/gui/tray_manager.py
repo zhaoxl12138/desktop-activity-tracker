@@ -88,9 +88,8 @@ class TrayManager:
 
     def _on_tray_activated(self, reason):
         if reason == QSystemTrayIcon.Context:
-            # Right-click: explicitly show menu at cursor
             from PySide6.QtGui import QCursor
-            self._menu.exec(QCursor.pos())
+            self._menu.popup(QCursor.pos())
         elif reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
             self._open_window()
 
