@@ -5,15 +5,7 @@ import csv
 import shutil
 from datetime import datetime
 from . import database
-
-
-def _fmt_seconds(total_seconds):
-    total_seconds = total_seconds or 0
-    hours = int(total_seconds // 3600)
-    minutes = int((total_seconds % 3600) // 60)
-    if hours > 0:
-        return f"{hours}小时{minutes}分钟"
-    return f"{minutes}分钟"
+from .utils import fmt_seconds
 
 
 def _calculate_efficiency_score(work_sec, video_sec, total_effective_sec):
@@ -134,10 +126,10 @@ def export_markdown(db_path, date_str, output_dir):
     # ── 总览 ──
     lines.append("## 总览")
     lines.append("")
-    lines.append(f"- 总电脑使用：{_fmt_seconds(total_sec)}")
-    lines.append(f"- 有效时间：{_fmt_seconds(effective_sec)}")
-    lines.append(f"- 挂机/空闲时间：{_fmt_seconds(idle_sec)}")
-    lines.append(f"- 娱乐时间：{_fmt_seconds(entertain_sec)}")
+    lines.append(f"- 总电脑使用：{fmt_seconds(total_sec)}")
+    lines.append(f"- 有效时间：{fmt_seconds(effective_sec)}")
+    lines.append(f"- 挂机/空闲时间：{fmt_seconds(idle_sec)}")
+    lines.append(f"- 娱乐时间：{fmt_seconds(entertain_sec)}")
     lines.append(f"- 最长使用软件：{top_app_title or top_app}")
     lines.append(f"- 学习/工作占比：{work_pct}%")
     lines.append(f"- 娱乐占比：{entertain_pct}%")
@@ -157,7 +149,7 @@ def export_markdown(db_path, date_str, output_dir):
     lines.append("| 分类 | 有效时长 |")
     lines.append("|---|---:|")
     for cat in stats["by_category"]:
-        lines.append(f"| {cat['category_name']} | {_fmt_seconds(cat['effective_seconds'])} |")
+        lines.append(f"| {cat['category_name']} | {fmt_seconds(cat['effective_seconds'])} |")
     lines.append("")
 
     # ── 软件排行 ──
@@ -168,7 +160,7 @@ def export_markdown(db_path, date_str, output_dir):
         key = _extract_title_key(app["window_title"] or app["process_name"])
         if key not in seen:
             seen.add(key)
-            lines.append(f"- {key}：{_fmt_seconds(app['effective_seconds'])}")
+            lines.append(f"- {key}：{fmt_seconds(app['effective_seconds'])}")
     lines.append("")
 
     # ── 建议 ──

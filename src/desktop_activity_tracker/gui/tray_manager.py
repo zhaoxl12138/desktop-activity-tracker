@@ -9,7 +9,7 @@ from PySide6.QtGui import QIcon, QAction
 from PySide6.QtCore import QTimer
 
 from .. import database, get_app_root
-from ..exporter import _fmt_seconds
+from ..utils import fmt_seconds
 
 
 class TrayManager:
@@ -141,9 +141,9 @@ class TrayManager:
                 status = "已暂停"
             tooltip = (
                 f"Desktop Activity Tracker\n"
-                f"今日有效: {_fmt_seconds(effective)}\n"
-                f"学习/工作: {_fmt_seconds(work_sec)}\n"
-                f"娱乐: {_fmt_seconds(video_sec)}\n"
+                f"今日有效: {fmt_seconds(effective)}\n"
+                f"学习/工作: {fmt_seconds(work_sec)}\n"
+                f"娱乐: {fmt_seconds(video_sec)}\n"
                 f"状态: {status}"
             )
             self.tray.setToolTip(tooltip)

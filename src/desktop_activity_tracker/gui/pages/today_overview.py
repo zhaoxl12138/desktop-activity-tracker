@@ -8,7 +8,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer
 
 from ... import database
-from ...exporter import _fmt_seconds, _calculate_efficiency_score, _generate_suggestions
+from ...utils import fmt_seconds
+from ...exporter import _calculate_efficiency_score, _generate_suggestions
 from ..style import COLORS
 
 
@@ -101,10 +102,10 @@ class TodayOverviewPage(QWidget):
             work_sec = sum(c.get("effective_seconds", 0) or 0 for c in stats.get("by_category", []) if c["category_key"] in work_cats)
             video_sec = sum(c.get("effective_seconds", 0) or 0 for c in stats.get("by_category", []) if c["category_key"] == "video")
 
-            self.cards["total"].value_label.setText(_fmt_seconds(total_sec))
-            self.cards["work"].value_label.setText(_fmt_seconds(work_sec))
-            self.cards["entertainment"].value_label.setText(_fmt_seconds(video_sec))
-            self.cards["idle"].value_label.setText(_fmt_seconds(idle_sec))
+            self.cards["total"].value_label.setText(fmt_seconds(total_sec))
+            self.cards["work"].value_label.setText(fmt_seconds(work_sec))
+            self.cards["entertainment"].value_label.setText(fmt_seconds(video_sec))
+            self.cards["idle"].value_label.setText(fmt_seconds(idle_sec))
 
             score = _calculate_efficiency_score(work_sec, video_sec, effective)
             if score is not None:

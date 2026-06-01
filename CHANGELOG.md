@@ -6,6 +6,21 @@
 
 ---
 
+## v0.8.1 - 2026-06-01
+
+### Changed
+
+- 提取 `utils.py` 共享模块：`fmt_seconds()`、`generate_default_config()`
+- 消除 `exporter.py` 和 `reporter.py` 中 `_fmt_seconds` 重复定义
+- `main.py` 移除 126 行硬编码默认配置，改用 `utils.generate_default_config()`
+- GUI 模块统一从 `..utils` 导入 `fmt_seconds`
+
+### Added
+
+- `pyproject.toml` — 支持 `pip install -e .` 和 `desktop-activity-tracker` 命令行入口
+- `__main__.py` — 支持 `python -m desktop_activity_tracker`
+- `assets/` 目录 — 托盘图标资源路径
+
 ## v0.8.0 - 2026-06-01
 
 ### Added

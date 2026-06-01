@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.1.0-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-0.8.0-blue" alt="version">
   <img src="https://img.shields.io/badge/python-3.10+-green" alt="python">
   <img src="https://img.shields.io/badge/platform-Windows-lightgrey" alt="platform">
   <img src="https://img.shields.io/badge/license-MIT-brightgreen" alt="license">
@@ -47,7 +47,7 @@ Desktop Activity Tracker 是一款 Windows 桌面时间追踪工具，通过监�
 
 ## 当前开发状态
 
-> **v0.1.0** — 项目初始化阶段，核心功能开发中。
+> **v0.8.0** — GUI + 系统托盘已完成，核心功能可用。
 
 详见 [ROADMAP.md](docs/ROADMAP.md) 和 [CHANGELOG.md](CHANGELOG.md)。
 
@@ -58,33 +58,49 @@ Desktop Activity Tracker 是一款 Windows 桌面时间追踪工具，通过监�
 git clone https://github.com/zhaoxl12138/desktop-activity-tracker.git
 cd desktop-activity-tracker
 
-# 安装依赖
-pip install -r requirements.txt
+# 安装（开发模式）
+pip install -e .
 
-# 启动（v1.0.0 之后）
-python -m desktop_activity_tracker.main
+# 启动 GUI
+python -m desktop_activity_tracker
+
+# 或使用 CLI
+python -m desktop_activity_tracker start   # 命令行记录
+python -m desktop_activity_tracker today   # 今日统计
+python -m desktop_activity_tracker report  # 统计报告
+python -m desktop_activity_tracker export  # 导出日报
 ```
 
-> 当前版本尚未发布可用的 EXE，请关注 [Releases](https://github.com/zhaoxl12138/desktop-activity-tracker/releases)。
+> Windows 打包版本 (`.exe`) 将在 v1.0 发布，请关注 [Releases](https://github.com/zhaoxl12138/desktop-activity-tracker/releases)。
 
 ## 项目结构
 
 ```
 desktop-activity-tracker/
 ├── src/desktop_activity_tracker/   # 核心源码
-│   ├── main.py                     # 入口
+│   ├── main.py                     # CLI + GUI 入口
+│   ├── __main__.py                 # python -m 支持
+│   ├── utils.py                    # 共享工具函数
 │   ├── window_detector.py          # 前台窗口检测
 │   ├── activity_detector.py        # 用户活跃检测
 │   ├── classifier.py               # 软件分类器
 │   ├── database.py                 # SQLite 操作
 │   ├── reporter.py                 # 统计报告
-│   └── exporter.py                 # Markdown/CSV 导出
+│   ├── exporter.py                 # Markdown/CSV 导出
+│   └── gui/                        # PySide6 GUI
+│       ├── style.py                # 颜色 + 样式
+│       ├── worker.py               # 后台录制线程
+│       ├── main_window.py          # 主窗口
+│       ├── tray_manager.py         # 系统托盘
+│       └── pages/                  # 7 个功能页面
 ├── config/                         # 配置文件
 ├── docs/                           # 文档
+├── assets/                         # 图标资源
 ├── reports/                        # 生成的日报
 ├── data/                           # 数据库文件
 ├── logs/                           # 运行日志
-└── tests/                          # 测试
+├── tests/                          # 测试
+└── pyproject.toml                  # 工程配置
 ```
 
 ## 隐私说明

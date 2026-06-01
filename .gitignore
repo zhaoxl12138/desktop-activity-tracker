@@ -2,9 +2,9 @@
 __pycache__/
 *.py[cod]
 *.pyo
-*.egg-info/
 dist/
 build/
+*.egg-info/
 *.egg
 *.spec
 
@@ -25,11 +25,6 @@ logs/*.log
 reports/*.csv
 reports/*.md
 
-# PyInstaller
-*.spec
-dist/
-build/
-
 # Environment
 .env
 .env.*
@@ -49,3 +44,4 @@ Thumbs.db
 !data/.gitkeep
 !reports/.gitkeep
 !logs/.gitkeep
+!assets/.gitkeep

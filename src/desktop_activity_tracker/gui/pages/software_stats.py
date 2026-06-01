@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
 )
 
 from ... import database
-from ...exporter import _fmt_seconds
+from ...utils import fmt_seconds
 from ..style import TABLE_STYLE, BUTTON_PRIMARY_STYLE, BUTTON_SECONDARY_STYLE
 
 
@@ -72,7 +72,7 @@ class SoftwareStatsPage(QWidget):
                         break
                 self.table.setItem(i, 2, QTableWidgetItem(cat_name))
                 secs = app.get("effective_seconds", 0) or 0
-                self.table.setItem(i, 3, QTableWidgetItem(_fmt_seconds(secs)))
+                self.table.setItem(i, 3, QTableWidgetItem(fmt_seconds(secs)))
                 pct = f"{round(secs / total_eff * 100)}%" if total_eff > 0 else "0%"
                 self.table.setItem(i, 4, QTableWidgetItem(pct))
         except Exception:

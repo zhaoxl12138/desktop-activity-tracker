@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "desktop-activity-tracker"
+version = "0.8.1"
+description = "Windows 桌面软件使用时长记录器 / 个人数字行为分析系统"
+authors = [{ name = "zhaoxl12138", email = "zhaoxl12138@github.com" }]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Office/Business :: Scheduling",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "pywin32>=305",
+    "psutil>=5.9.0",
+    "PyYAML>=6.0",
+    "PySide6>=6.5.0",
+]
+
+[project.scripts]
+desktop-activity-tracker = "desktop_activity_tracker.main:main"
+
+[project.urls]
+Homepage = "https://github.com/zhaoxl12138/desktop-activity-tracker"
+Repository = "https://github.com/zhaoxl12138/desktop-activity-tracker.git"
+Issues = "https://github.com/zhaoxl12138/desktop-activity-tracker/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]

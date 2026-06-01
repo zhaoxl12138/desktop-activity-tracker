@@ -11,7 +11,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont
 
 from .. import database
-from ..exporter import _fmt_seconds
+from ..utils import fmt_seconds
 
 from .style import (
     COLORS, SIDEBAR_STYLE, TOP_BAR_STYLE, BOTTOM_BAR_STYLE,
@@ -186,9 +186,9 @@ class MainWindow(QMainWindow):
             work_sec = sum(c['effective_seconds'] for c in stats['by_category'] if c['category_key'] in work_cats)
             video_sec = sum(c['effective_seconds'] for c in stats['by_category'] if c['category_key'] == 'video')
             self.top_summary.setText(
-                f"今日有效: {_fmt_seconds(effective)}  |  "
-                f"学习/工作: {_fmt_seconds(work_sec)}  |  "
-                f"娱乐: {_fmt_seconds(video_sec)}"
+                f"今日有效: {fmt_seconds(effective)}  |  "
+                f"学习/工作: {fmt_seconds(work_sec)}  |  "
+                f"娱乐: {fmt_seconds(video_sec)}"
             )
         except Exception:
             pass

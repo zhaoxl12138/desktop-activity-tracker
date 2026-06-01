@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer
 
 from ... import database
-from ...exporter import _fmt_seconds
+from ...utils import fmt_seconds
 from ..style import CATEGORY_COLOR_MAP
 
 
@@ -83,7 +83,7 @@ class CategoryStatsPage(QWidget):
                 bar.setFixedWidth(bar_width)
                 card_layout.addWidget(bar_container, 1)
 
-                time_lbl = QLabel(_fmt_seconds(secs))
+                time_lbl = QLabel(fmt_seconds(secs))
                 time_lbl.setStyleSheet("font-size: 13px; color: #2C3E50;")
                 time_lbl.setFixedWidth(100)
                 time_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
