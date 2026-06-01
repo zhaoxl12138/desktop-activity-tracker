@@ -28,15 +28,15 @@ class TodayOverviewPage(QWidget):
         self.cards = {}
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(32, 28, 32, 28)
-        layout.setSpacing(18)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(14)
 
         self.hero_card = self._build_hero_card()
         layout.addWidget(self.hero_card)
 
         stats_grid = QGridLayout()
-        stats_grid.setHorizontalSpacing(14)
-        stats_grid.setVerticalSpacing(14)
+        stats_grid.setHorizontalSpacing(12)
+        stats_grid.setVerticalSpacing(12)
 
         stats_grid.addWidget(
             self._make_stat_card("work", "学习 / 工作", "专注投入", COLORS["coding_green"]), 0, 0
@@ -53,8 +53,8 @@ class TodayOverviewPage(QWidget):
         layout.addLayout(stats_grid)
 
         bottom_grid = QGridLayout()
-        bottom_grid.setHorizontalSpacing(14)
-        bottom_grid.setVerticalSpacing(14)
+        bottom_grid.setHorizontalSpacing(12)
+        bottom_grid.setVerticalSpacing(12)
         bottom_grid.addWidget(self._build_efficiency_panel(), 0, 0)
         bottom_grid.addWidget(self._build_suggestions_panel(), 0, 1)
         bottom_grid.setColumnStretch(0, 11)
@@ -68,9 +68,10 @@ class TodayOverviewPage(QWidget):
 
     def _build_hero_card(self):
         card = QFrame()
+        card.setObjectName("heroCard")
         card.setStyleSheet(
             f"""
-            QFrame {{
+            QFrame#heroCard {{
                 background: {COLORS['card_bg']};
                 border: 1px solid {COLORS['border']};
                 border-radius: 18px;
@@ -80,11 +81,11 @@ class TodayOverviewPage(QWidget):
         card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         layout = QHBoxLayout(card)
-        layout.setContentsMargins(24, 22, 24, 22)
-        layout.setSpacing(22)
+        layout.setContentsMargins(22, 20, 22, 20)
+        layout.setSpacing(18)
 
         left = QVBoxLayout()
-        left.setSpacing(6)
+        left.setSpacing(8)
 
         date_label = QLabel(datetime.now().strftime("%Y-%m-%d"))
         date_label.setStyleSheet(
@@ -93,13 +94,13 @@ class TodayOverviewPage(QWidget):
         left.addWidget(date_label)
 
         title = QLabel("今日使用总览")
-        title.setStyleSheet(f"font-size: 28px; font-weight: 800; color: {COLORS['text']};")
+        title.setStyleSheet(f"font-size: 24px; font-weight: 800; color: {COLORS['text']};")
         left.addWidget(title)
 
         self.hero_summary = QLabel("正在读取今天的数据结构...")
         self.hero_summary.setWordWrap(True)
         self.hero_summary.setStyleSheet(
-            f"font-size: 13px; color: {COLORS['text_secondary']}; line-height: 1.4;"
+            f"font-size: 13px; color: {COLORS['text_secondary']};"
         )
         left.addWidget(self.hero_summary)
         left.addStretch()
@@ -110,7 +111,7 @@ class TodayOverviewPage(QWidget):
 
         self.total_value = QLabel("--")
         self.total_value.setStyleSheet(
-            f"font-size: 44px; font-weight: 800; color: {COLORS['text']};"
+            f"font-size: 40px; font-weight: 800; color: {COLORS['text']};"
         )
         right.addWidget(self.total_value, 0, Qt.AlignRight)
 
@@ -121,7 +122,7 @@ class TodayOverviewPage(QWidget):
             font-weight: 700;
             color: {COLORS['primary']};
             background: {COLORS['panel_bg']};
-            border: 1px solid {COLORS['border']};
+            border: none;
             border-radius: 14px;
             padding: 6px 12px;
             """
@@ -134,9 +135,10 @@ class TodayOverviewPage(QWidget):
 
     def _make_stat_card(self, key, title, subtitle, accent_color):
         card = QFrame()
+        card.setObjectName(f"statCard_{key}")
         card.setStyleSheet(
             f"""
-            QFrame {{
+            QFrame#{card.objectName()} {{
                 background: {COLORS['card_bg']};
                 border: 1px solid {COLORS['border']};
                 border-radius: 16px;
@@ -145,8 +147,8 @@ class TodayOverviewPage(QWidget):
         )
 
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(20, 18, 20, 18)
-        layout.setSpacing(10)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(8)
 
         title_label = QLabel(title)
         title_label.setStyleSheet(
@@ -156,7 +158,7 @@ class TodayOverviewPage(QWidget):
 
         value_label = QLabel("--")
         value_label.setStyleSheet(
-            f"font-size: 34px; font-weight: 800; color: {accent_color};"
+            f"font-size: 30px; font-weight: 800; color: {accent_color};"
         )
         layout.addWidget(value_label)
 
@@ -166,7 +168,7 @@ class TodayOverviewPage(QWidget):
         )
         layout.addWidget(subtitle_label)
 
-        ratio_label = QLabel("占活跃时间 --")
+        ratio_label = QLabel("占比 --")
         ratio_label.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
         layout.addWidget(ratio_label)
 
@@ -174,7 +176,7 @@ class TodayOverviewPage(QWidget):
         progress.setRange(0, 100)
         progress.setValue(0)
         progress.setTextVisible(False)
-        progress.setFixedHeight(8)
+        progress.setFixedHeight(6)
         progress.setStyleSheet(
             f"""
             QProgressBar {{
@@ -199,9 +201,10 @@ class TodayOverviewPage(QWidget):
 
     def _build_efficiency_panel(self):
         panel = QFrame()
+        panel.setObjectName("efficiencyPanel")
         panel.setStyleSheet(
             f"""
-            QFrame {{
+            QFrame#efficiencyPanel {{
                 background: {COLORS['card_bg']};
                 border: 1px solid {COLORS['border']};
                 border-radius: 18px;
@@ -210,22 +213,23 @@ class TodayOverviewPage(QWidget):
         )
 
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(24, 22, 24, 22)
-        layout.setSpacing(14)
+        layout.setContentsMargins(22, 20, 22, 20)
+        layout.setSpacing(12)
 
         title = QLabel("效率评分")
-        title.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {COLORS['text']};")
+        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {COLORS['text']};")
         layout.addWidget(title)
 
         score_row = QHBoxLayout()
         score_row.setSpacing(18)
 
         score_wrap = QFrame()
+        score_wrap.setObjectName("scoreWrap")
         score_wrap.setStyleSheet(
             f"""
-            QFrame {{
+            QFrame#scoreWrap {{
                 background: {COLORS['panel_bg']};
-                border: 1px solid {COLORS['border']};
+                border: none;
                 border-radius: 20px;
             }}
             """
@@ -235,9 +239,7 @@ class TodayOverviewPage(QWidget):
         score_wrap_layout.setSpacing(2)
 
         self.eff_score = QLabel("--")
-        self.eff_score.setStyleSheet(
-            f"font-size: 46px; font-weight: 800; color: {COLORS['primary']};"
-        )
+        self.eff_score.setStyleSheet(f"font-size: 42px; font-weight: 800; color: {COLORS['primary']};")
         score_wrap_layout.addWidget(self.eff_score, 0, Qt.AlignCenter)
 
         score_hint = QLabel("分 / 100")
@@ -255,7 +257,7 @@ class TodayOverviewPage(QWidget):
             font-weight: 700;
             color: {COLORS['text']};
             background: {COLORS['panel_bg']};
-            border: 1px solid {COLORS['border']};
+            border: none;
             border-radius: 14px;
             padding: 7px 12px;
             """
@@ -265,7 +267,7 @@ class TodayOverviewPage(QWidget):
         self.eff_detail = QLabel("暂无分析")
         self.eff_detail.setWordWrap(True)
         self.eff_detail.setStyleSheet(
-            f"font-size: 13px; color: {COLORS['text_secondary']}; line-height: 1.4;"
+            f"font-size: 13px; color: {COLORS['text_secondary']};"
         )
         meta_wrap.addWidget(self.eff_detail)
 
@@ -284,9 +286,10 @@ class TodayOverviewPage(QWidget):
 
     def _build_suggestions_panel(self):
         panel = QFrame()
+        panel.setObjectName("suggestionsPanel")
         panel.setStyleSheet(
             f"""
-            QFrame {{
+            QFrame#suggestionsPanel {{
                 background: {COLORS['card_bg']};
                 border: 1px solid {COLORS['border']};
                 border-radius: 18px;
@@ -295,11 +298,11 @@ class TodayOverviewPage(QWidget):
         )
 
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(24, 22, 24, 22)
-        layout.setSpacing(12)
+        layout.setContentsMargins(22, 20, 22, 20)
+        layout.setSpacing(10)
 
         title = QLabel("提醒与建议")
-        title.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {COLORS['text']};")
+        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {COLORS['text']};")
         layout.addWidget(title)
 
         self.suggestion_title = QLabel("先看今天最突出的模式")
@@ -316,7 +319,7 @@ class TodayOverviewPage(QWidget):
                 font-size: 13px;
                 color: {COLORS['text_secondary']};
                 background: {COLORS['panel_bg']};
-                border: 1px solid {COLORS['border']};
+                border: none;
                 border-radius: 14px;
                 padding: 12px;
             }}

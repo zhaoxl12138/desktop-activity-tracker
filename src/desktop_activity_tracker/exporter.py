@@ -5,6 +5,7 @@ import csv
 import shutil
 from datetime import datetime
 from . import database
+from . import timeline
 from .utils import fmt_seconds
 
 
@@ -171,6 +172,52 @@ def export_markdown(db_path, date_str, output_dir):
             lines.append(f"- {s}")
         lines.append("")
 
+    # ── 30分钟时间线 ──
+    tl = timeline.build_timeline(db_path, date_str)
+    active_blocks = [b for b in tl if b.dominant_category != "未使用电脑"]
+    if active_blocks:
+        lines.append("## 30分钟时间线")
+        lines.append("")
+        lines.append("| 时间段 | 主状态 | 有效 | 娱乐 | 挂机 | Top应用 | 切换 |")
+        lines.append("|---|---:|---:|---:|---|---:|")
+        for b in active_blocks:
+            cat_label = b.dominant_category
+            top_label = b.top_app or "-"
+            lines.append(
+                f"| {b.slot} | {cat_label} | {b.effective_seconds // 60}分 | "
+                f"{b.entertainment_seconds // 60}分 | {b.idle_seconds // 60}分 | "
+                f"{top_label} | {b.switch_count} |"
+            )
+        lines.append("")
+
+    # ── 今日专注时段 ──
+    focus_blocks = timeline.identify_focus_blocks(tl)
+    if focus_blocks:
+        lines.append("## 今日专注时段")
+        lines.append("")
+        for fb in focus_blocks:
+            lines.append(f"- {fb.start_slot}-{fb.end_slot} {fb.main_category} {fb.duration_minutes}分钟")
+            for app in fb.top_apps[:3]:
+                lines.append(f"  - {app}")
+        lines.append("")
+
+    # ── 碎片化情况 ──
+    switch_count = database.query_session_count(db_path, date_str)
+    frag_idx, frag_desc = timeline.calc_fragmentation(tl, switch_count)
+    lines.append("## 碎片化情况")
+    lines.append("")
+    lines.append(f"今日窗口切换：{switch_count}次")
+    lines.append(f"碎片化指数：{frag_idx}/100")
+    lines.append(f"评价：{frag_desc}")
+    lines.append("")
+
+    # ── 一句话复盘 ──
+    review = timeline.generate_one_line_review(tl, focus_blocks, frag_idx)
+    lines.append("## 一句话复盘")
+    lines.append("")
+    lines.append(review)
+    lines.append("")
+
     with open(filepath, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
 
@@ -191,41 +238,13 @@ def _extract_title_key(window_title):
     return window_title[:40]
 
 
-# Chinese month names
-_CHINESE_MONTHS = [
-    "", "一月", "二月", "三月", "四月", "五月", "六月",
-    "七月", "八月", "九月", "十月", "十一月", "十二月"
-]
-
-
-def _obsidian_daily_path(obsidian_base, date_str):
-    """Build Obsidian path: base/时间追踪/桌面活动日报/2026/六月/2026-06-01.md"""
-    year, month, _ = date_str.split("-")
-    month_cn = _CHINESE_MONTHS[int(month)]
-    return os.path.join(obsidian_base, "时间追踪", "桌面活动日报", year, month_cn)
-
-
 def sync_to_obsidian(filepath, obsidian_output_path):
-    """Copy the report file to an Obsidian vault with year/month directory hierarchy.
-
-    For daily reports (filename like 2026-06-01.md), creates:
-        {obsidian_base}/时间追踪/桌面活动日报/{year}/{chinese_month}/{filename}
-
-    For weekly/monthly reports, copies directly to the obsidian base.
-    """
+    """Copy the report file to an Obsidian vault directory."""
     if not obsidian_output_path or not os.path.exists(filepath):
         return
     try:
-        filename = os.path.basename(filepath)
-        # Detect daily report by filename pattern YYYY-MM-DD.md
-        if len(filename) == 13 and filename[4] == "-" and filename[7] == "-" and filename.endswith(".md"):
-            date_str = filename[:-3]  # "2026-06-01"
-            dest_dir = _obsidian_daily_path(obsidian_output_path, date_str)
-        else:
-            # Weekly or monthly — keep flat in obsidian base
-            dest_dir = obsidian_output_path
-        os.makedirs(dest_dir, exist_ok=True)
-        dest = os.path.join(dest_dir, filename)
+        os.makedirs(obsidian_output_path, exist_ok=True)
+        dest = os.path.join(obsidian_output_path, os.path.basename(filepath))
         shutil.copy2(filepath, dest)
         return dest
     except Exception as e:

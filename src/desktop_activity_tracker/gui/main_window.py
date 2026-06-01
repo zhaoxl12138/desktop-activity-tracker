@@ -43,13 +43,13 @@ from .style import (
 
 
 NAV_ITEMS = [
-    ("仪表盘  今日概览", "today"),
-    ("脉冲  实时监控", "live"),
-    ("设备  软件统计", "software"),
-    ("条形图  分类统计", "category"),
-    ("文档  日报/周报", "reports"),
-    ("规则  规则配置", "rules"),
-    ("工具  设置", "settings"),
+    ("今日概览", "today"),
+    ("实时监控", "live"),
+    ("软件统计", "software"),
+    ("分类统计", "category"),
+    ("日报/周报", "reports"),
+    ("规则配置", "rules"),
+    ("设置", "settings"),
 ]
 
 
@@ -254,8 +254,7 @@ class MainWindow(QMainWindow):
     def _on_nav_changed(self, row):
         if 0 <= row < self.stack.count():
             self.stack.setCurrentIndex(row)
-            clean_name = NAV_ITEMS[row][0].split("  ", 1)[-1]
-            self.lbl_page_title.setText(clean_name)
+            self.lbl_page_title.setText(NAV_ITEMS[row][0])
 
     def _on_sample(self, sample):
         if self.stack.currentWidget() is self.pages.get("live"):

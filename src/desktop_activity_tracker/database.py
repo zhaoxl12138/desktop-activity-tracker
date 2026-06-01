@@ -373,6 +373,17 @@ def query_entertainment_trend(db_path, days=3):
     return [{"date": d, "entertainment_seconds": result_map.get(d, 0)} for d in dates]
 
 
+def query_session_count(db_path, date_str):
+    """Return the number of sessions for a given date (used as switch count)."""
+    conn = sqlite3.connect(db_path)
+    row = conn.execute(
+        "SELECT COUNT(*) as cnt FROM activity_sessions WHERE date = ?",
+        (date_str,)
+    ).fetchone()
+    conn.close()
+    return row[0] if row else 0
+
+
 def query_date_range_stats(db_path, dates):
     """Return per-day and aggregated stats for a range of dates.
 
