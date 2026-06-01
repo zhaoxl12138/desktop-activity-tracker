@@ -58,6 +58,7 @@ class TrayManager:
         popup.setWindowFlags(
             Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
         )
+        popup.setAttribute(Qt.WA_ShowWithoutActivating)
         popup.setStyleSheet("""
             QWidget {
                 background: #FFFFFF;
@@ -113,9 +114,28 @@ class TrayManager:
         layout.addWidget(btn_quit)
 
         popup.adjustSize()
-        popup.move(QCursor.pos())
+
+        # Position popup ABOVE the tray icon (near bottom of screen)
+        cursor_pos = QCursor.pos()
+        screen = QApplication.primaryScreen().availableGeometry()
+        x = cursor_pos.x()
+        y = cursor_pos.y() - popup.height() - 8  # 8px gap above cursor
+
+        # Keep within screen bounds
+        if x + popup.width() > screen.right():
+            x = screen.right() - popup.width() - 4
+        if x < screen.left():
+            x = screen.left() + 4
+        if y < screen.top():
+            y = cursor_pos.y() + 20  # Fallback: show below cursor
+
+        popup.move(x, y)
         popup.show()
-        popup.activateWindow()
+
+        # Close popup when clicking anywhere else
+        QApplication.instance().focusChanged.connect(
+            lambda old, new: popup.close() if popup.isVisible() and new != popup else None
+        )
 
     def _on_tray_activated(self, reason):
         if reason == QSystemTrayIcon.Context:
