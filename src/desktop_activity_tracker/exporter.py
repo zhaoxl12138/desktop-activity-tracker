@@ -179,7 +179,7 @@ def export_markdown(db_path, date_str, output_dir):
         lines.append("## 30分钟时间线")
         lines.append("")
         lines.append("| 时间段 | 主状态 | 有效 | 娱乐 | 挂机 | Top应用 | 切换 |")
-        lines.append("|---|---:|---:|---:|---|---:|")
+        lines.append("|---|---|---:|---:|---:|---|---:|")
         for b in active_blocks:
             cat_label = b.dominant_category
             top_label = b.top_app or "-"
