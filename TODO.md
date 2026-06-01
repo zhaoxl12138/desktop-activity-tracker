@@ -1,47 +1,48 @@
 # TODO
 
-## v0.1.0 — 项目初始化 + 前台窗口检测
+## v0.1.0 ✅ — 项目初始化 + 前台窗口检测
 
-- [ ] 前台窗口检测（GetForegroundWindow）
-- [ ] 获取窗口标题
-- [ ] 获取进程名和可执行文件路径
-- [ ] 基础命令行启动和循环采样
+- [x] 项目目录结构
+- [x] 基础文档（README, PRD, ARCHITECTURE）
+- [x] 前台窗口检测（GetForegroundWindow）
+- [x] 获取窗口标题
+- [x] 获取进程名和可执行文件路径
+- [x] 基础命令行启动和循环采样
 
-## v0.2.0 — SQLite 存储
+## v0.2.0 ✅ — SQLite 存储
 
-- [ ] SQLite 数据库初始化
-- [ ] activity_logs 表设计与建表
-- [ ] 采样数据写入
-- [ ] WAL 模式并发安全
+- [x] SQLite 数据库初始化
+- [x] activity_logs 表设计与建表
+- [x] 采样数据写入
+- [x] WAL 模式并发安全
 
-## v0.3.0 — 软件分类系统
+## v0.3.0 ✅ — 软件分类系统
 
-- [ ] YAML 配置文件加载
-- [ ] 基于进程名的分类匹配
-- [ ] 基于窗口标题关键词的分类匹配
-- [ ] 浏览器场景的标题优先匹配
-- [ ] 默认分类兜底
+- [x] YAML 配置文件加载
+- [x] 基于进程名的分类匹配
+- [x] 基于窗口标题关键词的分类匹配
+- [x] 浏览器场景的标题优先匹配
+- [x] 默认分类兜底
 
-## v0.4.0 — 活跃检测与有效时长
+## v0.4.0 ✅ — 活跃检测与有效时长
 
-- [ ] GetLastInputInfo 获取空闲秒数
-- [ ] 可配置的空闲阈值
-- [ ] interactive_required / passive_allowed 双规则
-- [ ] 有效时长判断逻辑
+- [x] GetLastInputInfo 获取空闲秒数
+- [x] 可配置的空闲阈值
+- [x] interactive_required / passive_allowed 双规则
+- [x] 有效时长判断逻辑
 
-## v0.5.0 — 日报生成
+## v0.5.0 ✅ — 日报生成
 
-- [ ] Markdown 日报模板
-- [ ] 按软件、按分类统计
-- [ ] 效率评分计算
-- [ ] 优化建议生成
-- [ ] CSV 导出
+- [x] Markdown 日报模板
+- [x] 按软件、按分类统计
+- [x] 效率评分计算
+- [x] 优化建议生成
+- [x] CSV 导出
 
-## v0.6.0 — Obsidian 集成
+## v0.6.0 ✅ — Obsidian 集成
 
-- [ ] Obsidian 输出目录配置
-- [ ] 日报自动同步到 Obsidian vault
-- [ ] 路径校验
+- [x] Obsidian 输出目录配置
+- [x] 日报自动同步到 Obsidian vault
 
 ## v0.7.0 — 系统托盘
 

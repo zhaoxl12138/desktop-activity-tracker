@@ -12,4 +12,5 @@ def get_app_root():
     """
     if getattr(sys, 'frozen', False):
         return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # Navigate: __init__.py -> desktop_activity_tracker/ -> src/ -> project_root/
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
