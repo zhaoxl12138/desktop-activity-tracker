@@ -1,0 +1,5 @@
+pywin32>=305
+psutil>=5.9.0
+PyYAML>=6.0
+pandas>=2.0.0
+PySide6>=6.5.0
