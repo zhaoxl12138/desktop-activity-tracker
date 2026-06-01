@@ -6,6 +6,18 @@
 
 ---
 
+## v1.0.0 - 2026-06-01
+
+### Added
+
+- PyInstaller 单文件 EXE 打包（`-w` 无控制台窗口模式）
+- `desktop-activity-tracker.spec` — PyInstaller spec 文件
+- Windows 10/11 兼容性验证
+
+### Changed
+
+- 版本号从 0.9.0 升级到 1.0.0（首个正式发布）
+
 ## v0.9.0 - 2026-06-01
 
 ### Added

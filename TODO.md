@@ -73,9 +73,9 @@
 - [x] 娱乐时间变化分析
 - [x] 多日聚合统计查询 (query_date_range_stats)
 
-## v1.0.0 — 正式发布
+## v1.0.0 ✅ — 正式发布
 
-- [ ] PyInstaller 打包为单文件 EXE
-- [ ] 无控制台窗口（-w 模式）
-- [ ] 在 Win10/Win11 测试通过
+- [x] PyInstaller 打包为单文件 EXE
+- [x] 无控制台窗口（-w 模式）
+- [x] 在 Win10/Win11 测试通过
 - [ ] 发布 GitHub Release
