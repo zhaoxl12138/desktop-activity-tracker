@@ -73,6 +73,8 @@ class MetricCard(QFrame):
         self._accent = accent
         self.setStyleSheet(DASHBOARD_CARD_STYLE)
         self.setFixedHeight(132)
+        self.setMinimumWidth(190)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(14, 12, 14, 10)

@@ -67,8 +67,8 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("Desktop Activity Tracker")
         self.setStyleSheet(GLOBAL_STYLE + INPUT_STYLE)
-        self.resize(1280, 820)
-        self.setMinimumSize(1180, 760)
+        self.resize(1440, 860)
+        self.setMinimumSize(1280, 780)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -97,7 +97,7 @@ class MainWindow(QMainWindow):
 
     def _build_sidebar(self):
         frame = QFrame()
-        frame.setFixedWidth(232)
+        frame.setFixedWidth(216)
         frame.setStyleSheet(f"background: {COLORS['sidebar_bg']};")
 
         layout = QVBoxLayout(frame)
@@ -107,7 +107,7 @@ class MainWindow(QMainWindow):
         brand = QLabel("Desktop\nActivity Tracker")
         brand.setStyleSheet(
             f"""
-            font-size: 18px;
+            font-size: 17px;
             font-weight: 800;
             color: {COLORS['text_inverse']};
             letter-spacing: 0.4px;
@@ -175,7 +175,7 @@ class MainWindow(QMainWindow):
         bar.setFixedHeight(92)
 
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(22, 10, 22, 10)
+        layout.setContentsMargins(20, 10, 20, 10)
         layout.setSpacing(12)
 
         title_wrap = QVBoxLayout()
@@ -186,7 +186,7 @@ class MainWindow(QMainWindow):
 
         self.lbl_page_title = QLabel("今日概览")
         self.lbl_page_title.setStyleSheet(
-            f"font-size: 42px; font-weight: 800; color: {COLORS['text']};"
+            f"font-size: 38px; font-weight: 800; color: {COLORS['text']};"
         )
         top_line.addWidget(self.lbl_page_title)
 
