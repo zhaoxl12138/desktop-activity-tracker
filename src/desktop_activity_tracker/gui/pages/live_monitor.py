@@ -35,6 +35,7 @@ class LiveMonitorPage(QWidget):
 
     def _build_current_session_card(self):
         card = QFrame()
+        card.setObjectName("dashboardCard")
         card.setStyleSheet(DASHBOARD_CARD_STYLE)
 
         root = QVBoxLayout(card)
@@ -107,6 +108,7 @@ class LiveMonitorPage(QWidget):
 
     def _build_history_card(self):
         card = QFrame()
+        card.setObjectName("dashboardCard")
         card.setStyleSheet(DASHBOARD_CARD_STYLE)
 
         root = QVBoxLayout(card)

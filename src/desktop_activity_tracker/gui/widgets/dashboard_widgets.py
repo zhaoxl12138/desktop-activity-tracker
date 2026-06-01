@@ -71,8 +71,18 @@ class MetricCard(QFrame):
     def __init__(self, title: str, icon: str, accent: str, parent: QWidget | None = None):
         super().__init__(parent)
         self._accent = accent
-        self.setStyleSheet(DASHBOARD_CARD_STYLE)
-        self.setFixedHeight(132)
+        self.setObjectName("dashboardCard")
+        self.setStyleSheet(
+            f"""
+            QFrame#dashboardCard {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 {COLORS['card_bg_alt']}, stop:1 {COLORS['card_bg']});
+                border: 1px solid {accent};
+                border-radius: 18px;
+            }}
+            """
+        )
+        self.setFixedHeight(140)
         self.setMinimumWidth(190)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
@@ -160,7 +170,7 @@ class DonutChartWidget(QWidget):
         rect = QRectF((self.width() - side) / 2, (self.height() - side) / 2, side, side)
         ring_width = max(12.0, side * 0.12)
 
-        base_pen = QPen(QColor("#E4EAF4"), ring_width)
+        base_pen = QPen(QColor(COLORS["border"]), ring_width)
         base_pen.setCapStyle(Qt.FlatCap)
         painter.setPen(base_pen)
         painter.drawArc(rect, 0, 360 * 16)
@@ -222,7 +232,7 @@ class ScoreGaugeWidget(QWidget):
         rect = QRectF((self.width() - side) / 2, (self.height() - side) / 2, side, side)
         width = max(11.0, side * 0.1)
 
-        base = QPen(QColor("#E4E9F3"), width)
+        base = QPen(QColor(COLORS["border"]), width)
         base.setCapStyle(Qt.RoundCap)
         painter.setPen(base)
         painter.drawArc(rect, 225 * 16, -270 * 16)
@@ -276,6 +286,7 @@ class TimelineWidget(QFrame):
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
+        self.setObjectName("dashboardCard")
         self.setStyleSheet(DASHBOARD_CARD_STYLE)
         self.setFixedHeight(235)
         self._rows: list[QWidget] = []
@@ -376,6 +387,7 @@ class TopAppListWidget(QFrame):
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
+        self.setObjectName("dashboardCard")
         self.setStyleSheet(DASHBOARD_CARD_STYLE)
         self.setFixedHeight(235)
         self._rows: list[tuple[QLabel, QProgressBar, QLabel]] = []

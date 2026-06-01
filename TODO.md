@@ -1,5 +1,12 @@
 # TODO
 
+## Dark Dashboard
+- [x] 将首页切换为深色 Dashboard 主题。
+- [x] Sidebar 收敛为当前已有核心功能入口，不加入用户系统、Pro、目标管理等未实现功能。
+- [x] TOP5 应用接入默认 display name 映射，减少直接展示 exe 名。
+- [ ] 继续优化非首页页面的深色主题细节，避免表格页和配置页视觉割裂。
+- [ ] 增加 Dashboard 截图回归检查，覆盖默认窗口尺寸下的卡片挤压问题。
+
 ## Dashboard UI
 - [x] 时间趋势图替换为今日时间线（30 分钟块，分类颜色 + 主导应用 + 时长）
 - [x] 软件 TOP5 支持 display_name_mapping（WindowsTerminal.exe → Windows Terminal）

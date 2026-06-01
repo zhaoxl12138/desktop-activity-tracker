@@ -45,18 +45,30 @@ from .style import (
 
 
 NAV_ITEMS = [
-    # Main pages
     ("今日概览", "today", "聚焦今天的使用结构、效率与提醒"),
     ("实时监控", "live", "查看当前前台窗口与活动状态"),
     ("软件统计", "software", "分析软件使用时长与占比"),
     ("分类统计", "category", "按分类查看效率结构"),
     ("日报/周报", "reports", "生成日报、周报和月报"),
-    # Config pages — rendered after a divider in the sidebar
-    ("规则配置", "rules", "管理分类规则和匹配条件"),
-    ("设置", "settings", "管理数据库、输出路径与基础参数"),
+    ("设置中心", "settings", "管理数据库、输出路径与基础参数"),
 ]
 
 MAIN_NAV_COUNT = 5  # items above the divider
+
+DEFAULT_DISPLAY_NAME_MAPPING = {
+    "WindowsTerminal.exe": "Windows Terminal",
+    "Code.exe": "VS Code",
+    "Cursor.exe": "Cursor",
+    "chrome.exe": "Chrome",
+    "msedge.exe": "Edge",
+    "QyClient.exe": "QQ",
+    "WeChat.exe": "微信",
+    "Weixin.exe": "微信",
+    "Codex.exe": "Codex",
+    "codex.exe": "Codex",
+    "Obsidian.exe": "Obsidian",
+    "python.exe": "Python",
+}
 
 
 class MainWindow(QMainWindow):
@@ -101,17 +113,17 @@ class MainWindow(QMainWindow):
 
     def _build_sidebar(self):
         frame = QFrame()
-        frame.setFixedWidth(216)
+        frame.setFixedWidth(236)
         frame.setStyleSheet(f"background: {COLORS['sidebar_bg']};")
 
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(0, 20, 0, 14)
         layout.setSpacing(0)
 
-        brand = QLabel("Desktop\nActivity Tracker")
+        brand = QLabel("Activity Tracker")
         brand.setStyleSheet(
             f"""
-            font-size: 17px;
+            font-size: 20px;
             font-weight: 800;
             color: {COLORS['text_inverse']};
             letter-spacing: 0.4px;
@@ -120,7 +132,7 @@ class MainWindow(QMainWindow):
         )
         layout.addWidget(brand)
 
-        tagline = QLabel("把时间结构看清楚")
+        tagline = QLabel("Focus · Analyze · Improve")
         tagline.setStyleSheet(
             f"font-size: 11px; color: {COLORS['text_muted']}; padding: 0 20px 14px 20px;"
         )
@@ -133,7 +145,7 @@ class MainWindow(QMainWindow):
 
         self.nav_list = QListWidget()
         self.nav_list.setStyleSheet(SIDEBAR_STYLE)
-        self.nav_list.setFont(QFont("Microsoft YaHei", 10))
+        self.nav_list.setFont(QFont("Microsoft YaHei", 11))
         self.nav_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.nav_list.setWordWrap(True)
         for idx, (title, key, hint) in enumerate(NAV_ITEMS):
@@ -151,7 +163,7 @@ class MainWindow(QMainWindow):
 
         layout.addStretch()
 
-        version = QLabel("v1.3.0")
+        version = QLabel("v1.4.0")
         version.setStyleSheet(
             f"font-size: 10px; color: {COLORS['text_muted']}; padding: 8px 16px;"
         )
@@ -160,7 +172,10 @@ class MainWindow(QMainWindow):
 
     def _build_pages(self):
         self.stack = QStackedWidget()
-        display_name_mapping = self.config.get("display_name_mapping", {})
+        display_name_mapping = {
+            **DEFAULT_DISPLAY_NAME_MAPPING,
+            **self.config.get("display_name_mapping", {}),
+        }
         self.pages = {
             "today": TodayOverviewPage(self.db_path, display_name_mapping),
             "live": LiveMonitorPage(),

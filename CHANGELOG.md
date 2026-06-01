@@ -3,6 +3,16 @@
 ## 2026-06-01
 
 ### Added
+- 新增深色 Dashboard 主题，覆盖主窗口、Sidebar、顶部栏、底部状态栏、首页卡片与按钮样式。
+- 新增默认软件显示名映射，TOP5 应用优先展示 `Windows Terminal`、`VS Code`、`Chrome`、`微信` 等可读名称。
+- 新增 `docs/UI.md`，记录当前深色 Dashboard 的设计边界、组件结构与后续优化方向。
+
+### Changed
+- 首页视觉升级为深蓝/黑蓝背景、蓝紫主色、深色圆角卡片与统一边框层级。
+- Sidebar 调整为 `Activity Tracker` 品牌区与 `Focus · Analyze · Improve` 副标题，导航收敛为当前已有核心页面。
+- 指标卡片、时间分布、效率评分、今日专注时段、今日时间线、TOP5 应用统一切换为深色卡片展示。
+
+### Added
 - 新增实时监控页 Dashboard 风格展示：
   - 当前前台活动卡片
   - 进程与分类标签

@@ -51,7 +51,8 @@ class TodayOverviewPage(QWidget):
                 font-size: 13px;
                 font-weight: 700;
                 color: white;
-                background: {COLORS['danger_red']};
+                background: #3A1620;
+                border: 1px solid {COLORS['danger_red']};
                 border-radius: 10px;
                 padding: 10px 16px;
             }}
@@ -108,6 +109,7 @@ class TodayOverviewPage(QWidget):
 
     def _build_distribution_card(self):
         card = QFrame()
+        card.setObjectName("dashboardCard")
         card.setStyleSheet(DASHBOARD_CARD_STYLE)
         card.setFixedHeight(235)
         layout = QVBoxLayout(card)
@@ -140,6 +142,7 @@ class TodayOverviewPage(QWidget):
 
     def _build_score_card(self):
         card = QFrame()
+        card.setObjectName("dashboardCard")
         card.setStyleSheet(DASHBOARD_CARD_STYLE)
         card.setFixedHeight(235)
         layout = QVBoxLayout(card)
@@ -167,6 +170,7 @@ class TodayOverviewPage(QWidget):
 
     def _build_focus_card(self):
         card = QFrame()
+        card.setObjectName("dashboardCard")
         card.setStyleSheet(DASHBOARD_CARD_STYLE)
         card.setFixedHeight(235)
         layout = QVBoxLayout(card)
@@ -184,20 +188,8 @@ class TodayOverviewPage(QWidget):
         return card
 
     def _build_trend_card(self):
-        card = QFrame()
-        card.setStyleSheet(DASHBOARD_CARD_STYLE)
-        card.setFixedHeight(235)
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(8)
-
-        title = QLabel("时间线（分钟）")
-        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {COLORS['text']};")
-        layout.addWidget(title)
-
         self.timeline_widget = TimelineWidget()
-        layout.addWidget(self.timeline_widget, 1)
-        return card
+        return self.timeline_widget
 
     def refresh(self):
         today = datetime.now().strftime("%Y-%m-%d")
@@ -407,8 +399,8 @@ class TodayOverviewPage(QWidget):
             row.setStyleSheet(
                 f"""
                 QFrame {{
-                    background: #F8FCFA;
-                    border: 1px solid #DBF4E6;
+                    background: {COLORS['panel_bg_alt']};
+                    border: 1px solid {COLORS['border_light']};
                     border-radius: 12px;
                 }}
                 """
