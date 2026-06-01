@@ -6,6 +6,7 @@
 - 新增深色 Dashboard 主题，覆盖主窗口、Sidebar、顶部栏、底部状态栏、首页卡片与按钮样式。
 - 新增默认软件显示名映射，TOP5 应用优先展示 `Windows Terminal`、`VS Code`、`Chrome`、`微信` 等可读名称。
 - 新增 `docs/UI.md`，记录当前深色 Dashboard 的设计边界、组件结构与后续优化方向。
+- 新增 `tests/test_gui_smoke.py`，用临时数据库和临时配置验证默认窗口尺寸、导航切换、暂停/恢复和截图生成。
 
 ### Changed
 - 首页视觉升级为深蓝/黑蓝背景、蓝紫主色、深色圆角卡片与统一边框层级。

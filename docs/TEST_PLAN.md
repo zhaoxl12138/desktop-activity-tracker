@@ -406,3 +406,12 @@ GUI：PySide6
 - 历史遗留：幻影 HID 事件导致空闲检测 bug，已通过 phantom_recovery_ticks 机制修复
 
 最终结论：**通过发布**
+## GUI Smoke Regression
+
+Before UI commits, run:
+
+```powershell
+python tests/test_gui_smoke.py
+```
+
+This check starts the PySide6 main window with a temporary database/config, verifies the default window size, switches all visible navigation pages, toggles pause/resume, and saves a temporary dashboard screenshot. It is intended to catch default-size Dashboard layout regressions without touching local reports or production data.

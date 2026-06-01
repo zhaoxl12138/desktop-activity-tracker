@@ -29,9 +29,12 @@ The current Dashboard uses a restrained dark theme instead of a decorative skin.
 
 ## Next UI Work
 
-- Add screenshot smoke checks for the default window size.
 - Improve timeline hover/details after the current report data path is stable.
 
 ## 2026-06-01 Follow-up
 
 Non-home pages now share the dark table, tab, input, group, and card language. Remaining UI work should focus on automated regression checks and targeted readability improvements instead of another broad theme pass.
+
+## GUI Smoke Check
+
+Run `python tests/test_gui_smoke.py` before UI commits. It starts the main window with a temporary database/config, switches every visible navigation page, toggles pause/resume, and saves a dashboard screenshot in a temporary directory to catch default-size layout regressions.
