@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -38,12 +38,12 @@ class TodayOverviewPage(QWidget):
         self.focus_rows: list[QWidget] = []
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(22, 18, 22, 18)
-        root.setSpacing(14)
+        root.setContentsMargins(18, 14, 18, 14)
+        root.setSpacing(10)
 
         metrics_grid = QGridLayout()
-        metrics_grid.setHorizontalSpacing(12)
-        metrics_grid.setVerticalSpacing(12)
+        metrics_grid.setHorizontalSpacing(10)
+        metrics_grid.setVerticalSpacing(10)
         root.addLayout(metrics_grid)
 
         metric_specs = [
@@ -59,8 +59,8 @@ class TodayOverviewPage(QWidget):
             metrics_grid.addWidget(card, 0, col)
 
         middle_grid = QGridLayout()
-        middle_grid.setHorizontalSpacing(12)
-        middle_grid.setVerticalSpacing(12)
+        middle_grid.setHorizontalSpacing(10)
+        middle_grid.setVerticalSpacing(10)
         root.addLayout(middle_grid)
 
         middle_grid.addWidget(self._build_distribution_card(), 0, 0, 1, 5)
@@ -68,8 +68,8 @@ class TodayOverviewPage(QWidget):
         middle_grid.addWidget(self._build_focus_card(), 0, 8, 1, 3)
 
         bottom_grid = QGridLayout()
-        bottom_grid.setHorizontalSpacing(12)
-        bottom_grid.setVerticalSpacing(12)
+        bottom_grid.setHorizontalSpacing(10)
+        bottom_grid.setVerticalSpacing(10)
         root.addLayout(bottom_grid, 1)
 
         bottom_grid.addWidget(self._build_trend_card(), 0, 0, 1, 6)
@@ -91,27 +91,28 @@ class TodayOverviewPage(QWidget):
     def _build_distribution_card(self):
         card = QFrame()
         card.setStyleSheet(DASHBOARD_CARD_STYLE)
+        card.setFixedHeight(235)
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(8)
 
         title = QLabel("时间分布")
-        title.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {COLORS['text']};")
+        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {COLORS['text']};")
         layout.addWidget(title)
 
         row = QHBoxLayout()
-        row.setSpacing(12)
+        row.setSpacing(10)
         self.donut_widget = DonutChartWidget()
         row.addWidget(self.donut_widget, 1)
 
         right = QVBoxLayout()
-        right.setSpacing(10)
+        right.setSpacing(8)
         self.legend_widget = DistributionLegend()
         right.addWidget(self.legend_widget, 1)
 
         self.active_ratio_label = QLabel("有效时间占比：--")
         self.active_ratio_label.setStyleSheet(
-            f"font-size: 14px; font-weight: 700; color: {COLORS['primary']};"
+            f"font-size: 13px; font-weight: 700; color: {COLORS['primary']};"
         )
         right.addWidget(self.active_ratio_label)
         row.addLayout(right, 1)
@@ -122,40 +123,44 @@ class TodayOverviewPage(QWidget):
     def _build_score_card(self):
         card = QFrame()
         card.setStyleSheet(DASHBOARD_CARD_STYLE)
+        card.setFixedHeight(235)
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(10)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(6)
 
         title = QLabel("效率评分")
-        title.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {COLORS['text']};")
+        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {COLORS['text']};")
         layout.addWidget(title)
 
         self.score_gauge = ScoreGaugeWidget()
         layout.addWidget(self.score_gauge, 1)
 
         self.score_grade = QLabel("数据不足")
+        self.score_grade.setAlignment(Qt.AlignCenter)
+        self.score_grade.setMaximumHeight(28)
         self.score_grade.setStyleSheet(SUBTLE_TAG_STYLE)
         layout.addWidget(self.score_grade, 0)
 
         self.score_detail = QLabel("活跃数据不足 30 分钟，暂不评分。")
         self.score_detail.setWordWrap(True)
-        self.score_detail.setStyleSheet(f"font-size: 13px; color: {COLORS['text_secondary']};")
+        self.score_detail.setStyleSheet(f"font-size: 12px; color: {COLORS['text_secondary']};")
         layout.addWidget(self.score_detail)
         return card
 
     def _build_focus_card(self):
         card = QFrame()
         card.setStyleSheet(DASHBOARD_CARD_STYLE)
+        card.setFixedHeight(235)
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(10)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(8)
 
         title = QLabel("今日专注时段")
-        title.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {COLORS['text']};")
+        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {COLORS['text']};")
         layout.addWidget(title)
 
         self.focus_container = QVBoxLayout()
-        self.focus_container.setSpacing(10)
+        self.focus_container.setSpacing(8)
         layout.addLayout(self.focus_container)
         layout.addStretch()
         return card
@@ -163,12 +168,13 @@ class TodayOverviewPage(QWidget):
     def _build_trend_card(self):
         card = QFrame()
         card.setStyleSheet(DASHBOARD_CARD_STYLE)
+        card.setFixedHeight(235)
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(8)
 
         title = QLabel("时间趋势（分钟）")
-        title.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {COLORS['text']};")
+        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {COLORS['text']};")
         layout.addWidget(title)
 
         self.trend_chart = TrendChartWidget()

@@ -28,7 +28,7 @@ class MiniSparkline(QWidget):
         super().__init__(parent)
         self._color = QColor(color)
         self._points: list[float] = []
-        self.setMinimumHeight(28)
+        self.setFixedHeight(24)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
     def set_points(self, points: Iterable[float]):
@@ -72,24 +72,25 @@ class MetricCard(QFrame):
         super().__init__(parent)
         self._accent = accent
         self.setStyleSheet(DASHBOARD_CARD_STYLE)
+        self.setFixedHeight(132)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(16, 14, 16, 12)
-        root.setSpacing(8)
+        root.setContentsMargins(14, 12, 14, 10)
+        root.setSpacing(6)
 
         head = QHBoxLayout()
-        head.setSpacing(10)
+        head.setSpacing(8)
 
         icon_label = QLabel(icon)
         icon_label.setAlignment(Qt.AlignCenter)
-        icon_label.setFixedSize(40, 40)
+        icon_label.setFixedSize(34, 34)
         icon_label.setStyleSheet(
             f"""
             QLabel {{
-                border-radius: 20px;
+                border-radius: 17px;
                 background: {accent};
                 color: white;
-                font-size: 18px;
+                font-size: 16px;
                 font-weight: 700;
             }}
             """
@@ -97,23 +98,23 @@ class MetricCard(QFrame):
         head.addWidget(icon_label, 0)
 
         text_col = QVBoxLayout()
-        text_col.setSpacing(4)
+        text_col.setSpacing(2)
 
         title_label = QLabel(title)
         title_label.setStyleSheet(
-            f"font-size: 14px; font-weight: 700; color: {COLORS['text_secondary']};"
+            f"font-size: 12px; font-weight: 700; color: {COLORS['text_secondary']};"
         )
         text_col.addWidget(title_label)
 
         self.value_label = QLabel("--")
         self.value_label.setStyleSheet(
-            f"font-size: 38px; font-weight: 800; color: {COLORS['text']};"
+            f"font-size: 30px; font-weight: 800; color: {COLORS['text']};"
         )
         text_col.addWidget(self.value_label)
 
         self.delta_label = QLabel("较昨日 --")
         self.delta_label.setStyleSheet(
-            f"font-size: 12px; color: {COLORS['text_muted']};"
+            f"font-size: 11px; color: {COLORS['text_muted']};"
         )
         text_col.addWidget(self.delta_label)
         text_col.addStretch()
@@ -139,7 +140,7 @@ class DonutChartWidget(QWidget):
         super().__init__(parent)
         self._total_seconds = 0
         self._segments: list[tuple[str, int, str]] = []
-        self.setMinimumSize(220, 220)
+        self.setMinimumSize(150, 150)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     def set_data(self, total_seconds: int, segments: list[tuple[str, int, str]]):
@@ -152,9 +153,9 @@ class DonutChartWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        side = min(self.width(), self.height()) - 24
+        side = max(120, min(self.width(), self.height()) - 18)
         rect = QRectF((self.width() - side) / 2, (self.height() - side) / 2, side, side)
-        ring_width = max(16.0, side * 0.14)
+        ring_width = max(12.0, side * 0.12)
 
         base_pen = QPen(QColor("#E4EAF4"), ring_width)
         base_pen.setCapStyle(Qt.FlatCap)
@@ -182,13 +183,13 @@ class DonutChartWidget(QWidget):
         painter.setPen(QColor(COLORS["text"]))
         painter.setFont(self.font())
         f = painter.font()
-        f.setPointSize(17)
+        f.setPointSize(15)
         f.setBold(True)
         painter.setFont(f)
         painter.drawText(self.rect().adjusted(0, -10, 0, 0), Qt.AlignCenter, value)
 
         f2 = painter.font()
-        f2.setPointSize(11)
+        f2.setPointSize(10)
         f2.setBold(False)
         painter.setFont(f2)
         painter.setPen(QColor(COLORS["text_muted"]))
@@ -202,7 +203,7 @@ class ScoreGaugeWidget(QWidget):
         super().__init__(parent)
         self._score: int | None = None
         self._accent = COLORS["coding_green"]
-        self.setMinimumSize(200, 200)
+        self.setMinimumSize(150, 138)
 
     def set_score(self, score: int | None, accent: str):
         self._score = score
@@ -214,9 +215,9 @@ class ScoreGaugeWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        side = min(self.width(), self.height()) - 28
+        side = max(112, min(self.width(), self.height()) - 22)
         rect = QRectF((self.width() - side) / 2, (self.height() - side) / 2, side, side)
-        width = max(14.0, side * 0.11)
+        width = max(11.0, side * 0.1)
 
         base = QPen(QColor("#E4E9F3"), width)
         base.setCapStyle(Qt.RoundCap)
@@ -235,14 +236,14 @@ class ScoreGaugeWidget(QWidget):
 
         painter.setPen(QColor(COLORS["text"]))
         f = painter.font()
-        f.setPointSize(28)
+        f.setPointSize(24)
         f.setBold(True)
         painter.setFont(f)
         label = "--" if self._score is None else str(value)
         painter.drawText(self.rect().adjusted(0, -8, 0, 0), Qt.AlignCenter, label)
 
         f2 = painter.font()
-        f2.setPointSize(11)
+        f2.setPointSize(10)
         f2.setBold(False)
         painter.setFont(f2)
         painter.setPen(QColor(COLORS["text_muted"]))
@@ -255,7 +256,7 @@ class TrendChartWidget(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._points: list[float] = []
-        self.setMinimumHeight(260)
+        self.setMinimumHeight(180)
 
     def set_points(self, points: Iterable[float]):
         self._points = [max(0.0, float(p)) for p in points]
@@ -266,7 +267,7 @@ class TrendChartWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        content = self.rect().adjusted(18, 14, -18, -24)
+        content = self.rect().adjusted(16, 10, -16, -16)
         painter.setPen(QColor("#E4EAF4"))
         for i in range(5):
             y = content.top() + i * content.height() / 4
@@ -308,18 +309,19 @@ class TopAppListWidget(QFrame):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setStyleSheet(DASHBOARD_CARD_STYLE)
+        self.setFixedHeight(235)
         self._rows: list[tuple[QLabel, QProgressBar, QLabel]] = []
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(18, 16, 18, 16)
-        root.setSpacing(10)
+        root.setContentsMargins(16, 14, 16, 14)
+        root.setSpacing(8)
 
         title = QLabel("软件使用 TOP5")
-        title.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {COLORS['text']};")
+        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {COLORS['text']};")
         root.addWidget(title)
 
         self.rows_container = QVBoxLayout()
-        self.rows_container.setSpacing(10)
+        self.rows_container.setSpacing(8)
         root.addLayout(self.rows_container)
         root.addStretch()
 
@@ -330,7 +332,7 @@ class TopAppListWidget(QFrame):
 
     def _build_row(self, rank: int):
         layout = QHBoxLayout()
-        layout.setSpacing(10)
+        layout.setSpacing(8)
 
         idx = QLabel(str(rank))
         idx.setFixedWidth(16)
@@ -338,9 +340,9 @@ class TopAppListWidget(QFrame):
         layout.addWidget(idx)
 
         name = QLabel("--")
-        name.setMinimumWidth(130)
-        name.setStyleSheet(f"font-size: 14px; color: {COLORS['text']};")
-        layout.addWidget(name, 0)
+        name.setMinimumWidth(90)
+        name.setStyleSheet(f"font-size: 13px; color: {COLORS['text']};")
+        layout.addWidget(name, 1)
 
         bar = QProgressBar()
         bar.setTextVisible(False)
@@ -362,9 +364,9 @@ class TopAppListWidget(QFrame):
         layout.addWidget(bar, 1)
 
         duration = QLabel("--")
-        duration.setFixedWidth(72)
+        duration.setFixedWidth(66)
         duration.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        duration.setStyleSheet(f"font-size: 13px; color: {COLORS['text_secondary']};")
+        duration.setStyleSheet(f"font-size: 12px; color: {COLORS['text_secondary']};")
         layout.addWidget(duration)
         return layout, name, bar, duration
 
@@ -374,7 +376,7 @@ class TopAppListWidget(QFrame):
             if i < len(items):
                 name, seconds = items[i]
                 pct = int(round((seconds / max_seconds) * 100)) if max_seconds else 0
-                self._rows[i][0].setText(name)
+                self._rows[i][0].setText(_compact_app_name(name))
                 self._rows[i][1].setValue(max(0, min(100, pct)))
                 self._rows[i][2].setText(fmt_seconds(seconds))
             else:
@@ -390,7 +392,7 @@ class DistributionLegend(QWidget):
         super().__init__(parent)
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
-        self.layout.setSpacing(8)
+        self.layout.setSpacing(6)
         self._rows: list[QWidget] = []
 
     def set_items(self, items: list[tuple[str, int, str]], total_seconds: int):
@@ -404,7 +406,7 @@ class DistributionLegend(QWidget):
             row = QWidget()
             line = QGridLayout(row)
             line.setContentsMargins(0, 0, 0, 0)
-            line.setHorizontalSpacing(8)
+            line.setHorizontalSpacing(6)
             line.setVerticalSpacing(0)
 
             dot = QLabel("●")
@@ -412,18 +414,27 @@ class DistributionLegend(QWidget):
             line.addWidget(dot, 0, 0)
 
             name_label = QLabel(name)
-            name_label.setStyleSheet(f"font-size: 14px; color: {COLORS['text_secondary']};")
+            name_label.setStyleSheet(f"font-size: 13px; color: {COLORS['text_secondary']};")
             line.addWidget(name_label, 0, 1)
 
             time_label = QLabel(fmt_seconds(seconds))
-            time_label.setStyleSheet(f"font-size: 14px; color: {COLORS['text']}; font-weight: 600;")
+            time_label.setStyleSheet(f"font-size: 13px; color: {COLORS['text']}; font-weight: 600;")
             line.addWidget(time_label, 0, 2, Qt.AlignRight)
 
             percent = int(round(seconds / total * 100))
             pct_label = QLabel(f"{percent}%")
-            pct_label.setStyleSheet(f"font-size: 14px; color: {COLORS['text_muted']};")
+            pct_label.setStyleSheet(f"font-size: 13px; color: {COLORS['text_muted']};")
             line.addWidget(pct_label, 0, 3, Qt.AlignRight)
 
             line.setColumnStretch(1, 1)
             self.layout.addWidget(row)
             self._rows.append(row)
+
+
+def _compact_app_name(name: str, limit: int = 18) -> str:
+    """Keep app names readable in the narrow TOP5 column."""
+    if not name:
+        return "--"
+    if len(name) <= limit:
+        return name
+    return f"{name[: limit - 1]}..."
