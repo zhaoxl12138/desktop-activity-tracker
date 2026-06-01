@@ -48,14 +48,6 @@ python -m desktop_activity_tracker.main weekly    # 周报
 python -m desktop_activity_tracker.main monthly   # 月报
 ```
 
-### 托盘操作
-
-| 操作 | 行为 |
-|------|------|
-| 左键点击 | 打开主界面 |
-| 右键点击 | 弹出菜单（打开 / 暂停 / 退出） |
-| 双击桌面图标 | 已在运行时提示"程序已在运行中" |
-
 ## 项目结构
 
 ```
