@@ -117,10 +117,14 @@ class SessionTracker:
 
         # Phantom input filter — some systems have drivers/services that
         # generate spurious HID events, resetting GetLastInputInfo() every
-        # ~10s. We track the peak idle across phantom resets.
+        # ~5–10s. We detect phantom resets by the sharp drop in raw idle
+        # (3–12s in one tick) and accumulate idle by wall-clock time.
         self._last_raw_idle: float = 0.0
         self._effective_idle: float = 0.0
         self._phantom_active: bool = False
+        self._phantom_ticks: int = 0
+        self._phantom_low_ticks: int = 0
+        self._oscillation_ticks: int = 0
 
     # ── Public API ──────────────────────────────────────────────────
 
@@ -235,45 +239,80 @@ class SessionTracker:
             self._current.effective_seconds += self.sample_interval
             self._effective_idle = 0.0
             self._phantom_active = False
-        else:
-            # Phantom-reset filter.
-            #
-            # Some Windows systems have drivers/services that generate
-            # spurious HID events, resetting GetLastInputInfo() every
-            # ~8-12s.  This means raw idle_seconds can never exceed ~9s
-            # between resets — a simple threshold will never fire.
-            #
-            # When a phantom reset is detected we enter "phantom active"
-            # mode and accumulate _effective_idle by wall-clock time on
-            # every tick, ignoring the resetting raw value.  We exit
-            # phantom mode once idle_seconds has grown past 15s (proof
-            # that this is genuine idle, not a recovery bounce).
-            is_phantom = (idle_seconds < 1 and self._last_raw_idle > 5)
-
-            if is_phantom:
-                self._effective_idle += self.sample_interval
-                self._phantom_active = True
-            elif self._phantom_active:
-                self._effective_idle += self.sample_interval
-                if idle_seconds > 15:
-                    self._phantom_active = False
-            elif idle_seconds >= self._last_raw_idle - 1:
-                # Idle accumulating or stable — normal tracking
-                if idle_seconds < 2 and self._last_raw_idle < 2:
-                    self._effective_idle = idle_seconds
-                else:
-                    self._effective_idle = max(self._effective_idle, idle_seconds)
-            else:
-                # Genuine user input — idle is decreasing
-                self._effective_idle = idle_seconds
-                self._phantom_active = False
-
+            self._phantom_ticks = 0
+            self._phantom_low_ticks = 0
+            self._oscillation_ticks = 0
             self._last_raw_idle = idle_seconds
+            return
 
-            if self._effective_idle <= self.idle_threshold:
-                self._current.effective_seconds += self.sample_interval
+        # ── Phantom HID reset detection ───────────────────────────
+        # Some drivers/services generate spurious HID events every
+        # 5–10s, resetting GetLastInputInfo().  A genuine user coming
+        # back from long idle would see idle drop from 60+ to 0 — too
+        # large for a phantom reset (capped at 12s).  We detect sharp
+        # drops (3–12s) while idle was in [3, idle_threshold).
+        idle_delta = self._last_raw_idle - idle_seconds
+        is_phantom = (
+            3 <= idle_delta <= 12
+            and 3 <= self._last_raw_idle < self.idle_threshold
+        )
+
+        if is_phantom:
+            self._effective_idle += self.sample_interval
+            self._phantom_active = True
+            self._phantom_low_ticks = 0
+            self._oscillation_ticks = 0
+
+        elif self._phantom_active:
+            self._effective_idle += self.sample_interval
+            self._phantom_ticks += 1
+
+            # Exit A: raw idle is genuinely growing → real idle
+            if idle_seconds > 15:
+                self._phantom_active = False
+                self._phantom_ticks = 0
+            # Exit B: user has been actively typing for 5+ ticks
+            elif idle_seconds < 2:
+                self._phantom_low_ticks += 1
+                if self._phantom_low_ticks >= 5:
+                    self._phantom_active = False
+                    self._phantom_ticks = 0
+                    self._phantom_low_ticks = 0
+                    self._effective_idle = idle_seconds
             else:
-                self._current.idle_seconds += self.sample_interval
+                self._phantom_low_ticks = 0
+            # Exit C: safety timeout (10 min) — treat as real idle
+            if self._phantom_ticks > 600:
+                self._phantom_active = False
+                self._phantom_ticks = 0
+                self._effective_idle = self.idle_threshold + 1
+
+        elif idle_seconds < 2 and self._last_raw_idle < 2:
+            # Rapid 0–1 oscillation zone — don't reset; accumulate
+            # via wall clock after 10 ticks tolerance.
+            self._oscillation_ticks += 1
+            if self._oscillation_ticks > 10:
+                self._effective_idle += self.sample_interval
+            else:
+                self._effective_idle = max(self._effective_idle, idle_seconds)
+
+        elif idle_seconds >= self._last_raw_idle:
+            # Idle stable or increasing — normal accumulation
+            self._effective_idle = max(self._effective_idle, idle_seconds)
+            self._oscillation_ticks = 0
+
+        else:
+            # Small natural decrease → genuine user activity
+            self._effective_idle = idle_seconds
+            self._phantom_active = False
+            self._oscillation_ticks = 0
+
+        self._last_raw_idle = idle_seconds
+
+        if self._effective_idle <= self.idle_threshold:
+            self._current.effective_seconds += self.sample_interval
+        else:
+            self._current.idle_seconds += self.sample_interval
 
     def _emit_session(self):
         if self._current is None:

@@ -196,5 +196,5 @@ sample_interval_seconds: 1
 tracker:
   flush_interval_seconds: 10
   idle_threshold_seconds: 60
-  min_session_seconds: 2
+  min_session_seconds: 3
   sample_interval_seconds: 1

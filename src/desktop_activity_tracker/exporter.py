@@ -128,7 +128,7 @@ def export_markdown(db_path, date_str, output_dir):
     lines.append("## 总览")
     lines.append("")
     lines.append(f"- 总电脑使用：{fmt_seconds(total_sec)}")
-    lines.append(f"- 有效时间：{fmt_seconds(effective_sec)}")
+    lines.append(f"- 活跃时间：{fmt_seconds(effective_sec)}")
     lines.append(f"- 挂机/空闲时间：{fmt_seconds(idle_sec)}")
     lines.append(f"- 娱乐时间：{fmt_seconds(entertain_sec)}")
     lines.append(f"- 最长使用软件：{top_app_title or top_app}")
@@ -173,12 +173,40 @@ def export_markdown(db_path, date_str, output_dir):
         lines.append("")
 
     # ── 30分钟时间线 ──
-    tl = timeline.build_timeline(db_path, date_str)
-    active_blocks = [b for b in tl if b.dominant_category != "未使用电脑"]
-    if active_blocks:
-        lines.append("## 30分钟时间线")
+    # ── 会话时间线 ──
+    sessions = database.query_today_sessions(db_path, date_str)
+    if sessions:
+        lines.append("## 会话时间线")
         lines.append("")
-        lines.append("| 时间段 | 主状态 | 有效 | 娱乐 | 挂机 | Top应用 | 切换 |")
+        lines.append("| 时间段 | 应用 | 分类 | 有效 |")
+        lines.append("|---|---|---:|---:|")
+        for s in sessions:
+            start = s.get("start_time", "") or ""
+            end = s.get("end_time", "") or ""
+            start_short = start[-8:-3] if len(start) >= 8 else start
+            end_short = end[-8:-3] if len(end) >= 8 else end
+            if start_short == end_short:
+                # Same minute — include seconds to avoid "55:55-55:55"
+                start_short = start[-8:] if len(start) >= 8 else start
+                end_short = end[-8:] if len(end) >= 8 else end
+            time_text = f"{start_short}-{end_short}" if start_short and end_short else start_short
+            proc = s.get("process_name") or ""
+            title = s.get("normalized_title") or s.get("window_title") or proc
+            cat = s.get("category_name") or "其他"
+            eff = s.get("effective_seconds", 0) or 0
+            app_label = title[:30] if title else proc
+            lines.append(
+                f"| {time_text} | {app_label} | {cat} | {max(1, eff // 60)}分 |"
+            )
+        lines.append("")
+
+    # ── 30分钟时间线概览 ──
+    tl = timeline.build_timeline(db_path, date_str)
+    active_blocks = [b for b in tl if b.dominant_category != "离线"]
+    if active_blocks:
+        lines.append("## 30分钟时间线概览")
+        lines.append("")
+        lines.append("| 时间段 | 主状态 | 活跃 | 娱乐 | 挂机 | Top应用 | 切换 |")
         lines.append("|---|---|---:|---:|---:|---|---:|")
         for b in active_blocks:
             cat_label = b.dominant_category
@@ -344,7 +372,7 @@ def export_weekly_report(db_path, year, week_number, output_dir):
     lines.append("## 总览")
     lines.append("")
     lines.append(f"- 总电脑使用：{fmt_seconds(totals['total_seconds'])}")
-    lines.append(f"- 有效时间：{fmt_seconds(totals['effective_seconds'])}")
+    lines.append(f"- 活跃时间：{fmt_seconds(totals['effective_seconds'])}")
     lines.append(f"- 学习/工作：{fmt_seconds(totals['work_seconds'])}")
     lines.append(f"- 视频娱乐：{fmt_seconds(totals['video_seconds'])}")
     lines.append(f"- 日均有效：{fmt_seconds(totals['effective_seconds'] // max(days_with_data, 1))}")
@@ -457,7 +485,7 @@ def export_monthly_report(db_path, year, month, output_dir):
     lines.append("## 总览")
     lines.append("")
     lines.append(f"- 总电脑使用：{fmt_seconds(totals['total_seconds'])}")
-    lines.append(f"- 有效时间：{fmt_seconds(eff_total)}")
+    lines.append(f"- 活跃时间：{fmt_seconds(eff_total)}")
     lines.append(f"- 学习/工作：{fmt_seconds(work_total)}")
     lines.append(f"- 视频娱乐：{fmt_seconds(video_total)}")
     lines.append(f"- 日均有效：{fmt_seconds(avg_daily_eff)}")

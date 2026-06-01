@@ -33,7 +33,10 @@ class RecordingWorker(QThread):
 
         def on_session_end(session):
             try:
-                database.insert_session(conn, session)
+                if session._db_row_id > 0:
+                    database.update_session(conn, session)
+                else:
+                    session._db_row_id = database.insert_session(conn, session)
             except Exception as e:
                 import sys, traceback
                 print(f"[Worker] insert_session error: {e}", file=sys.stderr)

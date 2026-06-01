@@ -20,7 +20,7 @@ ENTERTAINMENT_CATS = {"video", "gaming"}
 @dataclass
 class TimeBlock:
     slot: str = ""                    # "09:00-09:30"
-    dominant_category: str = "未使用电脑"
+    dominant_category: str = "离线"
     effective_seconds: int = 0
     entertainment_seconds: int = 0
     idle_seconds: int = 0
@@ -341,7 +341,7 @@ def _finalise_block(b):
     idle = b.idle_seconds
 
     if total_eff == 0 and idle == 0:
-        b.dominant_category = "未使用电脑"
+        b.dominant_category = "离线"
         return
 
     if b.work_seconds >= 1200:
@@ -353,7 +353,7 @@ def _finalise_block(b):
     elif total_eff > 0 or idle > 0:
         b.dominant_category = "混合"
     else:
-        b.dominant_category = "未使用电脑"
+        b.dominant_category = "离线"
 
     if b._app_seconds:
         b.top_app = max(b._app_seconds, key=b._app_seconds.get)

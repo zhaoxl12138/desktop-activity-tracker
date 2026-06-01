@@ -131,7 +131,7 @@ class TodayOverviewPage(QWidget):
         self.legend_widget = DistributionLegend()
         right.addWidget(self.legend_widget, 1)
 
-        self.active_ratio_label = QLabel("有效时间占比：--")
+        self.active_ratio_label = QLabel("活跃时间占比：--")
         self.active_ratio_label.setStyleSheet(
             f"font-size: 13px; font-weight: 700; color: {COLORS['primary']};"
         )
@@ -266,7 +266,7 @@ class TodayOverviewPage(QWidget):
             self.donut_widget.set_data(total_sec, distribution)
             self.legend_widget.set_items(distribution, total_sec)
             active_ratio = int(round((effective / total_sec) * 100)) if total_sec else 0
-            self.active_ratio_label.setText(f"有效时间占比：{active_ratio}%")
+            self.active_ratio_label.setText(f"活跃时间占比：{active_ratio}%")
 
             self._update_score_card(work_sec, ent_sec, effective, stats, today)
 
