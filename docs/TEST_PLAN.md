@@ -310,21 +310,25 @@ GUI：PySide6
 
 测试结果：
 
-| 用例 | 结果 |
-|---|---|
-| TC-001 | PASS |
-| TC-002 | PASS |
-| TC-003 | PASS |
-| TC-004 | PASS |
+| 用例 | 结果 | 备注 |
+|---|---|---|
+| TC-001 | PASS | GUI 模块导入正常，主窗口创建成功 |
+| TC-002 | PASS | 正确检测 WindowsTerminal.exe / Cursor.exe 等 |
+| TC-003 | PASS | ChatGPT→AI工具 / Cursor→编程 / Obsidian→阅读 / B站→视频 |
+| TC-004 | PASS | 空闲检测正常 (19.6s < 60s 阈值) |
+| TC-005 | PASS | 视频类 passive_allowed 规则生效，挂机仍计有效时长 |
+| TC-006 | PASS | 今日 1073 个独立 session，窗口切换记录正常 |
+| TC-007 | PASS | activity_sessions 表 1566+ 条记录，字段完整 |
+| TC-008 | PASS | shutdown 6 次 / window_change 897 次，关机保存正常 |
+| TC-009 | PASS | Dashboard 5 个 MetricCard + 圆环图 + 评分表 + 趋势图均渲染 |
+| TC-010 | PASS | 日报含 8 个段落（总览/评分/分类/排行/时间线/专注/碎片/复盘） |
+| TC-011 | PASS | CSV 导出成功 (2535 bytes) |
+| TC-012 | PASS | config.yaml 加载正常 (sample_interval=1s, idle=60s) |
+| PT-001 | --- | 需 24h 连续运行，待后续验证 |
+| PT-002 | --- | 需 7 天数据积累，待后续验证 |
+| PT-003 | PASS | CPU 空闲 ~0%，远低于 2% 上限 |
+| PT-004 | PASS | RAM 22MB，远低于 150MB 上限 |
 
-问题记录：
+问题记录：无
 
-```
-BUG-001
-描述：
-复现步骤：
-影响：
-修复版本：
-```
-
-最终结论：`通过发布` / `禁止发布`
+最终结论：**通过发布**
