@@ -3,6 +3,11 @@
 ## 2026-06-01
 
 ### Added
+- 新增实时监控页 Dashboard 风格展示：
+  - 当前前台活动卡片
+  - 进程与分类标签
+  - 前台停留、有效时间、本会话挂机、系统空闲指标块
+  - 最近采样记录表格
 - 新增首页 Dashboard 组件模块：`MetricCard`、`DonutChartWidget`、`ScoreGaugeWidget`、`TrendChartWidget`、`TopAppListWidget`、`DistributionLegend`。
 - 新增 `gui/widgets` 目录用于沉淀可复用展示组件。
 
@@ -18,5 +23,5 @@
 - 重构 `MainWindow` 壳层视觉（左侧深蓝导航、顶部信息栏、底部状态栏），保留原有功能入口与交互逻辑。
 
 ### Fixed
+- 修复实时监控页中文文案乱码问题。
 - 修复主界面中文文案乱码问题（首页与主窗口显示文本）。
-
