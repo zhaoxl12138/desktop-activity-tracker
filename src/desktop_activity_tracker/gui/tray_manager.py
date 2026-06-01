@@ -104,10 +104,12 @@ class TrayManager:
         self.tray.activated.connect(self._on_tray_activated)
 
     def _on_tray_activated(self, reason):
-        # Left-click or double-click → open main window
-        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
+        if reason == QSystemTrayIcon.Context:
+            # Right-click: explicitly show context menu at cursor position
+            from PySide6.QtGui import QCursor
+            self.tray.contextMenu().exec(QCursor.pos())
+        elif reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
             self._open_window()
-        # Right-click → shows context menu automatically with 退出程序
 
     def _open_window(self):
         if self.main_window:

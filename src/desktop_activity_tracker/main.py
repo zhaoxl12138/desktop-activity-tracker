@@ -254,10 +254,39 @@ def cmd_monthly(config, args):
         print(f"[ERROR] 月报生成失败: {e}")
 
 
+# ── Single-instance check ──────────────────────────────────────────
+
+def _ensure_single_instance():
+    """Use a Windows named mutex to prevent multiple instances.
+    Returns (is_first, mutex_handle). Caller must keep mutex_handle alive."""
+    import ctypes
+    from ctypes import wintypes
+
+    mutex_name = "Global\\DesktopActivityTracker_SingleInstance"
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CreateMutexW.argtypes = [wintypes.LPCVOID, wintypes.BOOL, wintypes.LPCWSTR]
+    kernel32.CreateMutexW.restype = wintypes.HANDLE
+
+    handle = kernel32.CreateMutexW(None, True, mutex_name)
+    if kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+        if handle:
+            kernel32.CloseHandle(handle)
+        ctypes.windll.user32.MessageBoxW(0,
+            "程序已在运行中，请查看系统托盘图标。",
+            "Desktop Activity Tracker", 0x40)
+        return False, None
+    return True, handle
+
+
 # ── GUI ──────────────────────────────────────────────────────────────
 
 def cmd_gui():
     """Launch the PySide6 GUI with system tray."""
+    # Prevent multiple instances
+    is_first, _mutex = _ensure_single_instance()
+    if not is_first:
+        sys.exit(0)
+
     from PySide6.QtWidgets import QApplication
     from PySide6.QtGui import QFont
 
