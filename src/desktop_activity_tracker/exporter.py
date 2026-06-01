@@ -191,13 +191,41 @@ def _extract_title_key(window_title):
     return window_title[:40]
 
 
+# Chinese month names
+_CHINESE_MONTHS = [
+    "", "一月", "二月", "三月", "四月", "五月", "六月",
+    "七月", "八月", "九月", "十月", "十一月", "十二月"
+]
+
+
+def _obsidian_daily_path(obsidian_base, date_str):
+    """Build Obsidian path: base/时间追踪/桌面活动日报/2026/六月/2026-06-01.md"""
+    year, month, _ = date_str.split("-")
+    month_cn = _CHINESE_MONTHS[int(month)]
+    return os.path.join(obsidian_base, "时间追踪", "桌面活动日报", year, month_cn)
+
+
 def sync_to_obsidian(filepath, obsidian_output_path):
-    """Copy the report file to an Obsidian vault directory."""
+    """Copy the report file to an Obsidian vault with year/month directory hierarchy.
+
+    For daily reports (filename like 2026-06-01.md), creates:
+        {obsidian_base}/时间追踪/桌面活动日报/{year}/{chinese_month}/{filename}
+
+    For weekly/monthly reports, copies directly to the obsidian base.
+    """
     if not obsidian_output_path or not os.path.exists(filepath):
         return
     try:
-        os.makedirs(obsidian_output_path, exist_ok=True)
-        dest = os.path.join(obsidian_output_path, os.path.basename(filepath))
+        filename = os.path.basename(filepath)
+        # Detect daily report by filename pattern YYYY-MM-DD.md
+        if len(filename) == 13 and filename[4] == "-" and filename[7] == "-" and filename.endswith(".md"):
+            date_str = filename[:-3]  # "2026-06-01"
+            dest_dir = _obsidian_daily_path(obsidian_output_path, date_str)
+        else:
+            # Weekly or monthly — keep flat in obsidian base
+            dest_dir = obsidian_output_path
+        os.makedirs(dest_dir, exist_ok=True)
+        dest = os.path.join(dest_dir, filename)
         shutil.copy2(filepath, dest)
         return dest
     except Exception as e:
