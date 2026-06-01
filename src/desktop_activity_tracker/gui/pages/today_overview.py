@@ -24,22 +24,40 @@ from ..widgets.dashboard_widgets import (
     MetricCard,
     ScoreGaugeWidget,
     TopAppListWidget,
-    TrendChartWidget,
+    TimelineWidget,
 )
 
 
 class TodayOverviewPage(QWidget):
     """Modern dashboard page for today's activity overview."""
 
-    def __init__(self, db_path):
+    def __init__(self, db_path, display_name_mapping=None):
         super().__init__()
         self.db_path = db_path
+        self.display_name_mapping = display_name_mapping or {}
         self.metric_cards: dict[str, MetricCard] = {}
         self.focus_rows: list[QWidget] = []
 
         root = QVBoxLayout(self)
         root.setContentsMargins(18, 14, 18, 14)
         root.setSpacing(10)
+
+        self.warning_banner = QLabel()
+        self.warning_banner.setWordWrap(True)
+        self.warning_banner.setVisible(False)
+        self.warning_banner.setStyleSheet(
+            f"""
+            QLabel {{
+                font-size: 13px;
+                font-weight: 700;
+                color: white;
+                background: {COLORS['danger_red']};
+                border-radius: 10px;
+                padding: 10px 16px;
+            }}
+            """
+        )
+        root.addWidget(self.warning_banner)
 
         metrics_grid = QGridLayout()
         metrics_grid.setHorizontalSpacing(10)
@@ -173,12 +191,12 @@ class TodayOverviewPage(QWidget):
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(8)
 
-        title = QLabel("时间趋势（分钟）")
+        title = QLabel("时间线（分钟）")
         title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {COLORS['text']};")
         layout.addWidget(title)
 
-        self.trend_chart = TrendChartWidget()
-        layout.addWidget(self.trend_chart, 1)
+        self.timeline_widget = TimelineWidget()
+        layout.addWidget(self.timeline_widget, 1)
         return card
 
     def refresh(self):
@@ -207,6 +225,16 @@ class TodayOverviewPage(QWidget):
             history = self._load_metric_history(8)
             self._update_metrics(total_sec, work_sec, ent_sec, social_sec, idle_sec, history)
 
+            # Entertainment warning
+            if ent_sec > 5400:
+                ent_min = int(ent_sec // 60)
+                self.warning_banner.setText(
+                    f"⚠ 今日娱乐时间已达 {ent_min} 分钟（超过90分钟），建议控制娱乐活动。"
+                )
+                self.warning_banner.setVisible(True)
+            else:
+                self.warning_banner.setVisible(False)
+
             other_sec = max(effective - work_sec - social_sec - ent_sec, 0)
             distribution = [
                 ("学习/工作", work_sec, COLORS["coding_green"]),
@@ -226,13 +254,13 @@ class TodayOverviewPage(QWidget):
             focus_blocks = timeline.identify_focus_blocks(tl)
             self._update_focus_blocks(focus_blocks)
 
-            trend_points = [round(block.effective_seconds / 60, 1) for block in tl]
-            self.trend_chart.set_points(trend_points)
+            self.timeline_widget.set_blocks(tl)
 
-            top_apps = [
-                (item.get("process_name") or "Unknown", item.get("effective_seconds", 0) or 0)
-                for item in stats.get("by_app", [])[:5]
-            ]
+            top_apps = []
+            for item in stats.get("by_app", [])[:5]:
+                pname = item.get("process_name") or "Unknown"
+                display = self.display_name_mapping.get(pname, pname)
+                top_apps.append((pname, display, item.get("effective_seconds", 0) or 0))
             self.top_app_card.set_items(top_apps)
         except Exception:
             import traceback
@@ -286,6 +314,7 @@ class TodayOverviewPage(QWidget):
             card = self.metric_cards[key]
             card.set_value(_compact_duration(current), self._delta_text(current, history, key))
             card.set_sparkline([day[key] for day in history])
+        self.metric_cards["ent"].set_warning(ent_sec > 5400)
 
     def _delta_text(self, current: int, history: list[dict], key: str):
         if len(history) < 2:
@@ -309,23 +338,40 @@ class TodayOverviewPage(QWidget):
         if score >= 80:
             grade = "优秀"
             accent = COLORS["coding_green"]
-            detail = "学习/工作占比高，结构稳定。"
         elif score >= 60:
             grade = "良好"
             accent = COLORS["primary"]
-            detail = "主线任务推进正常，可继续提升连续专注。"
         elif score >= 40:
             grade = "一般"
             accent = COLORS["warning_yellow"]
-            detail = "有效时间存在，但专注占比偏低。"
         else:
             grade = "需改进"
             accent = COLORS["danger_red"]
-            detail = "娱乐或分散活动偏多，建议压缩干扰。"
+
+        # Build score breakdown
+        parts = []
+        if effective > 0:
+            work_ratio = int(round(work_sec / effective * 100))
+            parts.append(f"学习占比 {work_ratio}% → {min(100, work_ratio)}分 基准分")
+        else:
+            parts.append("暂无有效数据")
+
+        if ent_sec > 5400:
+            penalty = min(30, (ent_sec - 5400) // 1800 * 5)
+            over_min = (ent_sec - 5400) // 60
+            parts.append(f"娱乐 {int(over_min)}分钟 超过90分钟 → -{penalty}分")
+        elif ent_sec > 0:
+            ent_min = ent_sec // 60
+            parts.append(f"娱乐 {int(ent_min)}分钟 未超90分钟 → 无惩罚")
+
+        parts.append(f"最终得分 {score}/100")
 
         suggestions, _, _ = _generate_suggestions(self.db_path, today, stats)
         if suggestions:
-            detail = suggestions[0]
+            if len(suggestions[0]) > 40:
+                parts.append(suggestions[0][:40] + "...")
+            else:
+                parts.append(suggestions[0])
 
         self.score_gauge.set_score(score, accent)
         self.score_grade.setText(f"{grade} · {score}/100")
@@ -341,7 +387,7 @@ class TodayOverviewPage(QWidget):
             }}
             """
         )
-        self.score_detail.setText(detail)
+        self.score_detail.setText("\n".join(parts))
 
     def _update_focus_blocks(self, focus_blocks):
         while self.focus_rows:

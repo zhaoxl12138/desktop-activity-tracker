@@ -126,6 +126,12 @@ class MetricCard(QFrame):
         self.value_label.setText(value_text)
         self.delta_label.setText(delta_text)
 
+    def set_warning(self, active: bool):
+        color = COLORS["danger_red"] if active else COLORS["text"]
+        self.value_label.setStyleSheet(
+            f"font-size: 28px; font-weight: 800; color: {color};"
+        )
+
     def set_sparkline(self, points: Iterable[float]):
         self.sparkline.set_points(points)
 
@@ -247,57 +253,122 @@ class ScoreGaugeWidget(QWidget):
         painter.drawText(self.rect().adjusted(0, 28, 0, 0), Qt.AlignCenter, "/ 100")
 
 
-class TrendChartWidget(QWidget):
-    """Simple line chart for minute trend."""
+class TimelineWidget(QFrame):
+    """Timeline view showing 30-minute activity blocks with category colors."""
+
+    CATEGORY_COLORS = {
+        "AI工具": "#7B68EE",
+        "学习/工作": COLORS["coding_green"],
+        "阅读学习": "#3498DB",
+        "编程开发": COLORS["coding_green"],
+        "创作工具": "#E67E22",
+        "娱乐": COLORS["video_orange"],
+        "视频娱乐": COLORS["video_orange"],
+        "游戏": COLORS["danger_red"],
+        "社交通讯": COLORS["social_purple"],
+        "系统工具": "#6366F1",
+        "浏览器其他": "#95A5A6",
+        "挂机": COLORS["idle_gray"],
+        "混合": "#95A5A6",
+        "未使用电脑": "#C0CADB",
+        "其他": "#95A5A6",
+    }
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self._points: list[float] = []
-        self.setMinimumHeight(180)
+        self.setStyleSheet(DASHBOARD_CARD_STYLE)
+        self.setFixedHeight(235)
+        self._rows: list[QWidget] = []
+        from PySide6.QtWidgets import QScrollArea
 
-    def set_points(self, points: Iterable[float]):
-        self._points = [max(0.0, float(p)) for p in points]
-        self.update()
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 10, 10, 10)
+        root.setSpacing(6)
 
-    def paintEvent(self, event):  # noqa: N802
-        super().paintEvent(event)
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        title = QLabel("今日时间线")
+        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {COLORS['text']};")
+        root.addWidget(title)
 
-        content = self.rect().adjusted(16, 10, -16, -16)
-        painter.setPen(QColor("#E4EAF4"))
-        for i in range(5):
-            y = content.top() + i * content.height() / 4
-            painter.drawLine(content.left(), int(y), content.right(), int(y))
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
-        if len(self._points) < 2:
+        self._content = QWidget()
+        self._content.setStyleSheet("background: transparent;")
+        self._content_layout = QVBoxLayout(self._content)
+        self._content_layout.setContentsMargins(0, 0, 6, 0)
+        self._content_layout.setSpacing(4)
+        self._content_layout.addStretch()
+
+        scroll.setWidget(self._content)
+        root.addWidget(scroll)
+
+    def set_blocks(self, blocks):
+        """Set timeline from list of TimeBlock objects."""
+        while self._rows:
+            row = self._rows.pop()
+            self._content_layout.removeWidget(row)
+            row.deleteLater()
+
+        if not blocks:
+            placeholder = QLabel("暂无时间数据")
+            placeholder.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
+            self._content_layout.insertWidget(0, placeholder)
+            self._rows.append(placeholder)
             return
 
-        max_v = max(self._points) or 1.0
-        step = content.width() / max(1, len(self._points) - 1)
-        line_path = QPainterPath()
-        fill_path = QPainterPath()
+        active_blocks = [b for b in blocks if b.effective_seconds > 0]
+        if not active_blocks:
+            active_blocks = blocks
 
-        for i, value in enumerate(self._points):
-            x = content.left() + i * step
-            y = content.bottom() - (value / max_v) * content.height()
-            p = QPointF(x, y)
-            if i == 0:
-                line_path.moveTo(p)
-                fill_path.moveTo(content.left(), content.bottom())
-                fill_path.lineTo(p)
-            else:
-                line_path.lineTo(p)
-                fill_path.lineTo(p)
+        for block in active_blocks:
+            color = self.CATEGORY_COLORS.get(block.dominant_category, "#95A5A6")
+            row = QWidget()
+            row.setStyleSheet("background: transparent;")
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(6)
 
-        fill_path.lineTo(content.right(), content.bottom())
-        fill_path.closeSubpath()
+            # Extract start time from slot "09:00-09:30"
+            start_time = block.slot.split("-")[0] if "-" in block.slot else block.slot
+            time_label = QLabel(start_time)
+            time_label.setFixedWidth(36)
+            time_label.setStyleSheet(
+                f"font-size: 11px; color: {COLORS['text_secondary']}; font-weight: 600;"
+            )
+            row_layout.addWidget(time_label)
 
-        painter.fillPath(fill_path, QColor(47, 110, 248, 42))
-        pen = QPen(QColor(COLORS["primary"]), 2.2)
-        pen.setCapStyle(Qt.RoundCap)
-        painter.setPen(pen)
-        painter.drawPath(line_path)
+            dot = QFrame()
+            dot.setFixedSize(8, 8)
+            dot.setStyleSheet(
+                f"background: {color}; border-radius: 4px;"
+            )
+            row_layout.addWidget(dot)
+
+            cat_name = block.dominant_category or "其他"
+            cat_label = QLabel(cat_name)
+            cat_label.setFixedWidth(56)
+            cat_label.setStyleSheet(f"font-size: 11px; color: {color}; font-weight: 700;")
+            row_layout.addWidget(cat_label)
+
+            apps_text = block.top_app or "--"
+            apps_label = QLabel(apps_text)
+            apps_label.setStyleSheet(
+                f"font-size: 11px; color: {COLORS['text_secondary']};"
+            )
+            row_layout.addWidget(apps_label, 1)
+
+            dur_label = QLabel(f"{block.effective_seconds // 60}分钟")
+            dur_label.setFixedWidth(42)
+            dur_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            dur_label.setStyleSheet(
+                f"font-size: 11px; color: {COLORS['text_muted']};"
+            )
+            row_layout.addWidget(dur_label)
+
+            self._content_layout.insertWidget(self._content_layout.count() - 1, row)
+            self._rows.append(row)
 
 
 class TopAppListWidget(QFrame):
@@ -367,13 +438,16 @@ class TopAppListWidget(QFrame):
         layout.addWidget(duration)
         return layout, name, bar, duration
 
-    def set_items(self, items: list[tuple[str, int]]):
-        max_seconds = max((seconds for _, seconds in items), default=1)
+    def set_items(self, items: list[tuple[str, str, int]]):
+        """Set top apps from list of (process_name, display_name, seconds)."""
+        max_seconds = max((seconds for _, _, seconds in items), default=1)
         for i in range(5):
             if i < len(items):
-                name, seconds = items[i]
+                name, display, seconds = items[i]
                 pct = int(round((seconds / max_seconds) * 100)) if max_seconds else 0
-                self._rows[i][0].setText(_compact_app_name(name))
+                self._rows[i][0].setText(_compact_app_name(display))
+                tooltip = name if display != name else ""
+                self._rows[i][0].setToolTip(tooltip)
                 self._rows[i][1].setValue(max(0, min(100, pct)))
                 self._rows[i][2].setText(fmt_seconds(seconds))
             else:

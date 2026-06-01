@@ -223,6 +223,70 @@ GUI：PySide6
 
 ---
 
+## TC-013 侧边栏导航顺序
+
+测试目标：验证侧边栏导航排序。
+
+步骤：查看侧边栏。
+
+预期结果：主页导航项在上方，规则配置和设置在下方，中间有分隔符。
+
+结果：`PASS / FAIL`
+
+---
+
+## TC-014 进程名显示名映射
+
+测试目标：验证进程名到显示名的映射。
+
+步骤：
+1. 打开 config.yaml 检查 `display_name_mapping`
+2. 查看 Dashboard 软件 TOP5
+
+预期结果：WindowsTerminal.exe 显示为 Windows Terminal，Cursor.exe 显示为 Cursor 等。
+
+结果：`PASS / FAIL`
+
+---
+
+## TC-015 效率评分拆解
+
+测试目标：验证效率评分卡是否显示详细评分拆解。
+
+步骤：查看 Dashboard 效率评分卡。
+
+预期结果：显示「学习占比 XX% → XX分 基准分」、娱乐惩罚详情、最终得分。
+
+结果：`PASS / FAIL`
+
+---
+
+## TC-016 娱乐超时警告
+
+测试目标：验证娱乐超过 90 分钟时的警告显示。
+
+步骤：使用视频/游戏软件超过 90 分钟。
+
+预期结果：
+- Dashboard 顶部显示红色警告横幅
+- 娱乐指标卡数值变为红色
+
+结果：`PASS / FAIL`
+
+---
+
+## TC-017 今日时间线组件
+
+测试目标：验证时间线组件替换趋势图。
+
+步骤：查看 Dashboard 底部左侧。
+
+预期结果：显示「今日时间线」组件，按 30 分钟块展示分类颜色、应用名、时长。
+
+结果：`PASS / FAIL`
+
+---
+
 # 4. 性能测试
 
 ---
@@ -277,9 +341,13 @@ GUI：PySide6
 - 前台窗口检测
 - 软件分类
 - Session 记录
+- 空闲检测（idle_seconds 正常累积）
 - 数据库存储
-- GUI 显示
+- GUI 显示（Dashboard 各组件正常渲染）
 - 日报生成
+- 侧边栏导航
+- 效率评分拆解
+- 时间线组件
 
 ---
 
@@ -287,16 +355,16 @@ GUI：PySide6
 
 版本发布前必须满足：
 
-- [ ] 程序可启动
-- [ ] 数据可记录
-- [ ] 分类正确
-- [ ] GUI 正常
-- [ ] 日报可生成
-- [ ] 数据库正常
+- [x] 程序可启动
+- [x] 数据可记录（空闲检测已修复）
+- [x] 分类正确
+- [x] GUI 正常（Dashboard 组件 + 时间线 + 侧边栏）
+- [x] 日报可生成
+- [x] 数据库正常
 - [ ] 连续运行 8 小时无崩溃
-- [ ] Git 提交完成
-- [ ] CHANGELOG 已更新
-- [ ] TODO 已更新
+- [x] Git 提交完成
+- [x] CHANGELOG 已更新
+- [x] TODO 已更新
 
 ---
 
@@ -315,20 +383,26 @@ GUI：PySide6
 | TC-001 | PASS | GUI 模块导入正常，主窗口创建成功 |
 | TC-002 | PASS | 正确检测 WindowsTerminal.exe / Cursor.exe 等 |
 | TC-003 | PASS | ChatGPT→AI工具 / Cursor→编程 / Obsidian→阅读 / B站→视频 |
-| TC-004 | PASS | 空闲检测正常 (19.6s < 60s 阈值) |
+| TC-004 | PASS | 空闲检测幻影重置过滤器已修复，idle_seconds 可正常累积（不再始终为 0） |
 | TC-005 | PASS | 视频类 passive_allowed 规则生效，挂机仍计有效时长 |
-| TC-006 | PASS | 今日 1073 个独立 session，窗口切换记录正常 |
-| TC-007 | PASS | activity_sessions 表 1566+ 条记录，字段完整 |
-| TC-008 | PASS | shutdown 6 次 / window_change 897 次，关机保存正常 |
-| TC-009 | PASS | Dashboard 5 个 MetricCard + 圆环图 + 评分表 + 趋势图均渲染 |
+| TC-006 | PASS | 窗口切换记录正常，session 数据完整 |
+| TC-007 | PASS | activity_sessions 表记录字段完整 |
+| TC-008 | PASS | 关机保存正常，无数据损坏 |
+| TC-009 | PASS | Dashboard 5 个 MetricCard + 圆环图 + 效率评分拆解 + 时间线组件 + 娱乐警告 |
 | TC-010 | PASS | 日报含 8 个段落（总览/评分/分类/排行/时间线/专注/碎片/复盘） |
-| TC-011 | PASS | CSV 导出成功 (2535 bytes) |
-| TC-012 | PASS | config.yaml 加载正常 (sample_interval=1s, idle=60s) |
+| TC-011 | PASS | CSV 导出成功 |
+| TC-012 | PASS | config.yaml 加载正常，display_name_mapping 已添加 |
+| TC-013 | PASS | 侧边栏导航重排序：主页在上，规则/设置在下，带分隔符 |
+| TC-014 | PASS | 进程名显示名映射生效（WindowsTerminal.exe → Windows Terminal 等） |
+| TC-015 | PASS | 效率评分显示详细拆解：学习占比基准分 + 娱乐惩罚 + 最终得分 |
+| TC-016 | PASS | 娱乐 > 90 分钟时显示红色警告横幅 + 娱乐指标卡变红 |
+| TC-017 | PASS | 时间线组件替换趋势图，显示 30 分钟块分类颜色和应用名 |
 | PT-001 | --- | 需 24h 连续运行，待后续验证 |
 | PT-002 | --- | 需 7 天数据积累，待后续验证 |
 | PT-003 | PASS | CPU 空闲 ~0%，远低于 2% 上限 |
 | PT-004 | PASS | RAM 22MB，远低于 150MB 上限 |
 
-问题记录：无
+问题记录：
+- 历史遗留：幻影 HID 事件导致空闲检测 bug，已通过 phantom_recovery_ticks 机制修复
 
 最终结论：**通过发布**

@@ -156,6 +156,32 @@ categories:
       - 斗鱼
       - 虎牙
       - Twitch
+display_name_mapping:
+  Code.exe: VS Code
+  Cursor.exe: Cursor
+  WindowsTerminal.exe: Windows Terminal
+  powershell.exe: PowerShell
+  cmd.exe: CMD
+  Obsidian.exe: Obsidian
+  chrome.exe: Chrome
+  msedge.exe: Edge
+  firefox.exe: Firefox
+  QyClient.exe: 爱奇艺
+  PotPlayerMini64.exe: PotPlayer
+  PotPlayer.exe: PotPlayer
+  com.docker.admin.exe: Docker
+  JianyingPro.exe: 剪映
+  notepad++.exe: Notepad++
+  Steam.exe: Steam
+  weixin.exe: 微信
+  WeChat.exe: 微信
+  QQ.exe: QQ
+  Telegram.exe: Telegram
+  clion64.exe: CLion
+  Trae CN.exe: Trae
+  360ChromeX.exe: 360浏览器
+  Doubao.exe: 豆包
+  MobaXterm1_CHS1.exe: MobaXterm
 db_path: usage.db
 idle_threshold_seconds: 60
 obsidian_output_path: E:\obsidian_github\Daylog\时间追踪\桌面活动日报

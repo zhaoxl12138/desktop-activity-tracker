@@ -45,14 +45,18 @@ from .style import (
 
 
 NAV_ITEMS = [
+    # Main pages
     ("今日概览", "today", "聚焦今天的使用结构、效率与提醒"),
     ("实时监控", "live", "查看当前前台窗口与活动状态"),
     ("软件统计", "software", "分析软件使用时长与占比"),
     ("分类统计", "category", "按分类查看效率结构"),
     ("日报/周报", "reports", "生成日报、周报和月报"),
+    # Config pages — rendered after a divider in the sidebar
     ("规则配置", "rules", "管理分类规则和匹配条件"),
     ("设置", "settings", "管理数据库、输出路径与基础参数"),
 ]
+
+MAIN_NAV_COUNT = 5  # items above the divider
 
 
 class MainWindow(QMainWindow):
@@ -132,7 +136,13 @@ class MainWindow(QMainWindow):
         self.nav_list.setFont(QFont("Microsoft YaHei", 10))
         self.nav_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.nav_list.setWordWrap(True)
-        for title, key, hint in NAV_ITEMS:
+        for idx, (title, key, hint) in enumerate(NAV_ITEMS):
+            if idx == MAIN_NAV_COUNT:
+                sep = QListWidgetItem("")
+                sep.setFlags(Qt.NoItemFlags)
+                sep.setData(Qt.UserRole, {"key": "__separator__"})
+                sep.setSizeHint(sep.sizeHint() * 0.3)
+                self.nav_list.addItem(sep)
             item = QListWidgetItem(title)
             item.setData(Qt.UserRole, {"key": key, "title": title, "hint": hint})
             self.nav_list.addItem(item)
@@ -150,8 +160,9 @@ class MainWindow(QMainWindow):
 
     def _build_pages(self):
         self.stack = QStackedWidget()
+        display_name_mapping = self.config.get("display_name_mapping", {})
         self.pages = {
-            "today": TodayOverviewPage(self.db_path),
+            "today": TodayOverviewPage(self.db_path, display_name_mapping),
             "live": LiveMonitorPage(),
             "software": SoftwareStatsPage(self.db_path, self.reports_dir),
             "category": CategoryStatsPage(self.db_path),
@@ -270,12 +281,21 @@ class MainWindow(QMainWindow):
         return f"{now.year}年{now.month}月{now.day}日  星期{weekdays[now.weekday()]}"
 
     def _on_nav_changed(self, row):
-        if 0 <= row < self.stack.count():
-            self.stack.setCurrentIndex(row)
-            _, _, hint = NAV_ITEMS[row]
-            title, _, _ = NAV_ITEMS[row]
-            self.lbl_page_title.setText(title)
-            self.lbl_page_hint.setText(hint)
+        item = self.nav_list.item(row)
+        if item is None:
+            return
+        data = item.data(Qt.UserRole)
+        if data is None or data.get("key") == "__separator__":
+            return
+        key = data["key"]
+        for idx, (_, nav_key, _) in enumerate(NAV_ITEMS):
+            if nav_key == key:
+                if 0 <= idx < self.stack.count():
+                    self.stack.setCurrentIndex(idx)
+                    title, _, hint = NAV_ITEMS[idx]
+                    self.lbl_page_title.setText(title)
+                    self.lbl_page_hint.setText(hint)
+                break
 
     def _on_sample(self, sample):
         if self.stack.currentWidget() is self.pages.get("live"):

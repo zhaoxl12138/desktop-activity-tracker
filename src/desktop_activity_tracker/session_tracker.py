@@ -120,6 +120,7 @@ class SessionTracker:
         # ~10s. We track the peak idle across phantom resets.
         self._last_raw_idle: float = 0.0
         self._effective_idle: float = 0.0
+        self._phantom_recovery_ticks: int = 0
 
     # ── Public API ──────────────────────────────────────────────────
 
@@ -239,19 +240,27 @@ class SessionTracker:
             # every ~10s. A sharp drop from >5s to <1s is treated as a
             # phantom reset — the effective idle is NOT reset to 0.
             if idle_seconds >= self._last_raw_idle - 1:
-                if idle_seconds < 2 and self._last_raw_idle < 2:
-                    # Both readings are very low → genuine user activity
+                if idle_seconds < 2 and self._last_raw_idle < 2 and self._phantom_recovery_ticks <= 0:
+                    # Both readings are very low AND not recovering from
+                    # a phantom reset → genuine user activity
                     self._effective_idle = idle_seconds
                 else:
-                    # Idle is accumulating or stable — normal tracking
+                    # Idle is accumulating or stable — normal tracking,
+                    # or recovering from a phantom reset
                     self._effective_idle = max(self._effective_idle, idle_seconds)
             elif idle_seconds < 1 and self._last_raw_idle > 5:
                 # Probable phantom reset: idle dropped >5s to near-zero
-                # in one tick. Keep the previous effective idle level.
+                # in one tick. Keep the previous effective idle level and
+                # enter recovery mode to prevent subsequent premature reset.
                 self._effective_idle += self.sample_interval
+                self._phantom_recovery_ticks = 2
             else:
                 # Genuine user input — reset effective idle
                 self._effective_idle = idle_seconds
+                self._phantom_recovery_ticks = 0
+
+            if self._phantom_recovery_ticks > 0:
+                self._phantom_recovery_ticks -= 1
 
             self._last_raw_idle = idle_seconds
 
