@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.2.0-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-1.3.0-blue" alt="version">
   <img src="https://img.shields.io/badge/python-3.10+-green" alt="python">
   <img src="https://img.shields.io/badge/platform-Windows-lightgrey" alt="platform">
   <img src="https://img.shields.io/badge/license-MIT-brightgreen" alt="license">
@@ -17,10 +17,13 @@
 
 - **自动记录** — 后台静默运行，1 秒采样检测前台窗口进程名和标题
 - **Session 聚合** — 连续使用同一窗口合并为 session，数据库写入减少 95%
-- **智能分类** — 进程名 + 标题关键词自动归类（AI 工具 / 编程 / 阅读 / 视频 / 游戏等 9 类）
-- **有效时长** — 学习类要求鼠键活跃才算有效时间，视频类允许被动观看
+- **智能分类** — 进程名 + 标题关键词自动归类（AI 工具 / 编程 / 阅读 / 视频 / 游戏等 10+ 类）
+- **有效时长** — 学习类要求鼠键活跃才算有效时间，视频类允许被动观看；幻影 HID 事件过滤
+- **Dashboard** — 今日概览仪表盘：5 指标卡 + 圆环分布图 + 效率评分拆解 + 30 分钟时间线 + 专注时段 + 软件 TOP5
+- **效率评分** — 0-100 分，含学习占比基准分 + 娱乐惩罚分 + 优化建议
+- **娱乐预警** — 娱乐超过 90 分钟自动显示红色警告横幅
 - **GUI 界面** — PySide6 桌面应用，7 个功能页面 + 系统托盘常驻
-- **日报/周报/月报** — Markdown 导出，含效率评分和优化建议
+- **日报/周报/月报** — Markdown 导出，含 30 分钟时间线、专注时段、碎片化分析、一句话复盘
 - **Obsidian 集成** — 一键同步报告到 Obsidian vault
 - **单文件 EXE** — PyInstaller 打包，无需安装 Python，双击即用
 
@@ -60,6 +63,7 @@ desktop-activity-tracker/
 │   ├── activity_detector.py        # 用户活跃检测 (idle)
 │   ├── classifier.py               # 软件分类器
 │   ├── database.py                 # SQLite 读写
+│   ├── timeline.py                 # 30 分钟时间线构建
 │   ├── reporter.py                 # 统计查询
 │   ├── exporter.py                 # Markdown/CSV 导出
 │   ├── utils.py                    # 工具函数
@@ -68,6 +72,8 @@ desktop-activity-tracker/
 │       ├── worker.py               # 后台录制 QThread
 │       ├── main_window.py          # 主窗口
 │       ├── tray_manager.py         # 系统托盘
+│       ├── widgets/                # 可复用组件
+│       │   └── dashboard_widgets.py
 │       └── pages/                  # 7 个页面
 ├── config/config.yaml              # 配置文件（首次运行自动生成）
 ├── assets/icon.ico                 # 应用图标

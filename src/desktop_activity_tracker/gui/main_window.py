@@ -151,7 +151,7 @@ class MainWindow(QMainWindow):
 
         layout.addStretch()
 
-        version = QLabel("v1.2.0")
+        version = QLabel("v1.3.0")
         version.setStyleSheet(
             f"font-size: 10px; color: {COLORS['text_muted']}; padding: 8px 16px;"
         )
