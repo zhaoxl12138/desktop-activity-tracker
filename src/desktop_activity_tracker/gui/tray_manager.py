@@ -70,6 +70,32 @@ class TrayManager:
             }}
         """)
 
+        self.action_open = QAction("打开主界面")
+        self.action_open.triggered.connect(self._open_window)
+        menu.addAction(self.action_open)
+
+        menu.addSeparator()
+
+        self.action_pause = QAction("暂停记录")
+        self.action_pause.triggered.connect(self._toggle_pause)
+        menu.addAction(self.action_pause)
+
+        self.action_report = QAction("生成今日日报")
+        self.action_report.triggered.connect(self._generate_report)
+        menu.addAction(self.action_report)
+
+        self.action_open_reports = QAction("打开报告目录")
+        self.action_open_reports.triggered.connect(self._open_reports)
+        menu.addAction(self.action_open_reports)
+
+        menu.addSeparator()
+
+        action_settings = QAction("设置")
+        action_settings.triggered.connect(self._open_window)
+        menu.addAction(action_settings)
+
+        menu.addSeparator()
+
         action_quit = QAction("退出程序")
         action_quit.triggered.connect(self._quit)
         menu.addAction(action_quit)
