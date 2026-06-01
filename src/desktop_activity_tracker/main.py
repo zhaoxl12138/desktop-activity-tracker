@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Desktop Activity Tracker - CLI entry point."""
+"""Desktop Activity Tracker - CLI + GUI entry point."""
 
 import argparse
 import os
@@ -294,6 +294,57 @@ def cmd_export(config, args):
                 print(f"已同步到 Obsidian: {dest}")
 
 
+# ── GUI ──────────────────────────────────────────────────────────────
+
+def cmd_gui():
+    """Launch the PySide6 GUI with system tray."""
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtGui import QFont
+
+    from .gui.worker import RecordingWorker
+    from .gui.tray_manager import TrayManager
+    from .gui.main_window import MainWindow
+
+    app_root = get_app_root()
+    config_path = resolve_config_path()
+    reports_dir = resolve_reports_dir()
+
+    # Ensure subdirs exist
+    for sub in ("daily", "weekly", "monthly"):
+        os.makedirs(os.path.join(reports_dir, sub), exist_ok=True)
+
+    config = load_config(config_path)
+    db_path = os.path.join(app_root, config.get("db_path", "data/usage.db"))
+
+    # Ensure DB is initialized
+    database.init_db(db_path)
+
+    sample_interval = config.get("sample_interval_seconds", 5)
+
+    app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
+    app.setFont(QFont("Microsoft YaHei", 10))
+
+    # Start background recording thread
+    worker = RecordingWorker(config_path, db_path, sample_interval)
+    worker.start()
+
+    # Create tray icon
+    tray = TrayManager(app, db_path, config)
+
+    # Create main window
+    window = MainWindow(app_root, config, db_path, config_path, reports_dir, worker)
+    tray.set_main_window(window)
+    window.show()
+
+    exit_code = app.exec()
+
+    # Clean shutdown
+    worker.stop()
+    worker.wait(3000)
+    sys.exit(exit_code)
+
+
 # ── Main ────────────────────────────────────────────────────────────
 
 def main():
@@ -303,7 +354,8 @@ def main():
     )
     subparsers = parser.add_subparsers(dest="command", help="可用命令")
 
-    subparsers.add_parser("start", help="开始记录软件使用时长")
+    subparsers.add_parser("gui", help="启动图形界面 (默认)")
+    subparsers.add_parser("start", help="命令行模式开始记录")
     subparsers.add_parser("today", help="快速查看今日统计")
 
     report_parser = subparsers.add_parser("report", help="查看使用统计")
@@ -317,8 +369,9 @@ def main():
 
     args = parser.parse_args()
 
-    if args.command is None:
-        parser.print_help()
+    # Default: launch GUI
+    if args.command is None or args.command == "gui":
+        cmd_gui()
         return
 
     config_path = resolve_config_path()
