@@ -46,8 +46,8 @@ class TrayManager:
         self.main_window = window
 
     def _build_menu(self):
-        menu = QMenu()
-        menu.setStyleSheet(f"""
+        self._menu = QMenu()
+        self._menu.setStyleSheet(f"""
             QMenu {{
                 background: #FFFFFF;
                 border: 1px solid #E2E8F0;
@@ -72,25 +72,26 @@ class TrayManager:
 
         self.action_open = QAction("打开主界面")
         self.action_open.triggered.connect(self._open_window)
-        menu.addAction(self.action_open)
+        self._menu.addAction(self.action_open)
 
         self.action_pause = QAction("暂停记录")
         self.action_pause.triggered.connect(self._toggle_pause)
-        menu.addAction(self.action_pause)
+        self._menu.addAction(self.action_pause)
 
-        menu.addSeparator()
+        self._menu.addSeparator()
 
         action_quit = QAction("退出程序")
         action_quit.triggered.connect(self._quit)
-        menu.addAction(action_quit)
+        self._menu.addAction(action_quit)
 
-        self.tray.setContextMenu(menu)
         self.tray.activated.connect(self._on_tray_activated)
 
     def _on_tray_activated(self, reason):
-        # Left-click or double-click → open main window
-        # Right-click → Qt handles context menu natively via setContextMenu()
-        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
+        if reason == QSystemTrayIcon.Context:
+            # Right-click: explicitly show menu at cursor
+            from PySide6.QtGui import QCursor
+            self._menu.exec(QCursor.pos())
+        elif reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
             self._open_window()
 
     def _open_window(self):
