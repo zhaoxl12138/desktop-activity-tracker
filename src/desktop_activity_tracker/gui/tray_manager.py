@@ -58,7 +58,6 @@ class TrayManager:
         popup.setWindowFlags(
             Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
         )
-        popup.setAttribute(Qt.WA_ShowWithoutActivating)
         popup.setStyleSheet("""
             QWidget {
                 background: #FFFFFF;
@@ -130,12 +129,8 @@ class TrayManager:
             y = cursor_pos.y() + 20  # Fallback: show below cursor
 
         popup.move(x, y)
+        popup.setAttribute(Qt.WA_DeleteOnClose)
         popup.show()
-
-        # Close popup when clicking anywhere else
-        QApplication.instance().focusChanged.connect(
-            lambda old, new: popup.close() if popup.isVisible() and new != popup else None
-        )
 
     def _on_tray_activated(self, reason):
         if reason == QSystemTrayIcon.Context:
