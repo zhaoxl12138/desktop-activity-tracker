@@ -1,332 +1,179 @@
-"""Today overview page - summary cards, efficiency score, and suggestions."""
+"""Dashboard home page."""
 
-from datetime import datetime
+from __future__ import annotations
 
-from PySide6.QtCore import QTimer, Qt
+from datetime import datetime, timedelta
+
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QProgressBar,
-    QSizePolicy,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
-from ... import database
+from ... import database, timeline
 from ...exporter import _calculate_efficiency_score, _generate_suggestions
 from ...utils import fmt_seconds
-from ..style import COLORS
+from ..style import COLORS, DASHBOARD_CARD_STYLE, SUBTLE_TAG_STYLE
+from ..widgets.dashboard_widgets import (
+    DistributionLegend,
+    DonutChartWidget,
+    MetricCard,
+    ScoreGaugeWidget,
+    TopAppListWidget,
+    TrendChartWidget,
+)
 
 
 class TodayOverviewPage(QWidget):
+    """Modern dashboard page for today's activity overview."""
+
     def __init__(self, db_path):
         super().__init__()
         self.db_path = db_path
-        self.cards = {}
+        self.metric_cards: dict[str, MetricCard] = {}
+        self.focus_rows: list[QWidget] = []
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(28, 24, 28, 24)
-        layout.setSpacing(14)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(22, 18, 22, 18)
+        root.setSpacing(14)
 
-        self.hero_card = self._build_hero_card()
-        layout.addWidget(self.hero_card)
+        metrics_grid = QGridLayout()
+        metrics_grid.setHorizontalSpacing(12)
+        metrics_grid.setVerticalSpacing(12)
+        root.addLayout(metrics_grid)
 
-        stats_grid = QGridLayout()
-        stats_grid.setHorizontalSpacing(12)
-        stats_grid.setVerticalSpacing(12)
+        metric_specs = [
+            ("total", "总使用时长", "🕘", COLORS["primary"]),
+            ("work", "学习/工作时长", "📚", COLORS["coding_green"]),
+            ("ent", "娱乐时长", "🎮", COLORS["video_orange"]),
+            ("social", "社交通讯时长", "💬", COLORS["social_purple"]),
+            ("idle", "挂机时长", "☕", COLORS["idle_gray"]),
+        ]
+        for col, (key, title, icon, color) in enumerate(metric_specs):
+            card = MetricCard(title, icon, color)
+            self.metric_cards[key] = card
+            metrics_grid.addWidget(card, 0, col)
 
-        stats_grid.addWidget(
-            self._make_stat_card("work", "学习 / 工作", "专注投入", COLORS["coding_green"]), 0, 0
-        )
-        stats_grid.addWidget(
-            self._make_stat_card("social", "社交通讯", "聊天与沟通", COLORS["social_teal"]), 0, 1
-        )
-        stats_grid.addWidget(
-            self._make_stat_card("entertainment", "视频娱乐", "被动消费", COLORS["video_orange"]), 1, 0
-        )
-        stats_grid.addWidget(
-            self._make_stat_card("idle", "挂机时间", "离开电脑 / 无操作", COLORS["idle_gray"]), 1, 1
-        )
-        layout.addLayout(stats_grid)
+        middle_grid = QGridLayout()
+        middle_grid.setHorizontalSpacing(12)
+        middle_grid.setVerticalSpacing(12)
+        root.addLayout(middle_grid)
+
+        middle_grid.addWidget(self._build_distribution_card(), 0, 0, 1, 5)
+        middle_grid.addWidget(self._build_score_card(), 0, 5, 1, 3)
+        middle_grid.addWidget(self._build_focus_card(), 0, 8, 1, 3)
 
         bottom_grid = QGridLayout()
         bottom_grid.setHorizontalSpacing(12)
         bottom_grid.setVerticalSpacing(12)
-        bottom_grid.addWidget(self._build_efficiency_panel(), 0, 0)
-        bottom_grid.addWidget(self._build_suggestions_panel(), 0, 1)
-        bottom_grid.setColumnStretch(0, 11)
-        bottom_grid.setColumnStretch(1, 9)
-        layout.addLayout(bottom_grid)
+        root.addLayout(bottom_grid, 1)
+
+        bottom_grid.addWidget(self._build_trend_card(), 0, 0, 1, 6)
+        self.top_app_card = TopAppListWidget()
+        bottom_grid.addWidget(self.top_app_card, 0, 6, 1, 5)
+
+        for col in range(11):
+            weight = 1
+            if col in (0, 1, 2, 3, 4):
+                weight = 2
+            middle_grid.setColumnStretch(col, weight)
+            bottom_grid.setColumnStretch(col, weight)
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
         self.timer.start(30000)
         self.refresh()
 
-    def _build_hero_card(self):
+    def _build_distribution_card(self):
         card = QFrame()
-        card.setObjectName("heroCard")
-        card.setStyleSheet(
-            f"""
-            QFrame#heroCard {{
-                background: {COLORS['card_bg']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 18px;
-            }}
-            """
-        )
-        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
-        layout = QHBoxLayout(card)
-        layout.setContentsMargins(22, 20, 22, 20)
-        layout.setSpacing(18)
-
-        left = QVBoxLayout()
-        left.setSpacing(8)
-
-        date_label = QLabel(datetime.now().strftime("%Y-%m-%d"))
-        date_label.setStyleSheet(
-            f"font-size: 12px; color: {COLORS['text_muted']}; font-weight: 600;"
-        )
-        left.addWidget(date_label)
-
-        title = QLabel("今日使用总览")
-        title.setStyleSheet(f"font-size: 24px; font-weight: 800; color: {COLORS['text']};")
-        left.addWidget(title)
-
-        self.hero_summary = QLabel("正在读取今天的数据结构...")
-        self.hero_summary.setWordWrap(True)
-        self.hero_summary.setStyleSheet(
-            f"font-size: 13px; color: {COLORS['text_secondary']};"
-        )
-        left.addWidget(self.hero_summary)
-        left.addStretch()
-
-        right = QVBoxLayout()
-        right.setSpacing(12)
-        right.setAlignment(Qt.AlignCenter)
-
-        self.total_value = QLabel("--")
-        self.total_value.setStyleSheet(
-            f"font-size: 40px; font-weight: 800; color: {COLORS['text']};"
-        )
-        right.addWidget(self.total_value, 0, Qt.AlignRight)
-
-        self.focus_badge = QLabel("学习占比 --")
-        self.focus_badge.setStyleSheet(
-            f"""
-            font-size: 12px;
-            font-weight: 700;
-            color: {COLORS['primary']};
-            background: {COLORS['panel_bg']};
-            border: none;
-            border-radius: 14px;
-            padding: 6px 12px;
-            """
-        )
-        right.addWidget(self.focus_badge, 0, Qt.AlignRight)
-
-        layout.addLayout(left, 3)
-        layout.addLayout(right, 2)
-        return card
-
-    def _make_stat_card(self, key, title, subtitle, accent_color):
-        card = QFrame()
-        card.setObjectName(f"statCard_{key}")
-        card.setStyleSheet(
-            f"""
-            QFrame#{card.objectName()} {{
-                background: {COLORS['card_bg']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 16px;
-            }}
-            """
-        )
-
+        card.setStyleSheet(DASHBOARD_CARD_STYLE)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(8)
-
-        title_label = QLabel(title)
-        title_label.setStyleSheet(
-            f"font-size: 15px; font-weight: 700; color: {COLORS['text']};"
-        )
-        layout.addWidget(title_label)
-
-        value_label = QLabel("--")
-        value_label.setStyleSheet(
-            f"font-size: 30px; font-weight: 800; color: {accent_color};"
-        )
-        layout.addWidget(value_label)
-
-        subtitle_label = QLabel(subtitle)
-        subtitle_label.setStyleSheet(
-            f"font-size: 12px; color: {COLORS['text_secondary']};"
-        )
-        layout.addWidget(subtitle_label)
-
-        ratio_label = QLabel("占比 --")
-        ratio_label.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
-        layout.addWidget(ratio_label)
-
-        progress = QProgressBar()
-        progress.setRange(0, 100)
-        progress.setValue(0)
-        progress.setTextVisible(False)
-        progress.setFixedHeight(6)
-        progress.setStyleSheet(
-            f"""
-            QProgressBar {{
-                background: {COLORS['panel_bg']};
-                border: none;
-                border-radius: 4px;
-            }}
-            QProgressBar::chunk {{
-                background: {accent_color};
-                border-radius: 4px;
-            }}
-            """
-        )
-        layout.addWidget(progress)
-
-        self.cards[key] = {
-            "value_label": value_label,
-            "ratio_label": ratio_label,
-            "progress": progress,
-        }
-        return card
-
-    def _build_efficiency_panel(self):
-        panel = QFrame()
-        panel.setObjectName("efficiencyPanel")
-        panel.setStyleSheet(
-            f"""
-            QFrame#efficiencyPanel {{
-                background: {COLORS['card_bg']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 18px;
-            }}
-            """
-        )
-
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(22, 20, 22, 20)
         layout.setSpacing(12)
 
-        title = QLabel("效率评分")
-        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {COLORS['text']};")
+        title = QLabel("时间分布")
+        title.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {COLORS['text']};")
         layout.addWidget(title)
 
-        score_row = QHBoxLayout()
-        score_row.setSpacing(18)
+        row = QHBoxLayout()
+        row.setSpacing(12)
+        self.donut_widget = DonutChartWidget()
+        row.addWidget(self.donut_widget, 1)
 
-        score_wrap = QFrame()
-        score_wrap.setObjectName("scoreWrap")
-        score_wrap.setStyleSheet(
-            f"""
-            QFrame#scoreWrap {{
-                background: {COLORS['panel_bg']};
-                border: none;
-                border-radius: 20px;
-            }}
-            """
+        right = QVBoxLayout()
+        right.setSpacing(10)
+        self.legend_widget = DistributionLegend()
+        right.addWidget(self.legend_widget, 1)
+
+        self.active_ratio_label = QLabel("有效时间占比：--")
+        self.active_ratio_label.setStyleSheet(
+            f"font-size: 14px; font-weight: 700; color: {COLORS['primary']};"
         )
-        score_wrap_layout = QVBoxLayout(score_wrap)
-        score_wrap_layout.setContentsMargins(22, 18, 22, 18)
-        score_wrap_layout.setSpacing(2)
+        right.addWidget(self.active_ratio_label)
+        row.addLayout(right, 1)
 
-        self.eff_score = QLabel("--")
-        self.eff_score.setStyleSheet(f"font-size: 42px; font-weight: 800; color: {COLORS['primary']};")
-        score_wrap_layout.addWidget(self.eff_score, 0, Qt.AlignCenter)
+        layout.addLayout(row)
+        return card
 
-        score_hint = QLabel("分 / 100")
-        score_hint.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
-        score_wrap_layout.addWidget(score_hint, 0, Qt.AlignCenter)
-        score_row.addWidget(score_wrap, 0)
-
-        meta_wrap = QVBoxLayout()
-        meta_wrap.setSpacing(10)
-
-        self.eff_grade = QLabel("等待数据")
-        self.eff_grade.setStyleSheet(
-            f"""
-            font-size: 14px;
-            font-weight: 700;
-            color: {COLORS['text']};
-            background: {COLORS['panel_bg']};
-            border: none;
-            border-radius: 14px;
-            padding: 7px 12px;
-            """
-        )
-        meta_wrap.addWidget(self.eff_grade, 0, Qt.AlignLeft)
-
-        self.eff_detail = QLabel("暂无分析")
-        self.eff_detail.setWordWrap(True)
-        self.eff_detail.setStyleSheet(
-            f"font-size: 13px; color: {COLORS['text_secondary']};"
-        )
-        meta_wrap.addWidget(self.eff_detail)
-
-        self.work_ratio = QLabel("学习/工作占比 --")
-        self.work_ratio.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
-        meta_wrap.addWidget(self.work_ratio)
-
-        self.ent_ratio = QLabel("娱乐占比 --")
-        self.ent_ratio.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
-        meta_wrap.addWidget(self.ent_ratio)
-
-        meta_wrap.addStretch()
-        score_row.addLayout(meta_wrap, 1)
-        layout.addLayout(score_row)
-        return panel
-
-    def _build_suggestions_panel(self):
-        panel = QFrame()
-        panel.setObjectName("suggestionsPanel")
-        panel.setStyleSheet(
-            f"""
-            QFrame#suggestionsPanel {{
-                background: {COLORS['card_bg']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 18px;
-            }}
-            """
-        )
-
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(22, 20, 22, 20)
+    def _build_score_card(self):
+        card = QFrame()
+        card.setStyleSheet(DASHBOARD_CARD_STYLE)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(18, 16, 18, 16)
         layout.setSpacing(10)
 
-        title = QLabel("提醒与建议")
-        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {COLORS['text']};")
+        title = QLabel("效率评分")
+        title.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {COLORS['text']};")
         layout.addWidget(title)
 
-        self.suggestion_title = QLabel("先看今天最突出的模式")
-        self.suggestion_title.setStyleSheet(
-            f"font-size: 13px; color: {COLORS['text_secondary']};"
-        )
-        layout.addWidget(self.suggestion_title)
+        self.score_gauge = ScoreGaugeWidget()
+        layout.addWidget(self.score_gauge, 1)
 
-        self.suggestion_text = QTextEdit()
-        self.suggestion_text.setReadOnly(True)
-        self.suggestion_text.setStyleSheet(
-            f"""
-            QTextEdit {{
-                font-size: 13px;
-                color: {COLORS['text_secondary']};
-                background: {COLORS['panel_bg']};
-                border: none;
-                border-radius: 14px;
-                padding: 12px;
-            }}
-            """
-        )
-        layout.addWidget(self.suggestion_text, 1)
-        return panel
+        self.score_grade = QLabel("数据不足")
+        self.score_grade.setStyleSheet(SUBTLE_TAG_STYLE)
+        layout.addWidget(self.score_grade, 0)
+
+        self.score_detail = QLabel("活跃数据不足 30 分钟，暂不评分。")
+        self.score_detail.setWordWrap(True)
+        self.score_detail.setStyleSheet(f"font-size: 13px; color: {COLORS['text_secondary']};")
+        layout.addWidget(self.score_detail)
+        return card
+
+    def _build_focus_card(self):
+        card = QFrame()
+        card.setStyleSheet(DASHBOARD_CARD_STYLE)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(10)
+
+        title = QLabel("今日专注时段")
+        title.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {COLORS['text']};")
+        layout.addWidget(title)
+
+        self.focus_container = QVBoxLayout()
+        self.focus_container.setSpacing(10)
+        layout.addLayout(self.focus_container)
+        layout.addStretch()
+        return card
+
+    def _build_trend_card(self):
+        card = QFrame()
+        card.setStyleSheet(DASHBOARD_CARD_STYLE)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(12)
+
+        title = QLabel("时间趋势（分钟）")
+        title.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {COLORS['text']};")
+        layout.addWidget(title)
+
+        self.trend_chart = TrendChartWidget()
+        layout.addWidget(self.trend_chart, 1)
+        return card
 
     def refresh(self):
         today = datetime.now().strftime("%Y-%m-%d")
@@ -337,109 +184,197 @@ class TodayOverviewPage(QWidget):
             idle_sec = totals.get("idle_seconds", 0) or 0
             total_sec = effective + idle_sec
 
-            work_cats = {"ai_tools", "coding", "reading", "creative"}
-            work_sec = sum(
-                item.get("effective_seconds", 0) or 0
-                for item in stats.get("by_category", [])
-                if item.get("category_key") in work_cats
-            )
-            social_sec = sum(
-                item.get("effective_seconds", 0) or 0
-                for item in stats.get("by_category", [])
-                if item.get("category_key") == "social"
-            )
-            video_sec = sum(
-                item.get("effective_seconds", 0) or 0
-                for item in stats.get("by_category", [])
-                if item.get("category_key") in ("video", "gaming")
-            )
+            work_keys = {"ai_tools", "coding", "reading", "creative"}
+            work_sec = 0
+            social_sec = 0
+            ent_sec = 0
+            for item in stats.get("by_category", []):
+                seconds = item.get("effective_seconds", 0) or 0
+                key = item.get("category_key")
+                if key in work_keys:
+                    work_sec += seconds
+                elif key == "social":
+                    social_sec += seconds
+                elif key in {"video", "gaming"}:
+                    ent_sec += seconds
 
-            self.total_value.setText(fmt_seconds(total_sec))
+            history = self._load_metric_history(8)
+            self._update_metrics(total_sec, work_sec, ent_sec, social_sec, idle_sec, history)
 
-            work_ratio = int(round((work_sec / effective) * 100)) if effective else 0
-            ent_ratio = int(round((video_sec / effective) * 100)) if effective else 0
+            other_sec = max(effective - work_sec - social_sec - ent_sec, 0)
+            distribution = [
+                ("学习/工作", work_sec, COLORS["coding_green"]),
+                ("娱乐", ent_sec, COLORS["video_orange"]),
+                ("社交通讯", social_sec, COLORS["social_purple"]),
+                ("挂机", idle_sec, COLORS["idle_gray"]),
+                ("其他", other_sec, "#C0CADB"),
+            ]
+            self.donut_widget.set_data(total_sec, distribution)
+            self.legend_widget.set_items(distribution, total_sec)
+            active_ratio = int(round((effective / total_sec) * 100)) if total_sec else 0
+            self.active_ratio_label.setText(f"有效时间占比：{active_ratio}%")
 
-            self.hero_summary.setText(
-                f"今天总共记录 {fmt_seconds(total_sec)}，其中活跃使用 {fmt_seconds(effective)}。"
-                f" 当前最主要的结构是学习/工作 {fmt_seconds(work_sec)}，娱乐 {fmt_seconds(video_sec)}。"
-            )
-            self.focus_badge.setText(f"学习占比 {work_ratio}%")
+            self._update_score_card(work_sec, ent_sec, effective, stats, today)
 
-            self._update_card("work", work_sec, effective)
-            self._update_card("social", social_sec, effective)
-            self._update_card("entertainment", video_sec, effective)
-            self._update_card("idle", idle_sec, total_sec)
+            tl = timeline.build_timeline(self.db_path, today)
+            focus_blocks = timeline.identify_focus_blocks(tl)
+            self._update_focus_blocks(focus_blocks)
 
-            score = _calculate_efficiency_score(work_sec, video_sec, effective)
-            self._update_efficiency(score, work_ratio, ent_ratio)
+            trend_points = [round(block.effective_seconds / 60, 1) for block in tl]
+            self.trend_chart.set_points(trend_points)
 
-            suggestions, _, _ = _generate_suggestions(self.db_path, today, stats)
-            if suggestions:
-                self.suggestion_title.setText("系统基于今天的数据给出的提醒")
-                self.suggestion_text.setText("\n".join(f"• {item}" for item in suggestions))
-            else:
-                self.suggestion_title.setText("今天暂时没有触发额外提醒")
-                self.suggestion_text.setText("目前没有明显异常，继续保持记录即可。")
+            top_apps = [
+                (item.get("process_name") or "Unknown", item.get("effective_seconds", 0) or 0)
+                for item in stats.get("by_app", [])[:5]
+            ]
+            self.top_app_card.set_items(top_apps)
         except Exception:
             import traceback
 
             traceback.print_exc()
 
-    def _update_card(self, key, seconds_value, base_seconds):
-        ratio = int(round((seconds_value / base_seconds) * 100)) if base_seconds else 0
-        self.cards[key]["value_label"].setText(fmt_seconds(seconds_value))
-        self.cards[key]["ratio_label"].setText(f"占比 {ratio}%")
-        self.cards[key]["progress"].setValue(max(0, min(100, ratio)))
-
-    def _update_efficiency(self, score, work_ratio, ent_ratio):
-        self.work_ratio.setText(f"学习/工作占比 {work_ratio}%")
-        self.ent_ratio.setText(f"娱乐占比 {ent_ratio}%")
-
-        if score is None:
-            self.eff_score.setText("--")
-            self.eff_grade.setText("数据不足")
-            self.eff_grade.setStyleSheet(
-                f"""
-                font-size: 14px;
-                font-weight: 700;
-                color: {COLORS['text_muted']};
-                background: {COLORS['panel_bg']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 14px;
-                padding: 7px 12px;
-                """
+    def _load_metric_history(self, days: int):
+        today = datetime.now().date()
+        dates = [today - timedelta(days=idx) for idx in range(days - 1, -1, -1)]
+        history = []
+        work_keys = {"ai_tools", "coding", "reading", "creative"}
+        for dt in dates:
+            date_str = dt.strftime("%Y-%m-%d")
+            day_stats = database.query_date_stats(self.db_path, date_str)
+            totals = day_stats.get("totals", {})
+            effective = totals.get("effective_seconds", 0) or 0
+            idle_sec = totals.get("idle_seconds", 0) or 0
+            work_sec = 0
+            social_sec = 0
+            ent_sec = 0
+            for item in day_stats.get("by_category", []):
+                seconds = item.get("effective_seconds", 0) or 0
+                key = item.get("category_key")
+                if key in work_keys:
+                    work_sec += seconds
+                elif key == "social":
+                    social_sec += seconds
+                elif key in {"video", "gaming"}:
+                    ent_sec += seconds
+            history.append(
+                {
+                    "total": effective + idle_sec,
+                    "work": work_sec,
+                    "ent": ent_sec,
+                    "social": social_sec,
+                    "idle": idle_sec,
+                }
             )
-            self.eff_detail.setText("活跃数据还不够，暂时不做评分。")
+        return history
+
+    def _update_metrics(self, total_sec, work_sec, ent_sec, social_sec, idle_sec, history):
+        mapping = {
+            "total": total_sec,
+            "work": work_sec,
+            "ent": ent_sec,
+            "social": social_sec,
+            "idle": idle_sec,
+        }
+
+        for key, current in mapping.items():
+            card = self.metric_cards[key]
+            card.set_value(fmt_seconds(current), self._delta_text(current, history, key))
+            card.set_sparkline([day[key] for day in history])
+
+    def _delta_text(self, current: int, history: list[dict], key: str):
+        if len(history) < 2:
+            return "较昨日 --"
+        yesterday = history[-2].get(key, 0) or 0
+        diff = current - yesterday
+        if diff == 0:
+            return "较昨日 持平"
+        arrow = "↑" if diff > 0 else "↓"
+        return f"较昨日 {arrow} {fmt_seconds(abs(diff))}"
+
+    def _update_score_card(self, work_sec, ent_sec, effective, stats, today):
+        score = _calculate_efficiency_score(work_sec, ent_sec, effective)
+        if score is None:
+            self.score_gauge.set_score(None, COLORS["idle_gray"])
+            self.score_grade.setText("数据不足")
+            self.score_grade.setStyleSheet(SUBTLE_TAG_STYLE)
+            self.score_detail.setText("活跃数据不足 30 分钟，暂不评分。")
             return
 
-        self.eff_score.setText(str(score))
         if score >= 80:
             grade = "优秀"
             accent = COLORS["coding_green"]
-            detail = "今天明显是高专注结构，学习/工作占据主导。"
+            detail = "学习/工作占比高，结构稳定。"
         elif score >= 60:
             grade = "良好"
             accent = COLORS["primary"]
-            detail = "整体结构健康，主任务与其他活动比例比较平衡。"
+            detail = "主线任务推进正常，可继续提升连续专注。"
         elif score >= 40:
             grade = "一般"
             accent = COLORS["warning_yellow"]
-            detail = "有效时间存在，但专注占比不高，容易被其他内容稀释。"
+            detail = "有效时间存在，但专注占比偏低。"
         else:
             grade = "需改进"
             accent = COLORS["danger_red"]
-            detail = "娱乐或杂项占比偏高，主任务投入明显不足。"
+            detail = "娱乐或分散活动偏多，建议压缩干扰。"
 
-        self.eff_grade.setText(grade)
-        self.eff_grade.setStyleSheet(
+        suggestions, _, _ = _generate_suggestions(self.db_path, today, stats)
+        if suggestions:
+            detail = suggestions[0]
+
+        self.score_gauge.set_score(score, accent)
+        self.score_grade.setText(f"{grade} · {score}/100")
+        self.score_grade.setStyleSheet(
             f"""
-            font-size: 14px;
-            font-weight: 700;
-            color: white;
-            background: {accent};
-            border: none;
-            border-radius: 14px;
-            padding: 7px 12px;
+            QLabel {{
+                font-size: 12px;
+                font-weight: 700;
+                color: white;
+                background: {accent};
+                border-radius: 12px;
+                padding: 4px 10px;
+            }}
             """
         )
-        self.eff_detail.setText(detail)
+        self.score_detail.setText(detail)
+
+    def _update_focus_blocks(self, focus_blocks):
+        while self.focus_rows:
+            row = self.focus_rows.pop()
+            self.focus_container.removeWidget(row)
+            row.deleteLater()
+
+        if not focus_blocks:
+            placeholder = QLabel("今日暂未识别到连续专注时段。")
+            placeholder.setStyleSheet(f"font-size: 13px; color: {COLORS['text_muted']};")
+            self.focus_container.addWidget(placeholder)
+            self.focus_rows.append(placeholder)
+            return
+
+        for focus in focus_blocks[:3]:
+            row = QFrame()
+            row.setStyleSheet(
+                f"""
+                QFrame {{
+                    background: #F8FCFA;
+                    border: 1px solid #DBF4E6;
+                    border-radius: 12px;
+                }}
+                """
+            )
+            line = QVBoxLayout(row)
+            line.setContentsMargins(10, 8, 10, 8)
+            line.setSpacing(4)
+
+            head = QLabel(
+                f"{focus.start_slot} - {focus.end_slot}    {focus.duration_minutes}分钟"
+            )
+            head.setStyleSheet(f"font-size: 14px; font-weight: 700; color: {COLORS['text']};")
+            line.addWidget(head)
+
+            apps = " / ".join(focus.top_apps[:3]) if focus.top_apps else "主应用未识别"
+            sub = QLabel(f"{focus.main_category} · {apps}")
+            sub.setStyleSheet(f"font-size: 12px; color: {COLORS['text_secondary']};")
+            line.addWidget(sub)
+
+            self.focus_container.addWidget(row)
+            self.focus_rows.append(row)

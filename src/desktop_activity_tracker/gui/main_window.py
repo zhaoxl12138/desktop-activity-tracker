@@ -1,4 +1,6 @@
-"""Main application window with sidebar navigation and stacked pages."""
+"""Main application window with sidebar navigation and dashboard shell."""
+
+from __future__ import annotations
 
 import os
 from datetime import datetime
@@ -43,13 +45,13 @@ from .style import (
 
 
 NAV_ITEMS = [
-    ("今日概览", "today"),
-    ("实时监控", "live"),
-    ("软件统计", "software"),
-    ("分类统计", "category"),
-    ("日报/周报", "reports"),
-    ("规则配置", "rules"),
-    ("设置", "settings"),
+    ("今日概览", "today", "聚焦今天的使用结构、效率与提醒"),
+    ("实时监控", "live", "查看当前前台窗口与活动状态"),
+    ("软件统计", "software", "分析软件使用时长与占比"),
+    ("分类统计", "category", "按分类查看效率结构"),
+    ("日报/周报", "reports", "生成日报、周报和月报"),
+    ("规则配置", "rules", "管理分类规则和匹配条件"),
+    ("设置", "settings", "管理数据库、输出路径与基础参数"),
 ]
 
 
@@ -65,8 +67,8 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("Desktop Activity Tracker")
         self.setStyleSheet(GLOBAL_STYLE + INPUT_STYLE)
-        self.resize(1220, 820)
-        self.setMinimumSize(1080, 700)
+        self.resize(1280, 820)
+        self.setMinimumSize(1180, 760)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -95,44 +97,44 @@ class MainWindow(QMainWindow):
 
     def _build_sidebar(self):
         frame = QFrame()
-        frame.setFixedWidth(236)
+        frame.setFixedWidth(232)
         frame.setStyleSheet(f"background: {COLORS['sidebar_bg']};")
 
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(0, 18, 0, 16)
+        layout.setContentsMargins(0, 20, 0, 14)
         layout.setSpacing(0)
 
         brand = QLabel("Desktop\nActivity Tracker")
         brand.setStyleSheet(
             f"""
-            font-size: 19px;
+            font-size: 18px;
             font-weight: 800;
             color: {COLORS['text_inverse']};
-            letter-spacing: 0.5px;
-            padding: 12px 20px 18px 20px;
+            letter-spacing: 0.4px;
+            padding: 12px 20px 12px 20px;
             """
         )
         layout.addWidget(brand)
 
         tagline = QLabel("把时间结构看清楚")
         tagline.setStyleSheet(
-            f"font-size: 11px; color: {COLORS['text_muted']}; padding: 0 20px 18px 20px;"
+            f"font-size: 11px; color: {COLORS['text_muted']}; padding: 0 20px 14px 20px;"
         )
         layout.addWidget(tagline)
 
         divider = QFrame()
         divider.setFixedHeight(1)
-        divider.setStyleSheet(f"background: {COLORS['sidebar_hover']}; margin: 0 14px;")
+        divider.setStyleSheet(f"background: #29416F; margin: 0 14px;")
         layout.addWidget(divider)
 
         self.nav_list = QListWidget()
         self.nav_list.setStyleSheet(SIDEBAR_STYLE)
-        self.nav_list.setFont(QFont("Microsoft YaHei", 9))
+        self.nav_list.setFont(QFont("Microsoft YaHei", 10))
         self.nav_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.nav_list.setWordWrap(True)
-        for name, key in NAV_ITEMS:
-            item = QListWidgetItem(name)
-            item.setData(Qt.UserRole, key)
+        for title, key, hint in NAV_ITEMS:
+            item = QListWidgetItem(title)
+            item.setData(Qt.UserRole, {"key": key, "title": title, "hint": hint})
             self.nav_list.addItem(item)
         self.nav_list.currentRowChanged.connect(self._on_nav_changed)
         layout.addWidget(self.nav_list)
@@ -141,7 +143,7 @@ class MainWindow(QMainWindow):
 
         version = QLabel("v1.2.0")
         version.setStyleSheet(
-            f"font-size: 10px; color: {COLORS['text_muted']}; padding: 10px 16px;"
+            f"font-size: 10px; color: {COLORS['text_muted']}; padding: 8px 16px;"
         )
         layout.addWidget(version)
         return frame
@@ -162,7 +164,7 @@ class MainWindow(QMainWindow):
             self.config_path, self.db_path, self.reports_dir, self.worker
         )
 
-        for _, key in NAV_ITEMS:
+        for _, key, _ in NAV_ITEMS:
             self.stack.addWidget(self.pages[key])
         return self.stack
 
@@ -170,44 +172,56 @@ class MainWindow(QMainWindow):
         bar = QFrame()
         bar.setObjectName("topBar")
         bar.setStyleSheet(TOP_BAR_STYLE)
-        bar.setFixedHeight(72)
+        bar.setFixedHeight(92)
 
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(24, 0, 20, 0)
+        layout.setContentsMargins(22, 10, 22, 10)
+        layout.setSpacing(12)
 
         title_wrap = QVBoxLayout()
-        title_wrap.setSpacing(2)
+        title_wrap.setSpacing(4)
+
+        top_line = QHBoxLayout()
+        top_line.setSpacing(12)
 
         self.lbl_page_title = QLabel("今日概览")
         self.lbl_page_title.setStyleSheet(
-            f"font-size: 24px; font-weight: 800; color: {COLORS['text']};"
+            f"font-size: 42px; font-weight: 800; color: {COLORS['text']};"
         )
-        title_wrap.addWidget(self.lbl_page_title)
+        top_line.addWidget(self.lbl_page_title)
+
+        self.lbl_today = QLabel(self._today_text())
+        self.lbl_today.setStyleSheet(
+            f"font-size: 15px; color: {COLORS['text_secondary']}; font-weight: 600;"
+        )
+        top_line.addWidget(self.lbl_today)
+        top_line.addStretch()
+        title_wrap.addLayout(top_line)
 
         self.lbl_page_hint = QLabel("聚焦今天的使用结构、效率与提醒")
         self.lbl_page_hint.setStyleSheet(
-            f"font-size: 12px; color: {COLORS['text_secondary']};"
+            f"font-size: 13px; color: {COLORS['text_secondary']};"
         )
         title_wrap.addWidget(self.lbl_page_hint)
-
         layout.addLayout(title_wrap)
-        layout.addSpacing(20)
+
+        layout.addStretch()
 
         self.top_summary = QLabel()
         self.top_summary.setStyleSheet(
-            f"font-size: 13px; color: {COLORS['text_secondary']}; font-weight: 600;"
+            f"font-size: 14px; color: {COLORS['text_secondary']}; font-weight: 700;"
         )
         self._update_top_bar()
         layout.addWidget(self.top_summary)
-        layout.addStretch()
+        layout.addSpacing(8)
 
-        self.btn_pause = QPushButton("⏸ 暂停")
+        self.btn_pause = QPushButton("⏸ 暂停记录")
         self.btn_pause.setStyleSheet(BUTTON_SECONDARY_STYLE)
         self.btn_pause.setCursor(Qt.PointingHandCursor)
         self.btn_pause.clicked.connect(self._toggle_pause)
         layout.addWidget(self.btn_pause)
 
-        btn_report = QPushButton("生成日报")
+        btn_report = QPushButton("📄 生成日报")
         btn_report.setStyleSheet(BUTTON_PRIMARY_STYLE)
         btn_report.setCursor(Qt.PointingHandCursor)
         btn_report.clicked.connect(self._quick_report)
@@ -218,29 +232,28 @@ class MainWindow(QMainWindow):
         bar = QFrame()
         bar.setObjectName("bottomBar")
         bar.setStyleSheet(BOTTOM_BAR_STYLE)
-        bar.setFixedHeight(36)
+        bar.setFixedHeight(38)
 
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(20, 0, 16, 0)
+        layout.setSpacing(8)
 
-        dot = QLabel()
-        dot.setFixedSize(8, 8)
-        dot.setStyleSheet(f"background: {COLORS['success_green']}; border-radius: 4px;")
-        self._status_dot = dot
-        layout.addWidget(dot)
+        self._status_dot = QLabel("●")
+        self._status_dot.setStyleSheet(
+            f"font-size: 12px; color: {COLORS['success_green']}; font-weight: 700;"
+        )
+        layout.addWidget(self._status_dot)
 
         self.lbl_status = QLabel("记录中")
         self.lbl_status.setStyleSheet(
             f"font-size: 12px; color: {COLORS['success_green']}; font-weight: 700;"
         )
         layout.addWidget(self.lbl_status)
-        layout.addSpacing(20)
 
+        layout.addSpacing(16)
         self.lbl_time = QLabel()
-        self.lbl_time.setStyleSheet(
-            f"font-size: 12px; color: {COLORS['text_muted']};"
-        )
-        self.lbl_time.setText(f"🕒 {datetime.now().strftime('%H:%M:%S')}")
+        self.lbl_time.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
+        self.lbl_time.setText(f"最近采样：{datetime.now().strftime('%H:%M:%S')}")
         layout.addWidget(self.lbl_time)
         layout.addStretch()
 
@@ -251,51 +264,60 @@ class MainWindow(QMainWindow):
         layout.addWidget(btn_quit)
         return bar
 
+    def _today_text(self):
+        weekdays = "一二三四五六日"
+        now = datetime.now()
+        return f"{now.year}年{now.month}月{now.day}日  星期{weekdays[now.weekday()]}"
+
     def _on_nav_changed(self, row):
         if 0 <= row < self.stack.count():
             self.stack.setCurrentIndex(row)
-            self.lbl_page_title.setText(NAV_ITEMS[row][0])
+            _, _, hint = NAV_ITEMS[row]
+            title, _, _ = NAV_ITEMS[row]
+            self.lbl_page_title.setText(title)
+            self.lbl_page_hint.setText(hint)
 
     def _on_sample(self, sample):
         if self.stack.currentWidget() is self.pages.get("live"):
             self.pages["live"].on_sample_updated(sample)
-        self.lbl_time.setText(f"🕒 {datetime.now().strftime('%H:%M:%S')}")
+        self.lbl_time.setText(f"最近采样：{datetime.now().strftime('%H:%M:%S')}")
 
     def _toggle_pause(self):
         if self.worker.is_paused():
             self.worker.resume()
-            self.btn_pause.setText("⏸ 暂停")
+            self.btn_pause.setText("⏸ 暂停记录")
             self.btn_pause.setStyleSheet(BUTTON_SECONDARY_STYLE)
             self.lbl_status.setText("记录中")
             self.lbl_status.setStyleSheet(
                 f"font-size: 12px; color: {COLORS['success_green']}; font-weight: 700;"
             )
             self._status_dot.setStyleSheet(
-                f"background: {COLORS['success_green']}; border-radius: 4px;"
+                f"font-size: 12px; color: {COLORS['success_green']}; font-weight: 700;"
             )
         else:
             self.worker.pause()
-            self.btn_pause.setText("▶ 继续")
+            self.btn_pause.setText("▶ 继续记录")
             self.btn_pause.setStyleSheet(BUTTON_PRIMARY_STYLE)
             self.lbl_status.setText("已暂停")
             self.lbl_status.setStyleSheet(
                 f"font-size: 12px; color: {COLORS['warning_yellow']}; font-weight: 700;"
             )
             self._status_dot.setStyleSheet(
-                f"background: {COLORS['warning_yellow']}; border-radius: 4px;"
+                f"font-size: 12px; color: {COLORS['warning_yellow']}; font-weight: 700;"
             )
 
     def _update_top_bar(self):
+        self.lbl_today.setText(self._today_text())
         today = datetime.now().strftime("%Y-%m-%d")
         try:
             stats = database.query_date_stats(self.db_path, today)
             totals = stats.get("totals", {})
             effective = totals.get("effective_seconds", 0) or 0
-            work_cats = {"ai_tools", "coding", "reading", "creative"}
+            work_keys = {"ai_tools", "coding", "reading", "creative"}
             work_sec = sum(
                 item.get("effective_seconds", 0) or 0
                 for item in stats.get("by_category", [])
-                if item.get("category_key") in work_cats
+                if item.get("category_key") in work_keys
             )
             video_sec = sum(
                 item.get("effective_seconds", 0) or 0

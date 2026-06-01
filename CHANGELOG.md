@@ -1,0 +1,22 @@
+# Changelog
+
+## 2026-06-01
+
+### Added
+- 新增首页 Dashboard 组件模块：`MetricCard`、`DonutChartWidget`、`ScoreGaugeWidget`、`TrendChartWidget`、`TopAppListWidget`、`DistributionLegend`。
+- 新增 `gui/widgets` 目录用于沉淀可复用展示组件。
+
+### Changed
+- 重做首页 `TodayOverviewPage` 布局为正式 Dashboard：
+  - 5 个核心指标卡
+  - 时间分布卡片（环图 + 图例）
+  - 效率评分卡片（仪表盘）
+  - 今日专注时段卡片
+  - 时间趋势卡片
+  - 软件使用 TOP5 卡片
+- 统一主题样式中心 `style.py`，优化颜色体系、卡片圆角、边框、层级、按钮与导航样式。
+- 重构 `MainWindow` 壳层视觉（左侧深蓝导航、顶部信息栏、底部状态栏），保留原有功能入口与交互逻辑。
+
+### Fixed
+- 修复主界面中文文案乱码问题（首页与主窗口显示文本）。
+
