@@ -149,7 +149,7 @@ class TrayManager:
     def _quit(self):
         if self.main_window and hasattr(self.main_window, 'worker'):
             self.main_window.worker.stop()
-            self.main_window.worker.wait(3000)
+            self.main_window.worker.wait(5000)
         self.tray.hide()
         self.app.quit()
 

@@ -305,7 +305,7 @@ class MainWindow(QMainWindow):
             return
         if self.worker:
             self.worker.stop()
-            self.worker.wait(3000)
+            self.worker.wait(5000)
         from PySide6.QtWidgets import QApplication
         QApplication.instance().quit()
 

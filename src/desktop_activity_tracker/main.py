@@ -17,15 +17,31 @@ if sys.stdout.encoding.upper() != 'UTF-8':
     except Exception:
         sys.stdout = open(sys.stdout.fileno(), mode='w', encoding='utf-8', errors='replace', buffering=1)
 
-from . import get_app_root
-from .window_detector import get_foreground_window_info
-from .activity_detector import get_idle_seconds
-from .classifier import Classifier
-from . import database
-from . import reporter
-from . import exporter
-from .session_tracker import SessionTracker
-from .utils import generate_default_config, fmt_seconds
+# Support both module execution (python -m) and PyInstaller / direct script
+if __package__ is None or __package__ == '':
+    # Running as script (PyInstaller), add parent dir to path
+    _parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _parent not in sys.path:
+        sys.path.insert(0, _parent)
+    from desktop_activity_tracker import get_app_root
+    from desktop_activity_tracker.window_detector import get_foreground_window_info
+    from desktop_activity_tracker.activity_detector import get_idle_seconds
+    from desktop_activity_tracker.classifier import Classifier
+    from desktop_activity_tracker import database
+    from desktop_activity_tracker import reporter
+    from desktop_activity_tracker import exporter
+    from desktop_activity_tracker.session_tracker import SessionTracker
+    from desktop_activity_tracker.utils import generate_default_config, fmt_seconds
+else:
+    from . import get_app_root
+    from .window_detector import get_foreground_window_info
+    from .activity_detector import get_idle_seconds
+    from .classifier import Classifier
+    from . import database
+    from . import reporter
+    from . import exporter
+    from .session_tracker import SessionTracker
+    from .utils import generate_default_config, fmt_seconds
 
 
 CONFIG_FILENAME = "config/config.yaml"
@@ -244,9 +260,14 @@ def cmd_gui():
     from PySide6.QtWidgets import QApplication
     from PySide6.QtGui import QFont
 
-    from .gui.worker import RecordingWorker
-    from .gui.tray_manager import TrayManager
-    from .gui.main_window import MainWindow
+    if __package__ is None or __package__ == '':
+        from desktop_activity_tracker.gui.worker import RecordingWorker
+        from desktop_activity_tracker.gui.tray_manager import TrayManager
+        from desktop_activity_tracker.gui.main_window import MainWindow
+    else:
+        from .gui.worker import RecordingWorker
+        from .gui.tray_manager import TrayManager
+        from .gui.main_window import MainWindow
 
     app_root = get_app_root()
     config_path = resolve_config_path()
@@ -283,7 +304,7 @@ def cmd_gui():
 
     # Clean shutdown
     worker.stop()
-    worker.wait(3000)
+    worker.wait(5000)
     sys.exit(exit_code)
 
 

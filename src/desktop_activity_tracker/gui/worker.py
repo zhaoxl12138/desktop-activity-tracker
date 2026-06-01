@@ -71,7 +71,7 @@ class RecordingWorker(QThread):
 
         while self._running:
             if self._paused:
-                self.msleep(1000)
+                self._sleep_check(1000)
                 continue
 
             try:
@@ -82,7 +82,7 @@ class RecordingWorker(QThread):
                 if win_info and win_info.get("process_name", "").lower() == "python.exe":
                     title = win_info.get("window_title", "")
                     if "Desktop Activity Tracker" in title:
-                        self.msleep(int(self.sample_interval * 1000))
+                        self._sleep_check(int(self.sample_interval * 1000))
                         continue
 
                 snapshot = tracker.tick(idle_sec, win_info)
@@ -90,14 +90,13 @@ class RecordingWorker(QThread):
                 if snapshot is not None:
                     self.sample_updated.emit(snapshot)
 
-                self.msleep(int(self.sample_interval * 1000))
-
             except Exception as e:
                 err_msg = str(e)
                 if err_msg != self._last_error:
                     self._last_error = err_msg
                     self.error_occurred.emit(err_msg)
-                self.msleep(self.sample_interval * 1000)
+
+            self._sleep_check(int(self.sample_interval * 1000))
 
         # Flush final session on shutdown
         sess = tracker.current_session
@@ -106,6 +105,16 @@ class RecordingWorker(QThread):
             on_session_end(sess)
 
         conn.close()
+
+    def _sleep_check(self, ms):
+        """Sleep in short chunks so stop() is responsive."""
+        if ms <= 0:
+            return
+        chunk = 200
+        remaining = ms
+        while self._running and remaining > 0:
+            self.msleep(min(chunk, remaining))
+            remaining -= chunk
 
     def pause(self):
         self._paused = True
