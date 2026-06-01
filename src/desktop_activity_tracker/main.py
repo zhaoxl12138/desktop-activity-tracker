@@ -10,8 +10,9 @@ from datetime import datetime
 
 import yaml
 
-# Force UTF-8 output so Chinese characters don't crash on GBK terminals
-if sys.stdout.encoding.upper() != 'UTF-8':
+# Force UTF-8 output so Chinese characters don't crash on GBK terminals.
+# In PyInstaller --windowed mode sys.stdout can be None, skip in that case.
+if sys.stdout is not None and sys.stdout.encoding.upper() != 'UTF-8':
     try:
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     except Exception:
