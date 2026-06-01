@@ -4,9 +4,12 @@ import os
 import sys
 from datetime import datetime
 
-from PySide6.QtWidgets import QSystemTrayIcon, QMenu, QStyle, QApplication
-from PySide6.QtGui import QIcon, QAction
-from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import (
+    QSystemTrayIcon, QMenu, QStyle, QApplication,
+    QWidget, QVBoxLayout, QPushButton,
+)
+from PySide6.QtGui import QIcon, QAction, QCursor
+from PySide6.QtCore import Qt, QTimer
 
 from .. import database, get_app_root
 from ..utils import fmt_seconds
@@ -46,50 +49,77 @@ class TrayManager:
         self.main_window = window
 
     def _build_menu(self):
-        self._menu = QMenu()
-        self._menu.setStyleSheet(f"""
-            QMenu {{
+        # Don't use setContextMenu / QMenu — unreliable on some Windows versions.
+        # Instead use a frameless QWidget popup triggered on right-click.
+        self.tray.activated.connect(self._on_tray_activated)
+
+    def _show_tray_popup(self):
+        popup = QWidget()
+        popup.setWindowFlags(
+            Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+        )
+        popup.setStyleSheet("""
+            QWidget {
                 background: #FFFFFF;
-                border: 1px solid #E2E8F0;
+                border: 1px solid #CBD5E1;
                 border-radius: 8px;
-                padding: 4px;
+            }
+            QPushButton {
+                background: transparent;
+                border: none;
+                padding: 8px 28px 8px 14px;
+                text-align: left;
                 font-size: 13px;
-            }}
-            QMenu::item {{
-                padding: 8px 32px 8px 16px;
-                border-radius: 4px;
-            }}
-            QMenu::item:selected {{
+                color: #1E293B;
+            }
+            QPushButton:hover {
                 background: #EFF6FF;
                 color: #1E40AF;
-            }}
-            QMenu::separator {{
-                height: 1px;
-                background: #E2E8F0;
-                margin: 4px 8px;
-            }}
+                border-radius: 4px;
+            }
+            QPushButton#btnQuit {
+                color: #DC2626;
+                font-weight: 600;
+            }
+            QPushButton#btnQuit:hover {
+                background: #FEF2F2;
+                color: #B91C1C;
+            }
         """)
 
-        self.action_open = QAction("打开主界面")
-        self.action_open.triggered.connect(self._open_window)
-        self._menu.addAction(self.action_open)
+        layout = QVBoxLayout(popup)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(2)
 
-        self.action_pause = QAction("暂停记录")
-        self.action_pause.triggered.connect(self._toggle_pause)
-        self._menu.addAction(self.action_pause)
+        btn_open = QPushButton("打开主界面")
+        btn_open.setCursor(Qt.PointingHandCursor)
+        btn_open.clicked.connect(lambda: (popup.close(), self._open_window()))
+        layout.addWidget(btn_open)
 
-        self._menu.addSeparator()
+        btn_pause = QPushButton("暂停记录")
+        btn_pause.setCursor(Qt.PointingHandCursor)
+        btn_pause.clicked.connect(lambda: (popup.close(), self._toggle_pause()))
+        layout.addWidget(btn_pause)
 
-        action_quit = QAction("退出程序")
-        action_quit.triggered.connect(self._quit)
-        self._menu.addAction(action_quit)
+        sep = QWidget()
+        sep.setFixedHeight(1)
+        sep.setStyleSheet("background: #E2E8F0; margin: 2px 8px;")
+        layout.addWidget(sep)
 
-        self.tray.activated.connect(self._on_tray_activated)
+        btn_quit = QPushButton("退出程序")
+        btn_quit.setObjectName("btnQuit")
+        btn_quit.setCursor(Qt.PointingHandCursor)
+        btn_quit.clicked.connect(lambda: (popup.close(), self._quit()))
+        layout.addWidget(btn_quit)
+
+        popup.adjustSize()
+        popup.move(QCursor.pos())
+        popup.show()
+        popup.activateWindow()
 
     def _on_tray_activated(self, reason):
         if reason == QSystemTrayIcon.Context:
-            from PySide6.QtGui import QCursor
-            self._menu.popup(QCursor.pos())
+            self._show_tray_popup()
         elif reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
             self._open_window()
 
@@ -104,10 +134,8 @@ class TrayManager:
             w = self.main_window.worker
             if w.is_paused():
                 w.resume()
-                self.action_pause.setText("暂停记录")
             else:
                 w.pause()
-                self.action_pause.setText("恢复记录")
 
     def _generate_report(self):
         today = datetime.now().strftime("%Y-%m-%d")
