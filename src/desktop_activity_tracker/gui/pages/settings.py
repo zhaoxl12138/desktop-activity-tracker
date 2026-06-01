@@ -1,7 +1,9 @@
 """Settings page - general, paths, data management."""
 
 import os
+import sys
 import shutil
+import winreg
 import yaml
 from datetime import datetime
 
@@ -51,20 +53,30 @@ BROWSE_BTN_STYLE = f"""
     }}
 """
 
+AUTOSTART_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+AUTOSTART_NAME = "DesktopActivityTracker"
+
+
+def _get_exe_path():
+    """Get the exe path or script path for autostart."""
+    if getattr(sys, 'frozen', False):
+        return sys.executable
+    return sys.executable
+
 
 class SettingsPage(QWidget):
-    def __init__(self, config_path, db_path, reports_dir):
+    def __init__(self, config_path, db_path, reports_dir, worker=None):
         super().__init__()
         self.config_path = config_path
         self.db_path = db_path
         self.reports_dir = reports_dir
+        self.worker = worker
         self._load_config()
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # Scroll area wrapping the content
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
@@ -87,6 +99,7 @@ class SettingsPage(QWidget):
         g1l.setSpacing(12)
 
         self.chk_autostart = QCheckBox("开机自启动")
+        self.chk_autostart.setChecked(self._is_autostart_enabled())
         g1l.addWidget(self.chk_autostart)
 
         h1 = QHBoxLayout()
@@ -94,7 +107,9 @@ class SettingsPage(QWidget):
         h1.addWidget(QLabel("采样间隔 (秒):"))
         self.spin_interval = QSpinBox()
         self.spin_interval.setRange(1, 60)
-        self.spin_interval.setValue(self.config.get("sample_interval_seconds", 5))
+        tracker_cfg = self.config.get("tracker", {})
+        self.spin_interval.setValue(tracker_cfg.get("sample_interval_seconds",
+            self.config.get("sample_interval_seconds", 1)))
         h1.addWidget(self.spin_interval)
         h1.addStretch()
         g1l.addLayout(h1)
@@ -104,7 +119,8 @@ class SettingsPage(QWidget):
         h2.addWidget(QLabel("空闲阈值 (秒):"))
         self.spin_idle = QSpinBox()
         self.spin_idle.setRange(10, 600)
-        self.spin_idle.setValue(self.config.get("idle_threshold_seconds", 60))
+        self.spin_idle.setValue(tracker_cfg.get("idle_threshold_seconds",
+            self.config.get("idle_threshold_seconds", 60)))
         h2.addWidget(self.spin_idle)
         h2.addStretch()
         g1l.addLayout(h2)
@@ -118,10 +134,10 @@ class SettingsPage(QWidget):
         g2l.setContentsMargins(16, 20, 16, 16)
         g2l.setSpacing(10)
 
-        for label_text, default_val, attr in [
-            ("数据库路径:", "data/usage.db", "edit_db"),
-            ("日报输出路径:", "reports/daily/", "edit_reports"),
-            ("Obsidian 输出路径:", "", "edit_obsidian"),
+        for label_text, default_val, attr, get_val in [
+            ("数据库路径:", "usage.db", "edit_db", self.config.get("db_path", "usage.db")),
+            ("日报输出路径:", "reports", "edit_reports", self.reports_dir),
+            ("Obsidian 输出路径:", "", "edit_obsidian", self.config.get("obsidian_output_path", "")),
         ]:
             h = QHBoxLayout()
             h.setSpacing(8)
@@ -129,12 +145,8 @@ class SettingsPage(QWidget):
             lbl.setFixedWidth(120)
             h.addWidget(lbl)
             edit = QLineEdit()
-            if attr == "edit_db":
-                edit.setText(self.config.get("db_path", default_val))
-            elif attr == "edit_reports":
-                edit.setText(self.reports_dir)
-            else:
-                edit.setText(self.config.get("obsidian_output_path", default_val))
+            edit.setText(get_val)
+            if attr == "edit_obsidian":
                 edit.setPlaceholderText("例如: E:\\obsidian_github\\LifeOS\\TimeTracker")
             setattr(self, attr, edit)
             h.addWidget(edit, 1)
@@ -190,14 +202,56 @@ class SettingsPage(QWidget):
         with open(self.config_path, "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
 
+    def _is_autostart_enabled(self):
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_KEY,
+                                0, winreg.KEY_READ) as key:
+                winreg.QueryValueEx(key, AUTOSTART_NAME)
+                return True
+        except FileNotFoundError:
+            return False
+
+    def _set_autostart(self, enable):
+        exe_path = _get_exe_path()
+        try:
+            if enable:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_KEY,
+                                    0, winreg.KEY_SET_VALUE) as key:
+                    winreg.SetValueEx(key, AUTOSTART_NAME, 0, winreg.REG_SZ,
+                                      f'"{exe_path}"')
+            else:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_KEY,
+                                    0, winreg.KEY_SET_VALUE) as key:
+                    winreg.DeleteValue(key, AUTOSTART_NAME)
+        except (FileNotFoundError, OSError):
+            pass
+
     def _save_all(self):
-        self.config["sample_interval_seconds"] = self.spin_interval.value()
-        self.config["idle_threshold_seconds"] = self.spin_idle.value()
+        sample_interval = self.spin_interval.value()
+        idle_threshold = self.spin_idle.value()
+
+        # Write to both top-level and tracker sub-dict for compatibility
+        self.config["sample_interval_seconds"] = sample_interval
+        self.config["idle_threshold_seconds"] = idle_threshold
         self.config["db_path"] = self.edit_db.text().strip()
+        self.config["reports_dir"] = self.edit_reports.text().strip()
         self.config["obsidian_output_path"] = self.edit_obsidian.text().strip()
+
+        tracker = self.config.setdefault("tracker", {})
+        tracker["sample_interval_seconds"] = sample_interval
+        tracker["idle_threshold_seconds"] = idle_threshold
+
         with open(self.config_path, "w", encoding="utf-8") as f:
             yaml.dump(self.config, f, allow_unicode=True, default_flow_style=False)
-        QMessageBox.information(self, "成功", "设置已保存。")
+
+        # Hot-reload worker settings
+        if self.worker:
+            self.worker.update_settings(self.config)
+
+        # Autostart
+        self._set_autostart(self.chk_autostart.isChecked())
+
+        QMessageBox.information(self, "成功", "设置已保存。\n采样间隔和空闲阈值已实时生效。")
 
     def _browse_dir(self, edit):
         d = QFileDialog.getExistingDirectory(self, "选择目录")

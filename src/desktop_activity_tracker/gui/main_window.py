@@ -134,7 +134,7 @@ class MainWindow(QMainWindow):
         obsidian_path = self.config.get("obsidian_output_path", "").strip()
         self.pages['reports'] = ReportsPage(self.db_path, self.reports_dir, obsidian_path)
         self.pages['rules'] = RuleConfigPage(self.config_path)
-        self.pages['settings'] = SettingsPage(self.config_path, self.db_path, self.reports_dir)
+        self.pages['settings'] = SettingsPage(self.config_path, self.db_path, self.reports_dir, self.worker)
 
         for _, key in NAV_ITEMS:
             self.stack.addWidget(self.pages[key])

@@ -62,12 +62,13 @@ class RecordingWorker(QThread):
             }
         }
 
-        tracker = SessionTracker(
+        self._tracker = SessionTracker(
             config=tracker_cfg,
             classifier=clf,
             on_session_end=on_session_end,
             on_flush=on_flush,
         )
+        tracker = self._tracker
 
         while self._running:
             if self._paused:
@@ -115,6 +116,21 @@ class RecordingWorker(QThread):
         while self._running and remaining > 0:
             self.msleep(min(chunk, remaining))
             remaining -= chunk
+
+    def update_settings(self, config):
+        """Hot-reload settings from config without restart."""
+        tracker_cfg = config.get("tracker", {})
+        self.sample_interval = tracker_cfg.get("sample_interval_seconds",
+            config.get("sample_interval_seconds", 1))
+        self.flush_interval = tracker_cfg.get("flush_interval_seconds",
+            config.get("flush_interval_seconds", 10))
+        if hasattr(self, '_tracker') and self._tracker is not None:
+            self._tracker.idle_threshold = tracker_cfg.get("idle_threshold_seconds",
+                config.get("idle_threshold_seconds", 60))
+            self._tracker.min_session = tracker_cfg.get("min_session_seconds",
+                config.get("min_session_seconds", 2))
+            self._tracker.sample_interval = self.sample_interval
+            self._tracker.flush_interval = self.flush_interval
 
     def pause(self):
         self._paused = True
