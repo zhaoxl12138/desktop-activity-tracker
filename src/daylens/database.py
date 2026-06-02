@@ -9,6 +9,7 @@ from . import get_app_root
 # Process names of the tracker itself — excluded from all queries
 _SELF_PROCS = {"daylens.exe", "daylens-debug.exe", "desktop-activity-tracker.exe"}
 
+_WAL_CHECKPOINT_INTERVAL = 100  # commits between WAL checkpoints
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS activity_logs (
@@ -66,6 +67,36 @@ CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON activity_sessions(session_
 """
 
 
+def _wal_checkpoint(conn):
+    """Integrate WAL into main database, preventing unbounded growth."""
+    try:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except sqlite3.OperationalError:
+        pass  # WAL may not exist yet
+
+
+def _recover_stale_wal(db_path):
+    """If a WAL file exists but no writer is active, integrate it."""
+    wal_path = db_path + "-wal"
+    if not os.path.exists(wal_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.execute("PRAGMA journal_mode=WAL")
+        rows = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        if rows:
+            busy, _, _ = rows
+            if busy == 0:
+                conn.close()
+    except sqlite3.OperationalError:
+        pass
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def get_db_path(config):
     db_path = config.get("db_path", "data/usage.db")
     if not os.path.isabs(db_path):
@@ -75,11 +106,26 @@ def get_db_path(config):
 
 def init_db(db_path):
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    _recover_stale_wal(db_path)
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     conn.executescript(SCHEMA)
     conn.commit()
+    conn._commit_count = 0
     return conn
+
+
+def close_db(conn):
+    """Safely close a database connection, checkpointing WAL first."""
+    if conn is None:
+        return
+    try:
+        _wal_checkpoint(conn)
+        conn.close()
+    except Exception:
+        pass
 
 
 # ── Legacy log-level insert (kept for backward compat, not used by v1.1+) ──
@@ -139,6 +185,7 @@ def insert_session(conn, session):
         session.switch_reason,
     ))
     conn.commit()
+    _maybe_checkpoint(conn)
     return cur.lastrowid
 
 
@@ -162,6 +209,14 @@ def update_session(conn, session):
         session.session_id,
     ))
     conn.commit()
+    _maybe_checkpoint(conn)
+
+
+def _maybe_checkpoint(conn):
+    """Checkpoint WAL every N commits to prevent unbounded growth."""
+    conn._commit_count = getattr(conn, '_commit_count', 0) + 1
+    if conn._commit_count % _WAL_CHECKPOINT_INTERVAL == 0:
+        _wal_checkpoint(conn)
 
 
 # ── Deprecated raw log queries (for backward compat) ──

@@ -258,7 +258,10 @@ def cmd_monthly(config, args):
 
 def _ensure_single_instance():
     """Use a Windows named mutex to prevent multiple instances.
-    Returns (is_first, mutex_handle). Caller must keep mutex_handle alive."""
+
+    Returns (is_first, mutex_handle). Caller must keep mutex_handle alive
+    for the lifetime of the process.
+    """
     import ctypes
     from ctypes import wintypes
 

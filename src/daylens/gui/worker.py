@@ -122,7 +122,7 @@ class RecordingWorker(QThread):
             sess.switch_reason = "shutdown"
             on_session_end(sess)
 
-        conn.close()
+        database.close_db(conn)
 
     def _sleep_check(self, ms):
         """Sleep in short chunks so stop() is responsive."""
