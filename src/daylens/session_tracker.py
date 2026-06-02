@@ -102,7 +102,7 @@ class SessionTracker:
         self.sample_interval = tracker.get("sample_interval_seconds",
             config.get("sample_interval_seconds", 1))
         self.flush_interval = tracker.get("flush_interval_seconds",
-            config.get("flush_interval_seconds", 10))
+            config.get("flush_interval_seconds", 5))
         self.idle_threshold = tracker.get("idle_threshold_seconds",
             config.get("idle_threshold_seconds", 60))
         self.min_session = tracker.get("min_session_seconds",

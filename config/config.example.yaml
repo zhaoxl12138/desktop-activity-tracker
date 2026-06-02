@@ -4,7 +4,7 @@
 # ── 记录器配置 ──
 tracker:
   sample_interval_seconds: 1     # 窗口检测频率（秒）
-  flush_interval_seconds: 10     # 强制写库间隔（秒）
+  flush_interval_seconds: 5      # 强制写库间隔（秒）
   idle_threshold_seconds: 60     # 空闲判定阈值（秒）
   min_session_seconds: 2         # 最短 session，低于此值不写库
 

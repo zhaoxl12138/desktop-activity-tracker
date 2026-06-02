@@ -72,7 +72,7 @@ def cmd_start(config, config_path):
     sample_interval = tracker_cfg.get("sample_interval_seconds",
         config.get("sample_interval_seconds", 1))
     flush_interval = tracker_cfg.get("flush_interval_seconds",
-        config.get("flush_interval_seconds", 10))
+        config.get("flush_interval_seconds", 5))
     idle_threshold = tracker_cfg.get("idle_threshold_seconds",
         config.get("idle_threshold_seconds", 60))
     min_session = tracker_cfg.get("min_session_seconds",

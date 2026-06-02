@@ -59,7 +59,7 @@ def _write_config(path: Path):
         "obsidian_output_path": "",
         "tracker": {
             "sample_interval_seconds": 1,
-            "flush_interval_seconds": 10,
+            "flush_interval_seconds": 5,
             "idle_threshold_seconds": 60,
             "min_session_seconds": 2,
         },

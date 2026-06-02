@@ -30,7 +30,7 @@ class RecordingWorker(QThread):
         self.sample_interval = tracker_cfg.get("sample_interval_seconds",
             config.get("sample_interval_seconds", 1))
         self.flush_interval = tracker_cfg.get("flush_interval_seconds",
-            config.get("flush_interval_seconds", 10))
+            config.get("flush_interval_seconds", 5))
 
     def run(self):
         clf = classifier.Classifier(self.config_path)
@@ -171,7 +171,7 @@ class RecordingWorker(QThread):
         self.sample_interval = tracker_cfg.get("sample_interval_seconds",
             config.get("sample_interval_seconds", 1))
         self.flush_interval = tracker_cfg.get("flush_interval_seconds",
-            config.get("flush_interval_seconds", 10))
+            config.get("flush_interval_seconds", 5))
         if hasattr(self, '_tracker') and self._tracker is not None:
             self._tracker.idle_threshold = tracker_cfg.get("idle_threshold_seconds",
                 config.get("idle_threshold_seconds", 60))
