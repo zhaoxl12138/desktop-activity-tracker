@@ -1,12 +1,29 @@
+# DayLens 配置文件
+
+# ── 记录器配置 ──
+tracker:
+  sample_interval_seconds: 1
+  flush_interval_seconds: 10
+  idle_threshold_seconds: 60
+  min_session_seconds: 2
+
+# ── 基础配置 ──
+sample_interval_seconds: 5
+idle_threshold_seconds: 60
+db_path: data/usage.db
+obsidian_output_path: ''
+
+# ── 分类规则 ──
 categories:
+  # ── AI 工具 ──
   ai_tools:
-    active_rule: interactive_required
     display_name: AI工具
+    active_rule: interactive_required
     match:
       process_names:
       - chrome.exe
-      - msedge.exe
       - Doubao.exe
+      - msedge.exe
       title_keywords:
       - ChatGPT
       - Claude
@@ -20,34 +37,32 @@ categories:
       - Grok
       - Perplexity
       - Poe
-  browser_general:
-    active_rule: interactive_required
-    display_name: 浏览器其他
-    match:
-      process_names:
-      - chrome.exe
-      - msedge.exe
-      - iexplore.exe
-      - firefox.exe
-      - 360ChromeX.exe
+  # ── 编程开发 ──
   coding:
-    active_rule: interactive_required
     display_name: 编程开发
+    active_rule: interactive_required
     match:
       process_names:
-      - Code.exe
-      - Cursor.exe
       - clion64.exe
-      - Trae CN.exe
-      - codex.exe
-      - WindowsTerminal.exe
       - cmd.exe
-      - powershell.exe
-      - MobaXterm1_CHS1.exe
-      - UV4.exe
-      - notepad++.exe
-      - Docker Desktop.exe
+      - Code.exe
+      - codex.exe
       - com.docker.admin.exe
+      - Cursor.exe
+      - Docker Desktop.exe
+      - git-bash.exe
+      - git-cmd.exe
+      - git-gui.exe
+      - MobaXterm1_CHS1.exe
+      - node.exe
+      - notepad++.exe
+      - powershell.exe
+      - powershell_ise.exe
+      - python.exe
+      - pythonw.exe
+      - Trae CN.exe
+      - UV4.exe
+      - WindowsTerminal.exe
       title_keywords:
       - VS Code
       - Cursor
@@ -58,38 +73,23 @@ categories:
       - GitLab
       - CLion
       - Trae
-  creative:
-    active_rule: interactive_required
-    display_name: 创作工具
-    match:
-      process_names:
-      - JianyingPro.exe
-  gaming:
-    active_rule: passive_allowed
-    display_name: 游戏
-    match:
-      process_names:
-      - Steam.exe
-      - WeGame.exe
-  other:
-    active_rule: interactive_required
-    display_name: 其他
-    match:
-      process_names: []
-      title_keywords: []
+  # ── 阅读学习 ──
   reading:
-    active_rule: interactive_required
     display_name: 阅读学习
+    active_rule: interactive_required
     match:
       process_names:
-      - Obsidian.exe
-      - wps.exe
-      - wpp.exe
-      - wpspdf.exe
-      - AcroRd32.exe
       - Acrobat.exe
+      - AcroRd32.exe
       - chrome.exe
+      - ksolaunch.exe
+      - ksomisc.exe
       - msedge.exe
+      - Obsidian.exe
+      - wordpad.exe
+      - wpp.exe
+      - wps.exe
+      - wpspdf.exe
       title_keywords:
       - Obsidian
       - PDF
@@ -99,55 +99,22 @@ categories:
       - 飞书文档
       - 语雀
       - WPS
-  social:
-    active_rule: passive_allowed
-    display_name: 社交通讯
-    match:
-      process_names:
-      - weixin.exe
-      - WeChat.exe
-      - WeChatAppEx.exe
-      - WXWork.exe
-      - QQ.exe
-      - QClaw.exe
-      - Telegram.exe
-      - WeMail.exe
-  tools:
-    active_rule: interactive_required
-    display_name: 系统工具
-    match:
-      process_names:
-      - ToDesk.exe
-      - GameViewer.exe
-      - msrdc.exe
-      - 红海Pro兼容版.exe
-      - Everything.exe
-      - BaiduNetdisk.exe
-      - localsend_app.exe
-      - WizTree64.exe
-      - DiskInfo64.exe
-      - 7zFM.exe
-      - Snipaste.exe
-      - Resilio Sync.exe
-      - clash-verge.exe
-      - explorer.exe
-      - Taskmgr.exe
-      - ApplicationFrameHost.exe
-      - ShellExperienceHost.exe
+  # ── 视频娱乐 ──
   video:
-    active_rule: passive_allowed
     display_name: 视频娱乐
+    active_rule: passive_allowed
     match:
       process_names:
-      - QyClient.exe
-      - QyPlayer.exe
-      - QQLive.exe
-      - QQMusic.exe
-      - PotPlayerMini64.exe
-      - PotPlayer.exe
-      - vlc.exe
       - chrome.exe
       - msedge.exe
+      - PotPlayer.exe
+      - PotPlayerMini64.exe
+      - QQLive.exe
+      - QQMusic.exe
+      - QyClient.exe
+      - QyPlayer.exe
+      - vlc.exe
+      - wmplayer.exe
       title_keywords:
       - YouTube
       - B站
@@ -160,44 +127,99 @@ categories:
       - 斗鱼
       - 虎牙
       - Twitch
-display_name_mapping:
-  Code.exe: VS Code
-  Cursor.exe: Cursor
-  WindowsTerminal.exe: Windows Terminal
-  powershell.exe: PowerShell
-  cmd.exe: CMD
-  Obsidian.exe: Obsidian
-  chrome.exe: Chrome
-  msedge.exe: Edge
-  firefox.exe: Firefox
-  QyClient.exe: 爱奇艺
-  PotPlayerMini64.exe: PotPlayer
-  PotPlayer.exe: PotPlayer
-  com.docker.admin.exe: Docker
-  JianyingPro.exe: 剪映
-  notepad++.exe: Notepad++
-  Steam.exe: Steam
-  weixin.exe: 微信
-  WeChat.exe: 微信
-  QQ.exe: QQ
-  Telegram.exe: Telegram
-  clion64.exe: CLion
-  Trae CN.exe: Trae
-  360ChromeX.exe: 360浏览器
-  Doubao.exe: 豆包
-  MobaXterm1_CHS1.exe: MobaXterm
-  explorer.exe: 文件资源管理器
-  Taskmgr.exe: 任务管理器
-db_path: D:\OfficeSoftware\DayLens\usage.db
-idle_threshold_seconds: 60
-obsidian_output_path: E:\obsidian_github\Daylog\时间追踪\桌面活动日报
-reports_dir: D:\OfficeSoftware\DayLens\reports
-sample_interval_seconds: 1
-tracker:
-  audio_detection_enabled: true
-  audio_check_interval_seconds: 3
-  flush_interval_seconds: 10
-  idle_threshold_seconds: 60
-  min_session_seconds: 3
-  sample_interval_seconds: 1
-theme: light
+  # ── 创作工具 ──
+  creative:
+    display_name: 创作工具
+    active_rule: interactive_required
+    match:
+      process_names:
+      - JianyingPro.exe
+      title_keywords: []
+  # ── 社交通讯 ──
+  social:
+    display_name: 社交通讯
+    active_rule: passive_allowed
+    match:
+      process_names:
+      - QClaw.exe
+      - QQ.exe
+      - Telegram.exe
+      - WeChat.exe
+      - WeChatAppEx.exe
+      - weixin.exe
+      - WeMail.exe
+      - WXWork.exe
+      title_keywords: []
+  # ── 系统工具 ──
+  tools:
+    display_name: 系统工具
+    active_rule: interactive_required
+    match:
+      process_names:
+      - 7zFM.exe
+      - amdbugreporttool.exe
+      - BaiduNetdisk.exe
+      - charmap.exe
+      - clash-verge.exe
+      - cleanmgr.exe
+      - control.exe
+      - dfrgui.exe
+      - DiskInfo64.exe
+      - Everything.exe
+      - GameViewer.exe
+      - iscsicpl.exe
+      - localsend_app.exe
+      - magnify.exe
+      - mdsched.exe
+      - mmc.exe
+      - msconfig.exe
+      - msinfo32.exe
+      - mspaint.exe
+      - msrdc.exe
+      - mstsc.exe
+      - narrator.exe
+      - notepad.exe
+      - osk.exe
+      - perfmon.exe
+      - psr.exe
+      - quickassist.exe
+      - recoverydrive.exe
+      - regedit.exe
+      - Resilio Sync.exe
+      - Snipaste.exe
+      - snippingtool.exe
+      - taskmgr.exe
+      - ToDesk.exe
+      - wfs.exe
+      - wiztree.exe
+      - WizTree64.exe
+      - 红海Pro兼容版.exe
+      title_keywords: []
+  # ── 游戏 ──
+  gaming:
+    display_name: 游戏
+    active_rule: passive_allowed
+    match:
+      process_names:
+      - Steam.exe
+      - WeGame.exe
+      title_keywords: []
+  # ── 浏览器兜底 ──
+  browser_general:
+    display_name: 浏览器其他
+    active_rule: interactive_required
+    match:
+      process_names:
+      - 360ChromeX.exe
+      - chrome.exe
+      - firefox.exe
+      - iexplore.exe
+      - msedge.exe
+      title_keywords: []
+  # ── 兜底 ──
+  other:
+    display_name: 其他
+    active_rule: interactive_required
+    match:
+      process_names: []
+      title_keywords: []

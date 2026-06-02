@@ -16,221 +16,209 @@ def fmt_seconds(total_seconds):
     return f"{seconds}秒"
 
 
-DEFAULT_CONFIG_YAML = """\
-# DayLens 配置文件
+# ── Default config as Python dict ──────────────────────────────────
+# Category order: ai_tools, coding, reading, video, creative, social,
+# tools, gaming, browser_general, other
 
-# ── 记录器配置 ──
-tracker:
-  sample_interval_seconds: 1     # 窗口检测频率（秒）
-  flush_interval_seconds: 10     # 强制写库间隔（秒）
-  idle_threshold_seconds: 60     # 空闲判定阈值（秒）
-  min_session_seconds: 2         # 最短 session，低于此值不写库
+_DEFAULT_CATEGORIES = {
+    "ai_tools": {
+        "display_name": "AI工具",
+        "active_rule": "interactive_required",
+        "process_names": ["chrome.exe", "msedge.exe", "Doubao.exe"],
+        "title_keywords": [
+            "ChatGPT", "Claude", "DeepSeek", "Gemini", "Kimi",
+            "通义千问", "文心一言", "豆包", "Copilot", "Grok",
+            "Perplexity", "Poe",
+        ],
+    },
+    "coding": {
+        "display_name": "编程开发",
+        "active_rule": "interactive_required",
+        "process_names": [
+            "Code.exe", "Cursor.exe", "clion64.exe", "Trae CN.exe",
+            "codex.exe", "WindowsTerminal.exe", "cmd.exe", "powershell.exe",
+            "MobaXterm1_CHS1.exe", "UV4.exe", "notepad++.exe",
+            "Docker Desktop.exe", "com.docker.admin.exe",
+        ],
+        "title_keywords": [
+            "VS Code", "Cursor", "Claude Code", "Codex",
+            "Visual Studio", "GitHub", "GitLab", "CLion", "Trae",
+        ],
+    },
+    "reading": {
+        "display_name": "阅读学习",
+        "active_rule": "interactive_required",
+        "process_names": [
+            "Obsidian.exe", "wps.exe", "wpp.exe", "wpspdf.exe",
+            "AcroRd32.exe", "Acrobat.exe", "chrome.exe", "msedge.exe",
+        ],
+        "title_keywords": [
+            "Obsidian", "PDF", "阅读", "文档", "Notion",
+            "飞书文档", "语雀", "WPS",
+        ],
+    },
+    "video": {
+        "display_name": "视频娱乐",
+        "active_rule": "passive_allowed",
+        "process_names": [
+            "QyClient.exe", "QyPlayer.exe", "QQLive.exe", "QQMusic.exe",
+            "PotPlayerMini64.exe", "PotPlayer.exe", "vlc.exe",
+            "chrome.exe", "msedge.exe",
+        ],
+        "title_keywords": [
+            "YouTube", "B站", "bilibili", "腾讯视频", "爱奇艺",
+            "Netflix", "抖音", "西瓜视频", "斗鱼", "虎牙", "Twitch",
+        ],
+    },
+    "creative": {
+        "display_name": "创作工具",
+        "active_rule": "interactive_required",
+        "process_names": ["JianyingPro.exe"],
+        "title_keywords": [],
+    },
+    "social": {
+        "display_name": "社交通讯",
+        "active_rule": "passive_allowed",
+        "process_names": [
+            "weixin.exe", "WeChat.exe", "WeChatAppEx.exe",
+            "WXWork.exe", "QQ.exe", "QClaw.exe",
+            "Telegram.exe", "WeMail.exe",
+        ],
+        "title_keywords": [],
+    },
+    "tools": {
+        "display_name": "系统工具",
+        "active_rule": "interactive_required",
+        "process_names": [
+            "ToDesk.exe", "GameViewer.exe", "msrdc.exe",
+            "红海Pro兼容版.exe",
+            "Everything.exe", "BaiduNetdisk.exe", "localsend_app.exe",
+            "WizTree64.exe", "DiskInfo64.exe", "7zFM.exe",
+            "Snipaste.exe", "Resilio Sync.exe", "clash-verge.exe",
+        ],
+        "title_keywords": [],
+    },
+    "gaming": {
+        "display_name": "游戏",
+        "active_rule": "passive_allowed",
+        "process_names": ["Steam.exe", "WeGame.exe"],
+        "title_keywords": [],
+    },
+    "browser_general": {
+        "display_name": "浏览器其他",
+        "active_rule": "interactive_required",
+        "process_names": [
+            "chrome.exe", "msedge.exe", "iexplore.exe",
+            "firefox.exe", "360ChromeX.exe",
+        ],
+        "title_keywords": [],
+    },
+    "other": {
+        "display_name": "其他",
+        "active_rule": "interactive_required",
+        "process_names": [],
+        "title_keywords": [],
+    },
+}
 
-# ── 基础配置 ──
-sample_interval_seconds: 5
-idle_threshold_seconds: 60
-db_path: "data/usage.db"
-obsidian_output_path: ""
+_CATEGORY_ORDER = [
+    "ai_tools", "coding", "reading", "video", "creative",
+    "social", "tools", "gaming", "browser_general", "other",
+]
 
-categories:
-
-  # ── AI 工具 ──────────────────────────────────────────
-  ai_tools:
-    display_name: "AI工具"
-    active_rule: "interactive_required"
-    match:
-      process_names:
-        - "chrome.exe"
-        - "msedge.exe"
-        - "Doubao.exe"             # 豆包桌面版
-      title_keywords:
-        - "ChatGPT"
-        - "Claude"
-        - "DeepSeek"
-        - "Gemini"
-        - "Kimi"
-        - "通义千问"
-        - "文心一言"
-        - "豆包"
-        - "Copilot"
-        - "Grok"
-        - "Perplexity"
-        - "Poe"
-
-  # ── 编程开发 ──────────────────────────────────────────
-  coding:
-    display_name: "编程开发"
-    active_rule: "interactive_required"
-    match:
-      process_names:
-        # 编辑器 / IDE
-        - "Code.exe"               # VS Code
-        - "Cursor.exe"             # Cursor
-        - "clion64.exe"            # CLion
-        - "Trae CN.exe"            # Trae (字节跳动 AI IDE)
-        # CLI / 终端
-        - "codex.exe"              # Codex CLI
-        - "WindowsTerminal.exe"
-        - "cmd.exe"
-        - "powershell.exe"
-        - "MobaXterm1_CHS1.exe"    # MobaXterm SSH
-        # 嵌入式开发
-        - "UV4.exe"                # Keil MDK
-        # 编辑器
-        - "notepad++.exe"          # Notepad++
-        # Docker
-        - "Docker Desktop.exe"
-        - "com.docker.admin.exe"
-      title_keywords:
-        - "VS Code"
-        - "Cursor"
-        - "Claude Code"
-        - "Codex"
-        - "Visual Studio"
-        - "GitHub"
-        - "GitLab"
-        - "CLion"
-        - "Trae"
-
-  # ── 阅读学习 ──────────────────────────────────────────
-  reading:
-    display_name: "阅读学习"
-    active_rule: "interactive_required"
-    match:
-      process_names:
-        # 笔记 / PDF
-        - "Obsidian.exe"
-        - "wps.exe"                # WPS 文字
-        - "wpp.exe"                # WPS 演示
-        - "wpspdf.exe"             # WPS PDF
-        - "AcroRd32.exe"
-        - "Acrobat.exe"
-        # 浏览器阅读
-        - "chrome.exe"
-        - "msedge.exe"
-      title_keywords:
-        - "Obsidian"
-        - "PDF"
-        - "阅读"
-        - "文档"
-        - "Notion"
-        - "飞书文档"
-        - "语雀"
-        - "WPS"
-
-  # ── 视频娱乐 ──────────────────────────────────────────
-  video:
-    display_name: "视频娱乐"
-    active_rule: "passive_allowed"
-    match:
-      process_names:
-        # 视频客户端
-        - "QyClient.exe"           # 爱奇艺
-        - "QyPlayer.exe"           # 爱奇艺播放器
-        - "QQLive.exe"             # 腾讯视频
-        - "QQMusic.exe"            # QQ音乐
-        # 本地播放器
-        - "PotPlayerMini64.exe"
-        - "PotPlayer.exe"
-        - "vlc.exe"
-        # 浏览器（看视频）
-        - "chrome.exe"
-        - "msedge.exe"
-      title_keywords:
-        - "YouTube"
-        - "B站"
-        - "bilibili"
-        - "腾讯视频"
-        - "爱奇艺"
-        - "Netflix"
-        - "抖音"
-        - "西瓜视频"
-        - "斗鱼"
-        - "虎牙"
-        - "Twitch"
-
-  # ── 创作工具 ──────────────────────────────────────────
-  creative:
-    display_name: "创作工具"
-    active_rule: "interactive_required"
-    match:
-      process_names:
-        - "JianyingPro.exe"        # 剪映专业版
-
-  # ── 社交通讯 ──────────────────────────────────────────
-  social:
-    display_name: "社交通讯"
-    active_rule: "passive_allowed"
-    match:
-      process_names:
-        - "weixin.exe"
-        - "WeChat.exe"
-        - "WeChatAppEx.exe"        # 微信进程
-        - "WXWork.exe"             # 企业微信
-        - "QQ.exe"
-        - "QClaw.exe"              # QQ claw
-        - "Telegram.exe"
-        - "WeMail.exe"             # 企业微信邮箱
-
-  # ── 系统工具 ──────────────────────────────────────────
-  tools:
-    display_name: "系统工具"
-    active_rule: "interactive_required"
-    match:
-      process_names:
-        # 远程控制
-        - "ToDesk.exe"
-        - "GameViewer.exe"         # UU远程
-        - "msrdc.exe"              # 微软远程桌面
-        - "红海Pro兼容版.exe"       # 红海远程
-        # 文件工具
-        - "Everything.exe"         # 文件搜索
-        - "BaiduNetdisk.exe"       # 百度网盘
-        - "localsend_app.exe"      # LocalSend
-        - "WizTree64.exe"          # 磁盘分析
-        - "DiskInfo64.exe"         # CrystalDiskInfo
-        - "7zFM.exe"               # 7-Zip
-        # 截图 / 录屏
-        - "Snipaste.exe"
-        # 同步
-        - "Resilio Sync.exe"
-        # 网络
-        - "clash-verge.exe"
-
-  # ── 游戏 ──────────────────────────────────────────────
-  gaming:
-    display_name: "游戏"
-    active_rule: "passive_allowed"
-    match:
-      process_names:
-        - "Steam.exe"
-        - "WeGame.exe"
-
-  # ── 浏览器兜底 ────────────────────────────────────────
-  browser_general:
-    display_name: "浏览器其他"
-    active_rule: "interactive_required"
-    match:
-      process_names:
-        - "chrome.exe"
-        - "msedge.exe"
-        - "iexplore.exe"
-        - "firefox.exe"
-        - "360ChromeX.exe"
-
-  # ── 兜底 ──────────────────────────────────────────────
-  other:
-    display_name: "其他"
-    active_rule: "interactive_required"
-    match:
-      process_names: []
-      title_keywords: []
-"""
+# Track which fields comment each category header
+_CATEGORY_COMMENTS = {
+    "ai_tools": "AI 工具",
+    "coding": "编程开发",
+    "reading": "阅读学习",
+    "video": "视频娱乐",
+    "creative": "创作工具",
+    "social": "社交通讯",
+    "tools": "系统工具",
+    "gaming": "游戏",
+    "browser_general": "浏览器兜底",
+    "other": "兜底",
+}
 
 
 def generate_default_config(path):
-    """Write default config.yaml to the given path."""
+    """Write default config.yaml, auto-enriched with apps found on this machine."""
     import os
+    import yaml
+
     os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    # Attempt app scan (non-fatal if it fails)
+    try:
+        from .app_scanner import scan_installed_apps, classify_scanned_apps
+        scanned = scan_installed_apps()
+        classified = classify_scanned_apps(scanned)
+    except Exception:
+        classified = {}
+
+    # Build categories dict preserving order
+    categories = {}
+    for key in _CATEGORY_ORDER:
+        cat = dict(_DEFAULT_CATEGORIES[key])
+        default_procs = cat.pop("process_names")
+        title_kws = cat.pop("title_keywords")
+
+        # Merge: default procs (always kept) + scanned procs.
+        # Dedup by lowercase, prefer default casing.
+        merged = {}
+        for p in default_procs:
+            merged[p.lower()] = p
+        for pname in classified.get(key, set()):
+            merged.setdefault(pname, pname)
+
+        cat["match"] = {
+            "process_names": sorted(merged.values(), key=str.lower),
+            "title_keywords": title_kws,
+        }
+        categories[key] = cat
+
+    config = {
+        "tracker": {
+            "sample_interval_seconds": 1,
+            "flush_interval_seconds": 10,
+            "idle_threshold_seconds": 60,
+            "min_session_seconds": 2,
+        },
+        "sample_interval_seconds": 5,
+        "idle_threshold_seconds": 60,
+        "db_path": "data/usage.db",
+        "obsidian_output_path": "",
+        "categories": categories,
+    }
+
+    # Write with header comment
     with open(path, "w", encoding="utf-8") as f:
-        f.write(DEFAULT_CONFIG_YAML)
+        f.write("# DayLens 配置文件\n\n")
+        f.write("# ── 记录器配置 ──\n")
+        f.write(yaml.safe_dump(
+            {k: config[k] for k in ["tracker"]},
+            allow_unicode=True, default_flow_style=False, sort_keys=False,
+        ))
+        f.write("\n# ── 基础配置 ──\n")
+        f.write(yaml.safe_dump(
+            {k: config[k] for k in ["sample_interval_seconds", "idle_threshold_seconds",
+                                      "db_path", "obsidian_output_path"]},
+            allow_unicode=True, default_flow_style=False, sort_keys=False,
+        ))
+        f.write("\n# ── 分类规则 ──\n")
+        # Write categories with section comments
+        category_yaml = yaml.safe_dump(
+            {"categories": categories},
+            allow_unicode=True, default_flow_style=False, sort_keys=False,
+        )
+        # Inject category section comments
+        for key in _CATEGORY_ORDER:
+            comment = _CATEGORY_COMMENTS.get(key, "")
+            # Replace "  {key}:" with a comment line before it
+            marker = f"  {key}:"
+            replacement = f"  # ── {comment} ──\n  {key}:"
+            category_yaml = category_yaml.replace(marker, replacement)
+
+        f.write(category_yaml)
+
+    return path

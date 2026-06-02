@@ -314,10 +314,30 @@ class TodayOverviewPage(QWidget):
         if cache_key in self._icon_cache:
             return self._icon_cache[cache_key]
 
+        # 1. Try pre-cached PNG icon
+        png_path = self._icon_png_path(cache_key)
+        if png_path:
+            icon = QIcon(png_path)
+            self._icon_cache[cache_key] = icon
+            return icon
+
+        # 2. Fall back to EXE icon extraction via QFileIconProvider
         exe_path = self._find_exe_path(process_name)
         icon = self._icon_provider.icon(QFileInfo(exe_path)) if exe_path else None
         self._icon_cache[cache_key] = icon
         return icon
+
+    @staticmethod
+    def _icon_png_path(process_name_lower: str) -> str | None:
+        """Return path to cached PNG icon, or None if not found."""
+        import sys
+        if getattr(sys, 'frozen', False):
+            base = sys._MEIPASS
+        else:
+            base = os.path.dirname(os.path.dirname(os.path.dirname(
+                os.path.dirname(os.path.abspath(__file__)))))
+        p = os.path.join(base, "assets", "icons", f"{process_name_lower}.png")
+        return p if os.path.isfile(p) else None
 
     def _find_exe_path(self, process_name: str) -> str | None:
         for proc in psutil.process_iter(attrs=["name", "exe"]):
