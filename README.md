@@ -1,98 +1,158 @@
-# Desktop Activity Tracker
+# DayLens — 个人数字行为分析系统
 
-<p align="center">
-  <b>Windows 桌面时间追踪 · 个人数字行为分析系统</b>
-</p>
+> Focus · Analyze · Improve — 看清你的时间流向
 
-<p align="center">
-  <img src="https://img.shields.io/badge/version-1.3.0-blue" alt="version">
-  <img src="https://img.shields.io/badge/python-3.10+-green" alt="python">
-  <img src="https://img.shields.io/badge/platform-Windows-lightgrey" alt="platform">
-  <img src="https://img.shields.io/badge/license-MIT-brightgreen" alt="license">
-</p>
+DayLens 是一款 Windows 桌面时间追踪工具，通过 1 秒级精度采集前台窗口与用户空闲状态，自动归类使用行为，生成可视化日报/周报/月报。
 
----
+## 功能特性
 
-## 功能
+- **实时监控** — 1 秒采样频率，精确追踪前台窗口切换与空闲时长
+- **智能分类** — 基于进程名 + 窗口标题关键字，自动归类到 AI 工具 / 编程开发 / 阅读学习 / 社交通讯 / 视频娱乐 / 游戏 / 创作工具 / 系统工具 等类别
+- **音频检测** — 针对视频/游戏等 "被动可接受" 类别，通过 Windows Core Audio API 检测进程是否在播放音频，避免将暂停/静音的娱乐窗口计为有效时间
+- **幻影输入过滤** — 自动识别某些驱动/服务产生的虚假 HID 事件；检测期间冻结空闲计数器，避免误判消耗有效时间
+- **会话聚合** — 连续使用同一窗口 (间隔 ≤60s) 自动合并为会话，跨日自动切分
+- **时间线聚合** — 今日时间线自动合并相邻同窗口同分类记录，避免碎片化显示
+- **专注检测** — 自动识别 >=45 分钟无娱乐中断的连续工作时段
+- **深色/浅色主题** — 一键切换，配置持久化不损坏
 
-- **自动记录** — 后台静默运行，1 秒采样检测前台窗口进程名和标题
-- **Session 聚合** — 连续使用同一窗口合并为 session，数据库写入减少 95%
-- **智能分类** — 进程名 + 标题关键词自动归类（AI 工具 / 编程 / 阅读 / 视频 / 游戏等 10+ 类）
-- **有效时长** — 学习类要求鼠键活跃才算有效时间，视频类允许被动观看；幻影 HID 事件过滤
-- **Dashboard** — 今日概览仪表盘：5 指标卡 + 圆环分布图 + 效率评分拆解 + 30 分钟时间线 + 专注时段 + 软件 TOP5
-- **效率评分** — 0-100 分，含学习占比基准分 + 娱乐惩罚分 + 优化建议
-- **娱乐预警** — 娱乐超过 90 分钟自动显示红色警告横幅
-- **GUI 界面** — PySide6 桌面应用，7 个功能页面 + 系统托盘常驻
-- **日报/周报/月报** — Markdown 导出，含 30 分钟时间线、专注时段、碎片化分析、一句话复盘
-- **Obsidian 集成** — 一键同步报告到 Obsidian vault
-- **单文件 EXE** — PyInstaller 打包，无需安装 Python，双击即用
+## 界面一览
+
+| 页面 | 功能 |
+|------|------|
+| **今日概览** | 5 指标卡片 + 环形时间分布 + 专注时间轴条 + 今日时间线 + 小时趋势图 + Top 5 应用 |
+| **实时监控** | 当前窗口信息 (进程/标题/分类/活跃状态) + 最近 50 条记录表 |
+| **软件统计** | 按软件维度统计有效时长与占比，支持 CSV/Markdown 导出 |
+| **分类统计** | 按类别维度展示时长分布 (进度条 + 百分比) |
+| **日报/周报** | 生成 Markdown 日报 (含时间线表格)，可选同步到 Obsidian vault |
+| **目标管理** | 管理分类规则: 新增/编辑/删除进程名、标题关键字、计时策略 |
+| **设置中心** | 采样间隔、空闲阈值、数据库/报告/Obsidian 路径配置 |
+
+## 系统托盘
+
+- 关闭窗口 -> 最小化到托盘 (不退出)
+- 右键菜单: 打开主界面 / 暂停记录 / 生成日报 / 设置 / 退出
+- 悬停提示: 今日使用摘要
+
+## 架构
+
+```
+src/daylens/
+├── main.py                 # QApplication 入口 + CLI 命令
+├── __init__.py             # get_app_root()
+├── __main__.py             # python -m daylens
+├── window_detector.py      # Win32 API 获取前台窗口
+├── activity_detector.py    # GetLastInputInfo() 空闲检测
+├── audio_detector.py       # IAudioSessionControl2 音频播放检测
+├── classifier.py           # 按 process + title 规则分类
+├── session_tracker.py      # 会话状态机 (idle/effective 追踪)
+├── timeline.py             # 30 分钟块 + 专注块 + 碎片化
+├── database.py             # SQLite CRUD (WAL 模式)
+├── exporter.py             # Markdown/CSV 日报/周报/月报导出
+├── reporter.py             # 控制台文本报告
+├── utils.py                # 配置生成、时间格式化
+├── gui/
+│   ├── main_window.py      # 主窗口 (侧边栏导航 + QStackedWidget)
+│   ├── worker.py           # 后台录制线程 (QThread)
+│   ├── tray_manager.py     # 系统托盘管理
+│   ├── style.py            # 颜色常量 + 主题切换
+│   ├── pages/
+│   │   ├── today_overview.py   # 今日概览
+│   │   ├── live_monitor.py     # 实时监控
+│   │   ├── software_stats.py   # 软件统计
+│   │   ├── category_stats.py   # 分类统计
+│   │   ├── reports.py          # 日报/周报
+│   │   ├── rule_config.py      # 目标管理
+│   │   └── settings.py         # 设置中心
+│   └── widgets/
+│       └── dashboard_widgets.py  # 自定义控件 (环形图/时间线/趋势图/FocusBar)
+└── .docs/
+    ├── issues.md            # 工程化 Issue 清单 (给 AI 工具)
+    └── skills/
+        ├── architect.md      # 开发前架构分析 Prompt
+        ├── bug_hunter.md     # 开发后 Bug 审查 Prompt
+        ├── daylens_reviewer.md # 产品视角审查 Prompt
+        └── ui_reviewer.md    # UI/UX 审查 Prompt
+```
+
+## 技术栈
+
+| 层 | 技术 |
+|----|------|
+| 语言 | Python 3.11+ |
+| GUI | PySide6 (Qt 6) |
+| 数据库 | SQLite 3 (WAL mode) |
+| 窗口检测 | Win32 API (GetWindowText, GetWindowThreadProcessId) |
+| 空闲检测 | Win32 API (GetLastInputInfo) |
+| 音频检测 | Windows Core Audio API (pycaw + comtypes) |
+| 打包 | PyInstaller (单文件 exe, ~60MB) |
 
 ## 快速开始
 
-### 直接使用 (Windows)
-
-从 [Releases](https://github.com/zhaoxl12138/desktop-activity-tracker/releases) 下载 `desktop-activity-tracker.exe`，双击运行。托盘图标出现在右下角通知区域。
-
-### 开发模式
-
 ```bash
-git clone https://github.com/zhaoxl12138/desktop-activity-tracker.git
-cd desktop-activity-tracker
-pip install -e .
+# 安装依赖
+pip install PySide6 pyyaml pycaw comtypes
 
 # 启动 GUI
-python -m desktop_activity_tracker.main
+python -m daylens
 
-# 命令行
-python -m desktop_activity_tracker.main start     # 后台记录
-python -m desktop_activity_tracker.main today     # 今日统计
-python -m desktop_activity_tracker.main export    # 导出日报
-python -m desktop_activity_tracker.main weekly    # 周报
-python -m desktop_activity_tracker.main monthly   # 月报
+# 命令行模式
+python -m daylens start       # 后台记录
+python -m daylens today       # 今日统计
+python -m daylens report --date 2026-06-02
+python -m daylens export --format md
+python -m daylens weekly
+python -m daylens monthly
 ```
 
-## 项目结构
+## 配置文件
 
+`config/config.yaml` — 首次运行自动生成:
+
+```yaml
+categories:
+  coding:
+    display_name: 编程开发
+    active_rule: interactive_required   # interactive_required | passive_allowed
+    match:
+      process_names: [Code.exe, Cursor.exe]
+      title_keywords: [VS Code, GitHub]
+
+tracker:
+  sample_interval_seconds: 1
+  idle_threshold_seconds: 60
+  flush_interval_seconds: 10
+  min_session_seconds: 3
+  audio_detection_enabled: true
+  audio_check_interval_seconds: 3
+
+db_path: usage.db
+reports_dir: reports
+obsidian_output_path: ""               # 可选: Obsidian vault 路径
+
+display_name_mapping:
+  Code.exe: VS Code
+  Cursor.exe: Cursor
 ```
-desktop-activity-tracker/
-├── src/desktop_activity_tracker/   # 核心源码
-│   ├── main.py                     # CLI + GUI 入口
-│   ├── __main__.py                 # python -m 支持
-│   ├── session_tracker.py          # Session 状态机
-│   ├── window_detector.py          # 前台窗口检测
-│   ├── activity_detector.py        # 用户活跃检测 (idle)
-│   ├── classifier.py               # 软件分类器
-│   ├── database.py                 # SQLite 读写
-│   ├── timeline.py                 # 30 分钟时间线构建
-│   ├── reporter.py                 # 统计查询
-│   ├── exporter.py                 # Markdown/CSV 导出
-│   ├── utils.py                    # 工具函数
-│   └── gui/                        # PySide6 界面
-│       ├── style.py                # 颜色 + 样式
-│       ├── worker.py               # 后台录制 QThread
-│       ├── main_window.py          # 主窗口
-│       ├── tray_manager.py         # 系统托盘
-│       ├── widgets/                # 可复用组件
-│       │   └── dashboard_widgets.py
-│       └── pages/                  # 7 个页面
-├── config/config.yaml              # 配置文件（首次运行自动生成）
-├── assets/icon.ico                 # 应用图标
-├── tests/                          # 测试
-├── AI_READING_RULES.md             # AI 读取报告的规则说明
-└── pyproject.toml                  # 工程配置
+
+## 打包
+
+```bash
+pip install pyinstaller
+pyinstaller DayLens.spec --noconfirm
+# 输出: dist/DayLens.exe (带图标, 无控制台窗口)
 ```
 
-运行时生成的文件（不纳入 Git）：
-- `usage.db` — SQLite 数据库
-- `reports/` — 导出的日报/周报/月报
-- `desktop-activity-tracker.exe` — PyInstaller 构建产物
+## 版本历史
 
-## 隐私
-
-- 所有数据存储在本地 SQLite (`usage.db`)，不上传任何服务器
-- 仅检测前台窗口的进程名和标题，**不记录键盘输入内容**
-- 无需网络连接
+| 版本 | 日期 | 更新 |
+|------|------|------|
+| v1.5.1 | 2026-06-02 | **关键修复**: 空闲检测重写 (连续使用误判为挂机的 P0 bug)；时间线 Session 聚合；趋势图 float 精度 + 24 小时固定点；X 轴标签 QPainter 渲染；窗口几何自适应；`.docs/skills/` AI 开发工作流 |
+| v1.5.0 | 2026-06-02 | 项目重命名 DayLens；时间线秒级显示；重复会话去重 + UNIQUE 索引防护；INSERT OR REPLACE；config 持久化修复 |
+| v1.4.0 | 2026-05 | 音频检测 (娱乐空转过滤)；幻影 HID 过滤；会话状态机重构；_db_row_id 防重复写入 |
+| v1.3.0 | 2026-05 | PySide6 GUI；系统托盘；7 功能页面；深色/浅色主题 |
+| v1.2.0 | 2026-05 | CLI 完善；日报/周报/月报导出；Obsidian 同步 |
+| v1.0.0 | 2026-05 | 初版: 窗口检测 + 空闲检测 + 分类 + SQLite |
 
 ## License
 
-MIT © [zhaoxl12138](https://github.com/zhaoxl12138)
+MIT

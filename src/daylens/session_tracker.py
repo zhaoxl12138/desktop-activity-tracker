@@ -205,6 +205,11 @@ class SessionTracker:
 
         # Start new session if needed
         if self._current is None:
+            self._effective_idle = 0.0
+            self._phantom_active = False
+            self._phantom_ticks = 0
+            self._phantom_low_ticks = 0
+            self._oscillation_ticks = 0
             self._current = ActivitySession(
                 session_id=uuid.uuid4().hex[:12],
                 start_time=now,
@@ -238,12 +243,19 @@ class SessionTracker:
         self._current.duration_seconds += self.sample_interval
 
         if self._current.active_rule == "passive_allowed":
-            # Entertainment categories: check audio output to avoid
-            # counting paused/idle video as effective time.
-            if (self._current.category_key in ("video", "gaming")
-                    and self._audio_detector is not None
-                    and not self._audio_detector.is_playing(self._last_pid)):
-                self._current.idle_seconds += self.sample_interval
+            # Entertainment: system-wide audio check first.
+            # If audio is playing anywhere, user is consuming content.
+            # If no audio, fall back to idle threshold (paused + walked away).
+            if self._current.category_key in ("video", "gaming"):
+                if self._audio_detector is not None:
+                    if self._audio_detector.is_any_playing():
+                        self._current.effective_seconds += self.sample_interval
+                    elif idle_seconds <= self.idle_threshold:
+                        self._current.effective_seconds += self.sample_interval
+                    else:
+                        self._current.idle_seconds += self.sample_interval
+                else:
+                    self._current.effective_seconds += self.sample_interval
             else:
                 self._current.effective_seconds += self.sample_interval
             self._effective_idle = 0.0
@@ -254,56 +266,55 @@ class SessionTracker:
             self._last_raw_idle = idle_seconds
             return
 
-        # ── Phantom HID reset detection ───────────────────────────
-        # Some drivers/services generate spurious HID events every
-        # 5–10s, resetting GetLastInputInfo().  A genuine user coming
-        # back from long idle would see idle drop from 60+ to 0 — too
-        # large for a phantom reset (capped at 12s).  We detect sharp
-        # drops (3–12s) while idle was in [3, idle_threshold).
+        # ── Idle tracking for interactive_required activities ────
+        # _effective_idle tracks our best estimate of genuine idle time.
+        #
+        # Phantom HID filter: some drivers generate spurious input events
+        # that reset GetLastInputInfo() every 5-10s. We detect the
+        # characteristic sharp drop from [10, idle_threshold) by [5,10]s.
+        # During uncertain phantom periods we freeze _effective_idle
+        # rather than accumulating — false positives must not eat
+        # effective time.
         idle_delta = self._last_raw_idle - idle_seconds
         is_phantom = (
-            3 <= idle_delta <= 12
-            and 3 <= self._last_raw_idle < self.idle_threshold
+            5 <= idle_delta <= 10
+            and 10 <= self._last_raw_idle < self.idle_threshold
         )
 
         if is_phantom:
-            self._effective_idle += self.sample_interval
             self._phantom_active = True
+            self._phantom_ticks = 0
             self._phantom_low_ticks = 0
-            self._oscillation_ticks = 0
+            # Freeze _effective_idle — don't accumulate during uncertainty
 
         elif self._phantom_active:
-            self._effective_idle += self.sample_interval
             self._phantom_ticks += 1
 
-            # Exit A: raw idle is genuinely growing → real idle
+            # Exit A: idle genuinely growing → confirm real idle
             if idle_seconds > 15:
+                self._effective_idle = idle_seconds + self._phantom_ticks * self.sample_interval
                 self._phantom_active = False
                 self._phantom_ticks = 0
-            # Exit B: user has been actively typing for 5+ ticks
+            # Exit B: user active (idle < 2) for 5+ consecutive ticks
             elif idle_seconds < 2:
                 self._phantom_low_ticks += 1
                 if self._phantom_low_ticks >= 5:
+                    self._effective_idle = idle_seconds
                     self._phantom_active = False
                     self._phantom_ticks = 0
                     self._phantom_low_ticks = 0
-                    self._effective_idle = idle_seconds
             else:
                 self._phantom_low_ticks = 0
-            # Exit C: safety timeout (10 min) — treat as real idle
-            if self._phantom_ticks > 600:
+            # Exit C: safety timeout (5 min) → treat as real idle
+            if self._phantom_ticks > 300:
+                self._effective_idle = self.idle_threshold + 1
                 self._phantom_active = False
                 self._phantom_ticks = 0
-                self._effective_idle = self.idle_threshold + 1
 
         elif idle_seconds < 2 and self._last_raw_idle < 2:
-            # Rapid 0–1 oscillation zone — don't reset; accumulate
-            # via wall clock after 10 ticks tolerance.
-            self._oscillation_ticks += 1
-            if self._oscillation_ticks > 10:
-                self._effective_idle += self.sample_interval
-            else:
-                self._effective_idle = max(self._effective_idle, idle_seconds)
+            # User is continuously active — keep effective_idle at 0
+            self._effective_idle = 0.0
+            self._oscillation_ticks = 0
 
         elif idle_seconds >= self._last_raw_idle:
             # Idle stable or increasing — normal accumulation
@@ -311,7 +322,7 @@ class SessionTracker:
             self._oscillation_ticks = 0
 
         else:
-            # Small natural decrease → genuine user activity
+            # Natural decrease → genuine user activity resuming
             self._effective_idle = idle_seconds
             self._phantom_active = False
             self._oscillation_ticks = 0

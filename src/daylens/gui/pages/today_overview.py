@@ -81,6 +81,8 @@ class TodayOverviewPage(QWidget):
         self.top_app_card = TopAppListWidget()
         bottom_grid.addWidget(self.top_app_card, 1, 7, 1, 4)
 
+        bottom_grid.setRowStretch(0, 1)
+        bottom_grid.setRowStretch(1, 1)
         for column in range(11):
             stretch = 2 if column < 5 else 1
             middle_grid.setColumnStretch(column, stretch)
@@ -88,7 +90,7 @@ class TodayOverviewPage(QWidget):
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
-        self.timer.start(30000)
+        self.timer.start(5000)
         self.refresh()
 
     def _build_distribution_card(self) -> QWidget:
@@ -339,23 +341,40 @@ class TodayOverviewPage(QWidget):
         return colors
 
     def _build_trend_data(self, sessions: list[dict]) -> tuple[list[int], list[int], list[int]]:
-        today_series = [0] * 25
+        # ── Today: aggregate effective minutes per hour (float → round at end)
+        hour_minutes = [0.0] * 24
         for session in sessions:
-            hour = self._to_minute(session.get("start_time", "")) // 60
-            hour = max(0, min(24, hour))
-            today_series[hour] += int((session.get("effective_seconds", 0) or 0) / 60)
+            start_dt = self._parse_dt(session.get("start_time", ""))
+            end_dt = self._parse_dt(session.get("end_time", ""))
+            eff_sec = float(session.get("effective_seconds", 0) or 0)
+            if eff_sec <= 0 or start_dt is None or end_dt is None:
+                continue
+            total_span = (end_dt - start_dt).total_seconds()
+            if total_span <= 0:
+                hour_minutes[start_dt.hour] += eff_sec / 60.0
+                continue
+            curr = start_dt
+            while curr < end_dt:
+                hour = curr.hour
+                next_hour = curr.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+                seg_end = min(end_dt, next_hour)
+                seg_span = (seg_end - curr).total_seconds()
+                hour_minutes[hour] += (eff_sec / 60.0) * (seg_span / total_span)
+                curr = seg_end
+        today_series = [int(round(v)) for v in hour_minutes]
 
+        # ── 7d / 30d: daily aggregation from DB
         today_date = date.today()
         seven_days = [(today_date - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(6, -1, -1)]
         thirty_days = [(today_date - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(29, -1, -1)]
         seven_day_stats = database.query_date_range_stats(self.db_path, seven_days)
         thirty_day_stats = database.query_date_range_stats(self.db_path, thirty_days)
         seven_day_series = [
-            int((item.get("effective_seconds", 0) or 0) / 60)
+            int(round((item.get("effective_seconds", 0) or 0) / 60.0))
             for item in seven_day_stats.get("daily", [])
         ]
         thirty_day_series = [
-            int((item.get("effective_seconds", 0) or 0) / 60)
+            int(round((item.get("effective_seconds", 0) or 0) / 60.0))
             for item in thirty_day_stats.get("daily", [])
         ]
         return today_series, seven_day_series, thirty_day_series
@@ -366,6 +385,12 @@ class TodayOverviewPage(QWidget):
             return dt.hour * 60 + dt.minute
         except Exception:
             return 0
+
+    def _parse_dt(self, timestamp: str) -> datetime | None:
+        try:
+            return datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return None
 
     def _category_stats(self, stats: dict) -> tuple[int, int, int]:
         work_keys = {"ai_tools", "coding", "reading", "creative"}

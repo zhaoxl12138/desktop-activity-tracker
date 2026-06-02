@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Desktop Activity Tracker - CLI + GUI entry point."""
+"""DayLens - CLI + GUI entry point."""
 
 import argparse
 import os
@@ -24,15 +24,15 @@ if __package__ is None or __package__ == '':
     _parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if _parent not in sys.path:
         sys.path.insert(0, _parent)
-    from desktop_activity_tracker import get_app_root
-    from desktop_activity_tracker.window_detector import get_foreground_window_info
-    from desktop_activity_tracker.activity_detector import get_idle_seconds
-    from desktop_activity_tracker.classifier import Classifier
-    from desktop_activity_tracker import database
-    from desktop_activity_tracker import reporter
-    from desktop_activity_tracker import exporter
-    from desktop_activity_tracker.session_tracker import SessionTracker
-    from desktop_activity_tracker.utils import generate_default_config, fmt_seconds
+    from daylens import get_app_root
+    from daylens.window_detector import get_foreground_window_info
+    from daylens.activity_detector import get_idle_seconds
+    from daylens.classifier import Classifier
+    from daylens import database
+    from daylens import reporter
+    from daylens import exporter
+    from daylens.session_tracker import SessionTracker
+    from daylens.utils import generate_default_config, fmt_seconds
 else:
     from . import get_app_root
     from .window_detector import get_foreground_window_info
@@ -108,7 +108,7 @@ def cmd_start(config, config_path):
         on_flush=on_flush,
     )
 
-    print(f"DayLens v1.4.0")
+    print(f"DayLens v1.5.0")
     print(f"配置: {config_path}")
     print(f"数据库: {db_path}")
     print(f"采样间隔: {sample_interval}s | 刷盘间隔: {flush_interval}s")
@@ -169,7 +169,7 @@ def cmd_report(config, args):
     db_path = database.get_db_path(config)
 
     if not os.path.exists(db_path):
-        print("数据库不存在，请先运行 `python -m desktop_activity_tracker.main start` 开始记录。")
+        print("数据库不存在，请先运行 `python -m daylens.main start` 开始记录。")
         return
 
     if args.today:
@@ -185,7 +185,7 @@ def cmd_export(config, args):
     reports_daily_dir = os.path.join(resolve_reports_dir(), "daily")
 
     if not os.path.exists(db_path):
-        print("数据库不存在，请先运行 `python -m desktop_activity_tracker.main start` 开始记录。")
+        print("数据库不存在，请先运行 `python -m daylens.main start` 开始记录。")
         return
 
     date_str = args.date or datetime.now().strftime("%Y-%m-%d")
@@ -262,7 +262,7 @@ def _ensure_single_instance():
     import ctypes
     from ctypes import wintypes
 
-    mutex_name = "Global\\DesktopActivityTracker_SingleInstance"
+    mutex_name = "Global\\DayLens_SingleInstance"
     kernel32 = ctypes.windll.kernel32
     kernel32.CreateMutexW.argtypes = [wintypes.LPCVOID, wintypes.BOOL, wintypes.LPCWSTR]
     kernel32.CreateMutexW.restype = wintypes.HANDLE
@@ -291,9 +291,9 @@ def cmd_gui():
     from PySide6.QtGui import QFont
 
     if __package__ is None or __package__ == '':
-        from desktop_activity_tracker.gui.worker import RecordingWorker
-        from desktop_activity_tracker.gui.tray_manager import TrayManager
-        from desktop_activity_tracker.gui.main_window import MainWindow
+        from daylens.gui.worker import RecordingWorker
+        from daylens.gui.tray_manager import TrayManager
+        from daylens.gui.main_window import MainWindow
     else:
         from .gui.worker import RecordingWorker
         from .gui.tray_manager import TrayManager
@@ -343,7 +343,7 @@ def cmd_gui():
 def main():
     parser = argparse.ArgumentParser(
         description="DayLens - 个人数字行为分析系统",
-        prog="python -m desktop_activity_tracker.main"
+        prog="python -m daylens.main"
     )
     subparsers = parser.add_subparsers(dest="command", help="可用命令")
 
@@ -383,7 +383,7 @@ def main():
     elif args.command == "today":
         db_path = database.get_db_path(config)
         if not os.path.exists(db_path):
-            print("数据库不存在，请先运行 `python -m desktop_activity_tracker.main start` 开始记录。")
+            print("数据库不存在，请先运行 `python -m daylens.main start` 开始记录。")
             return
         print(reporter.report_today(db_path))
     elif args.command == "report":

@@ -77,17 +77,19 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("DayLens")
         self.setStyleSheet(ui_style.get_global_style() + ui_style.get_input_style())
-        self.resize(1440, 860)
-        self.setMinimumSize(1280, 780)
+        self.resize(1440, 960)
+        self.setMinimumSize(1280, 860)
         self._build_ui()
         self._apply_initial_geometry()
 
         self.worker.sample_updated.connect(self._on_sample)
         self.nav_list.setCurrentRow(0)
 
+        self._last_sample: dict | None = None
+
         self.refresh_timer = QTimer(self)
         self.refresh_timer.timeout.connect(self._update_top_bar)
-        self.refresh_timer.start(30000)
+        self.refresh_timer.start(5000)
 
     def _build_ui(self, current_key: str = "today") -> None:
         central = QWidget()
@@ -199,7 +201,7 @@ class MainWindow(QMainWindow):
 
         layout.addStretch()
 
-        self.sidebar_version = QLabel("v1.4.0")
+        self.sidebar_version = QLabel("v1.5.0")
         self.sidebar_version.setStyleSheet(
             f"font-size: 10px; color: {ui_style.COLORS['text_muted']}; padding: 4px 16px;"
         )
@@ -333,8 +335,8 @@ class MainWindow(QMainWindow):
         if available is None:
             return
 
-        target_width = min(1440, max(1280, available.width() - 80))
-        target_height = min(860, max(780, available.height() - 80))
+        target_width = min(self.width(), max(self.minimumWidth(), available.width() - 80))
+        target_height = min(self.height(), max(self.minimumHeight(), available.height() - 80))
         target_width = min(target_width, available.width())
         target_height = min(target_height, available.height())
 
@@ -361,9 +363,12 @@ class MainWindow(QMainWindow):
                 self.stack.setCurrentIndex(index)
                 self.lbl_page_title.setText(title)
                 self.lbl_page_hint.setText(hint)
+                if key == "live" and self._last_sample is not None:
+                    self.pages["live"].on_sample_updated(self._last_sample)
                 break
 
     def _on_sample(self, sample) -> None:
+        self._last_sample = sample
         if self.stack.currentWidget() is self.pages.get("live"):
             self.pages["live"].on_sample_updated(sample)
         self.lbl_time.setText(f"最近采样：{datetime.now().strftime('%H:%M:%S')}")

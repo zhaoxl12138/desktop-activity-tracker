@@ -1,4 +1,4 @@
-"""Desktop Activity Tracker - Windows desktop usage time recorder."""
+"""DayLens - Personal digital behavior analysis system."""
 
 import os
 import sys
@@ -12,5 +12,5 @@ def get_app_root():
     """
     if getattr(sys, 'frozen', False):
         return os.path.dirname(sys.executable)
-    # Navigate: __init__.py -> desktop_activity_tracker/ -> src/ -> project_root/
+    # Navigate: __init__.py -> daylens/ -> src/ -> project_root/
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

@@ -17,7 +17,7 @@ def fmt_seconds(total_seconds):
 
 
 DEFAULT_CONFIG_YAML = """\
-# Desktop Activity Tracker 配置文件
+# DayLens 配置文件
 
 # ── 记录器配置 ──
 tracker:

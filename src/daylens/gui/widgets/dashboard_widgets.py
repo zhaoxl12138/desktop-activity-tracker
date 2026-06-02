@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime, timedelta
 from typing import Iterable
 
 from PySide6.QtCore import QPointF, QRectF, Qt
@@ -272,10 +273,39 @@ class TimelineWidget(QFrame):
         root.addWidget(self.more_label, 0, Qt.AlignHCenter)
 
     def set_sessions(self, sessions, display_name_mapping=None) -> None:
-        self._sessions = list(sessions or [])
+        self._sessions = self._merge_sessions(list(sessions or []))
         self._display_name_mapping = display_name_mapping or {}
         self._expanded = False
         self._render_rows()
+
+    def _merge_sessions(self, sessions: list[dict]) -> list[dict]:
+        if len(sessions) <= 1:
+            return sessions
+        merged = []
+        current = dict(sessions[0])
+        for next_sess in sessions[1:]:
+            same_window = (
+                current.get("process_name") == next_sess.get("process_name")
+                and current.get("category_key") == next_sess.get("category_key")
+            )
+            adjacent = False
+            if same_window:
+                try:
+                    curr_end = datetime.strptime(current.get("end_time", ""), "%Y-%m-%d %H:%M:%S")
+                    next_start = datetime.strptime(next_sess.get("start_time", ""), "%Y-%m-%d %H:%M:%S")
+                    adjacent = (next_start - curr_end).total_seconds() <= 60
+                except Exception:
+                    pass
+            if same_window and adjacent:
+                current["end_time"] = next_sess.get("end_time", current.get("end_time"))
+                current["effective_seconds"] = (current.get("effective_seconds", 0) or 0) + (next_sess.get("effective_seconds", 0) or 0)
+                current["duration_seconds"] = (current.get("duration_seconds", 0) or 0) + (next_sess.get("duration_seconds", 0) or 0)
+                current["idle_seconds"] = (current.get("idle_seconds", 0) or 0) + (next_sess.get("idle_seconds", 0) or 0)
+            else:
+                merged.append(current)
+                current = dict(next_sess)
+        merged.append(current)
+        return merged
 
     def toggle_expanded(self) -> None:
         if len(self._sessions) <= self._max_rows:
@@ -315,8 +345,13 @@ class TimelineWidget(QFrame):
 
             start = session.get("start_time", "") or ""
             end = session.get("end_time", "") or ""
-            time_label = QLabel(f"{start[-8:-3]}-{end[-8:-3]}")
-            time_label.setFixedWidth(92)
+            start_short = start[-8:-3] if len(start) >= 8 else start
+            end_short = end[-8:-3] if len(end) >= 8 else end
+            if start_short == end_short:
+                start_short = start[-8:] if len(start) >= 8 else start
+                end_short = end[-8:] if len(end) >= 8 else end
+            time_label = QLabel(f"{start_short}-{end_short}")
+            time_label.setFixedWidth(130)
             time_label.setStyleSheet(
                 f"font-size: 13px; color: {COLORS['text_secondary']}; font-weight: 600;"
             )
@@ -360,17 +395,18 @@ class TrendChartWidget(QFrame):
         super().__init__(parent)
         self.setObjectName("dashboardCard")
         self.setStyleSheet(ui_style.get_dashboard_card_style())
-        self.setFixedHeight(196)
+        self.setFixedHeight(250)
         self._mode = "today"
-        self._series = {"today": [], "7d": [], "30d": []}
+        self._series: dict[str, list[int]] = {"today": [], "7d": [], "30d": []}
+        self._labels: dict[str, list[str]] = {"today": [], "7d": [], "30d": []}
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(16, 12, 16, 12)
-        root.setSpacing(6)
+        root.setContentsMargins(16, 10, 16, 6)
+        root.setSpacing(2)
 
         header = QHBoxLayout()
         title = QLabel("时间趋势（分钟）")
-        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {COLORS['text']};")
+        title.setStyleSheet(f"font-size: 15px; font-weight: 800; color: {COLORS['text']};")
         header.addWidget(title)
         header.addStretch()
 
@@ -382,11 +418,12 @@ class TrendChartWidget(QFrame):
             button.setStyleSheet(
                 f"""
                 QPushButton {{
-                    padding: 4px 10px;
-                    border-radius: 8px;
+                    padding: 3px 8px;
+                    border-radius: 7px;
                     border: 1px solid {COLORS['border']};
                     color: {COLORS['text_secondary']};
                     background: {COLORS['panel_bg']};
+                    font-size: 12px;
                 }}
                 QPushButton:checked {{
                     background: {COLORS['primary']};
@@ -408,53 +445,138 @@ class TrendChartWidget(QFrame):
     def set_mode(self, mode: str) -> None:
         if mode in self._series:
             self._mode = mode
-            self.canvas.set_series(self._series[mode])
+            self.canvas.set_series(self._series[mode], self._labels.get(mode, []))
 
     def set_data(self, today: list[int], seven_days: list[int], thirty_days: list[int]) -> None:
         self._series["today"] = today
         self._series["7d"] = seven_days
         self._series["30d"] = thirty_days
-        self.canvas.set_series(self._series[self._mode])
+
+        self._labels["today"] = ["0h", "", "2h", "", "4h", "", "6h", "", "8h", "", "10h", "", "12h", "", "14h", "", "16h", "", "18h", "", "20h", "", "22h", ""]
+
+        today_date = date.today()
+        self._labels["7d"] = [
+            f"{d.month}/{d.day}" if i % 2 == 0 else ""
+            for i, d in enumerate([today_date - timedelta(days=6-i) for i in range(7)])
+        ]
+
+        markers = []
+        for i in range(30):
+            d = today_date - timedelta(days=29-i)
+            markers.append(f"{d.month}/{d.day}" if i % 3 == 0 else "")
+        self._labels["30d"] = markers
+
+        self.canvas.set_series(self._series[self._mode], self._labels.get(self._mode, []))
 
 
 class _TrendCanvas(QWidget):
     def __init__(self):
         super().__init__()
         self._points: list[int] = []
+        self._labels: list[str] = []
 
-    def set_series(self, points: list[int]) -> None:
+    def set_series(self, points: list[int], labels: list[str] | None = None) -> None:
         self._points = [max(0, int(point)) for point in points]
+        self._labels = labels or []
         self.update()
 
     def paintEvent(self, event) -> None:  # noqa: N802
         super().paintEvent(event)
-        if len(self._points) < 2:
-            return
-
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        rect = self.rect().adjusted(8, 8, -8, -14)
+        r = self.rect()
+        chart_rect = r.adjusted(38, 6, -14, -30)
 
-        painter.setPen(QPen(QColor(COLORS["border"]), 1))
-        for index in range(5):
-            y = rect.top() + index * rect.height() / 4.0
-            painter.drawLine(rect.left(), int(y), rect.right(), int(y))
+        if not self._points:
+            self._draw_empty(painter, r, "暂无趋势数据")
+            return
 
-        max_value = max(self._points) or 1
-        step = rect.width() / (len(self._points) - 1)
-        points = []
+        valid_count = sum(1 for v in self._points if v > 0)
+        if valid_count == 0:
+            self._draw_empty(painter, r, "暂无趋势数据")
+            return
+        if valid_count < 3:
+            self._draw_empty(painter, r, "数据积累中\n使用一段时间后将显示趋势")
+            return
+
+        max_value = max(self._points)
+        y_max = max(10, int(max_value * 1.25) + 1)
+
+        # Grid lines
+        painter.setPen(QPen(QColor(COLORS["border"]), 1, Qt.DashLine))
+        for i in range(5):
+            y = int(chart_rect.top() + i * chart_rect.height() / 4.0)
+            painter.drawLine(chart_rect.left(), y, chart_rect.right(), y)
+
+        # Y-axis labels
+        painter.setPen(QColor(COLORS["text_muted"]))
+        font = painter.font()
+        font.setPixelSize(10)
+        painter.setFont(font)
+        for i in range(5):
+            y = int(chart_rect.top() + i * chart_rect.height() / 4.0)
+            val = int(y_max * (4 - i) / 4)
+            painter.drawText(QRectF(0, y - 7, 30, 14), Qt.AlignRight | Qt.AlignVCenter, str(val))
+
+        # Compute chart points
+        step = chart_rect.width() / max(len(self._points) - 1, 1)
+        chart_points = []
         for index, value in enumerate(self._points):
-            x = rect.left() + index * step
-            y = rect.bottom() - (value / max_value) * rect.height()
-            points.append(QPointF(x, y))
+            x = chart_rect.left() + index * step
+            y = chart_rect.bottom() - (value / y_max) * chart_rect.height()
+            chart_points.append(QPointF(x, y))
 
-        path = QPainterPath()
-        path.moveTo(points[0])
-        for point in points[1:]:
-            path.lineTo(point)
+        # Area fill (only for > 5 points)
+        if len(self._points) > 5:
+            fill_path = QPainterPath()
+            fill_path.moveTo(chart_rect.left(), chart_rect.bottom())
+            for pt in chart_points:
+                fill_path.lineTo(pt)
+            fill_path.lineTo(chart_rect.right(), chart_rect.bottom())
+            fill_path.closeSubpath()
+            fill_color = QColor(COLORS["primary"])
+            fill_color.setAlpha(25)
+            painter.setBrush(fill_color)
+            painter.setPen(Qt.NoPen)
+            painter.drawPath(fill_path)
 
+        # Line
+        line_path = QPainterPath()
+        line_path.moveTo(chart_points[0])
+        for pt in chart_points[1:]:
+            line_path.lineTo(pt)
         painter.setPen(QPen(QColor(COLORS["primary"]), 2))
-        painter.drawPath(path)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawPath(line_path)
+
+        # Dots
+        dot_color = QColor(COLORS["primary"])
+        dot_color.setAlpha(220)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(dot_color)
+        for pt in chart_points:
+            painter.drawEllipse(pt, 2.5, 2.5)
+
+        # X-axis labels
+        if self._labels and len(self._labels) == len(self._points):
+            xfont = painter.font()
+            xfont.setPixelSize(10)
+            painter.setFont(xfont)
+            painter.setPen(QColor(COLORS["text_secondary"]))
+            step = chart_rect.width() / max(len(self._points) - 1, 1)
+            for index, label in enumerate(self._labels):
+                if not label:
+                    continue
+                x = chart_rect.left() + index * step
+                painter.drawText(QRectF(x - 24, chart_rect.bottom() + 6, 48, 18),
+                                 Qt.AlignCenter, label)
+
+    def _draw_empty(self, painter: QPainter, rect: QRectF, text: str) -> None:
+        painter.setPen(QColor(COLORS["text_muted"]))
+        font = painter.font()
+        font.setPixelSize(13)
+        painter.setFont(font)
+        painter.drawText(rect, Qt.AlignCenter, text)
 
 
 class TopAppListWidget(QFrame):
@@ -462,7 +584,7 @@ class TopAppListWidget(QFrame):
         super().__init__(parent)
         self.setObjectName("dashboardCard")
         self.setStyleSheet(ui_style.get_dashboard_card_style())
-        self.setFixedHeight(238)
+        self.setFixedHeight(170)
         self._rows: list[tuple[QLabel, QLabel, QProgressBar, QLabel]] = []
 
         root = QVBoxLayout(self)

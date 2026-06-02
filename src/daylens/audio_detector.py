@@ -21,9 +21,10 @@ class AudioDetector:
         """Check whether a process has an active audio session.
 
         Returns True when:
-         - pid is None (no PID info → assume playing, don't penalise)
+         - pid is None (no PID info -> assume playing, don't penalise)
          - COM query fails (default-safe)
          - The process has an audio session with state Active (1)
+         - No audio session found for this PID (child process may handle audio)
         """
         if pid is None:
             return True
@@ -42,8 +43,27 @@ class AudioDetector:
                     # 0=Inactive, 1=Active, 2=Expired
                     self._cached = s._ctl.GetState() == 1
                     return self._cached
-            self._cached = False  # No audio session found for this PID
+            self._cached = True  # No audio session found — assume playing (UI may have child process for audio)
         except Exception:
             self._cached = True  # On error, assume playing (safe default)
 
         return self._cached
+
+    def is_any_playing(self) -> bool:
+        """Check whether ANY process is actively playing audio on the system.
+
+        Used as a global signal: if audio is playing anywhere, the user is
+        likely consuming content even if the foreground window doesn't own
+        the audio session directly.
+        """
+        try:
+            sessions = AudioUtilities.GetAllSessions()
+            for s in sessions:
+                try:
+                    if s._ctl.GetState() == 1:  # Active
+                        return True
+                except Exception:
+                    continue
+        except Exception:
+            return True  # On error, assume playing (safe default)
+        return False

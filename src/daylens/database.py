@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from . import get_app_root
 
 # Process names of the tracker itself — excluded from all queries
-_SELF_PROCS = {"daylens.exe", "desktop-activity-tracker.exe"}
+_SELF_PROCS = {"daylens.exe", "daylens-debug.exe", "desktop-activity-tracker.exe"}
 
 
 SCHEMA = """
@@ -114,7 +114,7 @@ def insert_activity_log(conn, sample):
 def insert_session(conn, session):
     """Insert a new activity_session and return its row id."""
     sql = """
-    INSERT INTO activity_sessions
+    INSERT OR REPLACE INTO activity_sessions
         (session_id, start_time, end_time, date, process_name, exe_path,
          window_title, normalized_title, category_key, category_name,
          active_rule, duration_seconds, effective_seconds, idle_seconds,
@@ -238,7 +238,8 @@ def _query_date_stats_from_logs(db_path, date_str):
 
 def _filter_self(rows):
     """Remove rows where process_name is the tracker itself."""
-    return [r for r in rows if r.get("process_name", "").lower() not in _SELF_PROCS]
+    return [r for r in rows if not r.get("process_name", "").lower().startswith("daylens")]
+
 
 
 # ── Session-based queries (v1.1+) ──
