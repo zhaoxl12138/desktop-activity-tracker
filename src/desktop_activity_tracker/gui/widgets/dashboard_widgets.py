@@ -5,13 +5,16 @@ from __future__ import annotations
 from typing import Iterable
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QProgressBar,
+    QPushButton,
+    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -22,8 +25,6 @@ from ..style import COLORS, DASHBOARD_CARD_STYLE, get_category_color
 
 
 class MiniSparkline(QWidget):
-    """Compact line sparkline used in metric cards."""
-
     def __init__(self, color: str, parent: QWidget | None = None):
         super().__init__(parent)
         self._color = QColor(color)
@@ -32,33 +33,25 @@ class MiniSparkline(QWidget):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
     def set_points(self, points: Iterable[float]):
-        values = [max(0.0, float(p)) for p in points]
-        self._points = values
+        self._points = [max(0.0, float(p)) for p in points]
         self.update()
 
     def paintEvent(self, event):  # noqa: N802
         super().paintEvent(event)
         if len(self._points) < 2:
             return
-
         w = self.width()
         h = self.height()
         margin = 3
         max_v = max(self._points) or 1.0
         step = (w - margin * 2) / max(1, len(self._points) - 1)
-
         path = QPainterPath()
         for i, value in enumerate(self._points):
             x = margin + i * step
             y = h - margin - (value / max_v) * (h - margin * 2)
-            if i == 0:
-                path.moveTo(x, y)
-            else:
-                path.lineTo(x, y)
-
+            path.moveTo(x, y) if i == 0 else path.lineTo(x, y)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-
         pen = QPen(self._color, 1.8)
         pen.setCapStyle(Qt.RoundCap)
         painter.setPen(pen)
@@ -66,11 +59,8 @@ class MiniSparkline(QWidget):
 
 
 class MetricCard(QFrame):
-    """Top metric card with icon, value, delta and sparkline."""
-
     def __init__(self, title: str, icon: str, accent: str, parent: QWidget | None = None):
         super().__init__(parent)
-        self._accent = accent
         self.setObjectName("dashboardCard")
         self.setStyleSheet(
             f"""
@@ -89,7 +79,6 @@ class MetricCard(QFrame):
         root = QVBoxLayout(self)
         root.setContentsMargins(14, 12, 14, 10)
         root.setSpacing(5)
-
         title_label = QLabel(title)
         title_label.setStyleSheet(
             f"font-size: 12px; font-weight: 700; color: {COLORS['text_secondary']};"
@@ -97,38 +86,21 @@ class MetricCard(QFrame):
         root.addWidget(title_label)
 
         value_row = QHBoxLayout()
-        value_row.setSpacing(8)
-
         icon_label = QLabel(icon)
         icon_label.setAlignment(Qt.AlignCenter)
         icon_label.setFixedSize(34, 34)
         icon_label.setStyleSheet(
-            f"""
-            QLabel {{
-                border-radius: 17px;
-                background: {accent};
-                color: white;
-                font-size: 16px;
-                font-weight: 700;
-            }}
-            """
+            f"border-radius: 17px; background: {accent}; color: white; font-size: 16px; font-weight: 700;"
         )
-        value_row.addWidget(icon_label, 0)
-
+        value_row.addWidget(icon_label)
         self.value_label = QLabel("--")
-        self.value_label.setMinimumWidth(0)
-        self.value_label.setStyleSheet(
-            f"font-size: 28px; font-weight: 800; color: {COLORS['text']};"
-        )
+        self.value_label.setStyleSheet(f"font-size: 28px; font-weight: 800; color: {COLORS['text']};")
         value_row.addWidget(self.value_label, 1)
         root.addLayout(value_row)
 
         self.delta_label = QLabel("较昨日 --")
-        self.delta_label.setStyleSheet(
-            f"font-size: 11px; color: {COLORS['text_muted']};"
-        )
+        self.delta_label.setStyleSheet(f"font-size: 11px; color: {COLORS['text_muted']};")
         root.addWidget(self.delta_label)
-
         self.sparkline = MiniSparkline(accent)
         root.addWidget(self.sparkline)
 
@@ -137,9 +109,8 @@ class MetricCard(QFrame):
         self.delta_label.setText(delta_text)
 
     def set_warning(self, active: bool):
-        color = COLORS["danger_red"] if active else COLORS["text"]
         self.value_label.setStyleSheet(
-            f"font-size: 28px; font-weight: 800; color: {color};"
+            f"font-size: 28px; font-weight: 800; color: {COLORS['danger_red'] if active else COLORS['text']};"
         )
 
     def set_sparkline(self, points: Iterable[float]):
@@ -147,14 +118,11 @@ class MetricCard(QFrame):
 
 
 class DonutChartWidget(QWidget):
-    """Simple donut chart for time distribution."""
-
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._total_seconds = 0
         self._segments: list[tuple[str, int, str]] = []
         self.setMinimumSize(150, 150)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     def set_data(self, total_seconds: int, segments: list[tuple[str, int, str]]):
         self._total_seconds = max(0, int(total_seconds or 0))
@@ -165,20 +133,14 @@ class DonutChartWidget(QWidget):
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-
         side = max(120, min(self.width(), self.height()) - 18)
         rect = QRectF((self.width() - side) / 2, (self.height() - side) / 2, side, side)
         ring_width = max(12.0, side * 0.12)
-
         base_pen = QPen(QColor(COLORS["border"]), ring_width)
-        base_pen.setCapStyle(Qt.FlatCap)
         painter.setPen(base_pen)
         painter.drawArc(rect, 0, 360 * 16)
-
         if self._total_seconds <= 0:
-            self._draw_center_text(painter, "0分", "总时长")
             return
-
         start_angle = 90 * 16
         for _, seconds, color in self._segments:
             if seconds <= 0:
@@ -190,33 +152,12 @@ class DonutChartWidget(QWidget):
             painter.drawArc(rect, -start_angle, -span)
             start_angle += span
 
-        self._draw_center_text(painter, fmt_seconds(self._total_seconds), "总时长")
-
-    def _draw_center_text(self, painter: QPainter, value: str, caption: str):
-        painter.setPen(QColor(COLORS["text"]))
-        painter.setFont(self.font())
-        f = painter.font()
-        f.setPointSize(15)
-        f.setBold(True)
-        painter.setFont(f)
-        painter.drawText(self.rect().adjusted(0, -10, 0, 0), Qt.AlignCenter, value)
-
-        f2 = painter.font()
-        f2.setPointSize(10)
-        f2.setBold(False)
-        painter.setFont(f2)
-        painter.setPen(QColor(COLORS["text_muted"]))
-        painter.drawText(self.rect().adjusted(0, 24, 0, 0), Qt.AlignCenter, caption)
-
 
 class ScoreGaugeWidget(QWidget):
-    """Hero circular score gauge with large prominent number."""
-
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._score: int | None = None
         self._accent = COLORS["coding_green"]
-        self.setMinimumSize(120, 120)
 
     def set_score(self, score: int | None, accent: str):
         self._score = score
@@ -227,322 +168,281 @@ class ScoreGaugeWidget(QWidget):
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-
         w, h = self.width(), self.height()
-        side = min(w, h) - 22
-        side = max(96, min(156, side))
+        side = max(96, min(156, min(w, h) - 22))
         rect = QRectF((w - side) / 2, (h - side) / 2, side, side)
         width = max(8.0, side * 0.09)
-        inner_radius = (side - width) / 2
-
-        base = QPen(QColor(COLORS["border"]), width)
-        base.setCapStyle(Qt.RoundCap)
-        painter.setPen(base)
+        painter.setPen(QPen(QColor(COLORS["border"]), width))
         painter.drawArc(rect, 225 * 16, -270 * 16)
-
-        if self._score is None:
-            value = 0
-        else:
-            value = max(0, min(100, int(self._score)))
-
-        fg = QPen(QColor(self._accent), width)
-        fg.setCapStyle(Qt.RoundCap)
-        painter.setPen(fg)
+        value = 0 if self._score is None else max(0, min(100, int(self._score)))
+        painter.setPen(QPen(QColor(self._accent), width))
         painter.drawArc(rect, 225 * 16, int(-270 * 16 * (value / 100.0)))
 
-        # Draw text centered in the clear inner area — scale to fit inside arc
-        pts = max(22, min(40, int(inner_radius * 0.75)))
-        painter.setPen(QColor(COLORS["text"]))
-        f = painter.font()
-        f.setPointSize(pts)
-        f.setBold(True)
-        painter.setFont(f)
-        label = "--" if self._score is None else str(value)
-        painter.drawText(self.rect().adjusted(0, -6, 0, 0), Qt.AlignCenter, label)
 
+class FocusTimelineBarWidget(QWidget):
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._minute_colors = [COLORS["idle_gray"]] * 1440
+        self.setFixedHeight(28)
+
+    def set_minutes(self, minute_colors: list[str]):
+        if len(minute_colors) == 1440:
+            self._minute_colors = minute_colors
+        self.update()
+
+    def paintEvent(self, event):  # noqa: N802
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        rect = self.rect().adjusted(2, 5, -2, -5)
+        minute_w = rect.width() / 1440.0
+        start = 0
+        color = self._minute_colors[0]
+        for i in range(1, 1440):
+            if self._minute_colors[i] != color:
+                left = rect.left() + start * minute_w
+                right = rect.left() + i * minute_w
+                painter.fillRect(QRectF(left, rect.top(), max(1.0, right - left), rect.height()), QColor(color))
+                start = i
+                color = self._minute_colors[i]
+        left = rect.left() + start * minute_w
+        painter.fillRect(QRectF(left, rect.top(), max(1.0, rect.right() - left + 1), rect.height()), QColor(color))
+        painter.setPen(QPen(QColor(COLORS["border_light"]), 1))
+        painter.drawRoundedRect(rect, 6, 6)
 
 
 class TimelineWidget(QFrame):
-    """Timeline view with switchable block/session modes."""
-
     CATEGORY_COLORS = {
-        "AI工具": "#7B68EE",
         "学习/工作": COLORS["coding_green"],
-        "阅读学习": "#3498DB",
-        "编程开发": COLORS["coding_green"],
-        "创作工具": "#E67E22",
-        "娱乐": COLORS["video_orange"],
         "视频娱乐": COLORS["video_orange"],
-        "游戏": COLORS["danger_red"],
         "社交通讯": COLORS["social_purple"],
-        "系统工具": "#6366F1",
-        "浏览器其他": "#95A5A6",
         "挂机": COLORS["idle_gray"],
-        "混合": "#95A5A6",
-        "未使用电脑": "#C0CADB",
-        "其他": "#95A5A6",
+        "离开": COLORS["idle_gray"],
         "空闲": COLORS["idle_gray"],
+        "其他": COLORS["ai_blue"],
     }
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, max_rows: int = 6, parent: QWidget | None = None):
         super().__init__(parent)
-        self.setObjectName("dashboardCard")
-        self.setStyleSheet(DASHBOARD_CARD_STYLE)
-        self.setFixedHeight(235)
+        self._max_rows = max_rows
         self._rows: list[QWidget] = []
-        from PySide6.QtWidgets import QScrollArea
+        self.setObjectName("dashboardCard")
+        self.setStyleSheet("QFrame#dashboardCard { background: transparent; border: none; }")
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(16, 10, 10, 10)
-        root.setSpacing(6)
-
+        root.setContentsMargins(0, 0, 0, 0)
         title = QLabel("今日时间线")
-        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {COLORS['text']};")
+        title.setStyleSheet(f"font-size: 28px; font-weight: 800; color: {COLORS['text']};")
         root.addWidget(title)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         self._content = QWidget()
-        self._content.setStyleSheet("background: transparent;")
         self._content_layout = QVBoxLayout(self._content)
-        self._content_layout.setContentsMargins(0, 0, 6, 0)
+        self._content_layout.setContentsMargins(0, 0, 2, 0)
         self._content_layout.setSpacing(4)
         self._content_layout.addStretch()
-
-        scroll.setWidget(self._content)
-        root.addWidget(scroll)
-
-    def set_blocks(self, blocks):
-        """Set timeline from list of TimeBlock objects (30-min aggregation)."""
-        while self._rows:
-            row = self._rows.pop()
-            self._content_layout.removeWidget(row)
-            row.deleteLater()
-
-        if not blocks:
-            placeholder = QLabel("暂无时间数据")
-            placeholder.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
-            self._content_layout.insertWidget(0, placeholder)
-            self._rows.append(placeholder)
-            return
-
-        active_blocks = [b for b in blocks if b.effective_seconds > 0]
-        if not active_blocks:
-            active_blocks = blocks
-
-        for block in active_blocks:
-            color = self.CATEGORY_COLORS.get(block.dominant_category, "#95A5A6")
-            row = QWidget()
-            row.setStyleSheet("background: transparent;")
-            row_layout = QHBoxLayout(row)
-            row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setSpacing(6)
-
-            start_time = block.slot.split("-")[0] if "-" in block.slot else block.slot
-            time_label = QLabel(start_time)
-            time_label.setFixedWidth(36)
-            time_label.setStyleSheet(
-                f"font-size: 11px; color: {COLORS['text_secondary']}; font-weight: 600;"
-            )
-            row_layout.addWidget(time_label)
-
-            dot = QFrame()
-            dot.setFixedSize(8, 8)
-            dot.setStyleSheet(f"background: {color}; border-radius: 4px;")
-            row_layout.addWidget(dot)
-
-            cat_name = block.dominant_category or "其他"
-            cat_label = QLabel(cat_name)
-            cat_label.setFixedWidth(56)
-            cat_label.setStyleSheet(f"font-size: 11px; color: {color}; font-weight: 700;")
-            row_layout.addWidget(cat_label)
-
-            apps_text = block.top_app or "--"
-            apps_label = QLabel(apps_text)
-            apps_label.setStyleSheet(
-                f"font-size: 11px; color: {COLORS['text_secondary']};"
-            )
-            row_layout.addWidget(apps_label, 1)
-
-            dur_label = QLabel(f"{block.effective_seconds // 60}分钟")
-            dur_label.setFixedWidth(42)
-            dur_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            dur_label.setStyleSheet(
-                f"font-size: 11px; color: {COLORS['text_muted']};"
-            )
-            row_layout.addWidget(dur_label)
-
-            self._content_layout.insertWidget(self._content_layout.count() - 1, row)
-            self._rows.append(row)
+        self.scroll.setWidget(self._content)
+        root.addWidget(self.scroll, 1)
+        self.more_label = QLabel("查看更多 ↓")
+        self.more_label.setAlignment(Qt.AlignHCenter)
+        self.more_label.setStyleSheet(f"font-size: 26px; color: {COLORS['primary']}; font-weight: 700;")
+        root.addWidget(self.more_label)
 
     def set_sessions(self, sessions, display_name_mapping=None):
-        """Set timeline from session rows (session-based view).
-
-        Each session dict has: start_time, end_time, process_name,
-        display_name, category_key, category_name, duration_seconds,
-        effective_seconds.
-        """
         while self._rows:
             row = self._rows.pop()
             self._content_layout.removeWidget(row)
             row.deleteLater()
-
         if not sessions:
             placeholder = QLabel("暂无会话数据")
             placeholder.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
             self._content_layout.insertWidget(0, placeholder)
             self._rows.append(placeholder)
             return
-
         mapping = display_name_mapping or {}
-
-        for s in reversed(sessions):
+        for s in list(reversed(sessions))[: self._max_rows]:
             cat_name = s.get("category_name") or "其他"
             cat_key = s.get("category_key") or "other"
             color = self.CATEGORY_COLORS.get(cat_name, get_category_color(cat_key))
-
             row = QWidget()
-            row.setStyleSheet("background: transparent;")
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setSpacing(6)
-
-            # Time range "13:00-14:00"
-            start = s.get("start_time", "") or ""
-            end = s.get("end_time", "") or ""
-            start_short = start[-8:-3] if len(start) >= 8 else start
-            end_short = end[-8:-3] if len(end) >= 8 else end
-            time_text = f"{start_short}-{end_short}" if start_short and end_short else start_short
-            time_label = QLabel(time_text)
-            time_label.setFixedWidth(70)
-            time_label.setStyleSheet(
-                f"font-size: 11px; color: {COLORS['text_secondary']}; font-weight: 600;"
-            )
+            row_layout.setSpacing(8)
+            start, end = s.get("start_time", ""), s.get("end_time", "")
+            time_label = QLabel(f"{start[-8:-3]}-{end[-8:-3]}")
+            time_label.setFixedWidth(88)
+            time_label.setStyleSheet(f"font-size: 22px; color: {COLORS['text_secondary']}; font-weight: 600;")
             row_layout.addWidget(time_label)
-
             dot = QFrame()
-            dot.setFixedSize(8, 8)
-            dot.setStyleSheet(f"background: {color}; border-radius: 4px;")
+            dot.setFixedSize(10, 10)
+            dot.setStyleSheet(f"background: {color}; border-radius: 5px;")
             row_layout.addWidget(dot)
-
-            # App display name
             proc = s.get("process_name") or ""
-            display = mapping.get(proc, proc) or proc
-            app_label = QLabel(display)
-            app_label.setMinimumWidth(64)
-            app_label.setStyleSheet(f"font-size: 12px; color: {COLORS['text']}; font-weight: 600;")
+            app_label = QLabel(mapping.get(proc, proc) or proc)
+            app_label.setStyleSheet(f"font-size: 22px; color: {COLORS['text']}; font-weight: 700;")
             row_layout.addWidget(app_label)
-
             cat_label = QLabel(cat_name)
-            cat_label.setStyleSheet(f"font-size: 11px; color: {color}; font-weight: 700;")
+            cat_label.setStyleSheet(f"font-size: 20px; color: {color}; font-weight: 700;")
             row_layout.addWidget(cat_label, 1)
-
-            # Duration
             eff = s.get("effective_seconds", 0) or 0
             dur_label = QLabel(f"{max(1, eff // 60)}分钟")
-            dur_label.setFixedWidth(42)
+            dur_label.setFixedWidth(68)
             dur_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            dur_label.setStyleSheet(
-                f"font-size: 11px; color: {COLORS['text_muted']};"
-            )
+            dur_label.setStyleSheet(f"font-size: 20px; color: {COLORS['text_muted']};")
             row_layout.addWidget(dur_label)
-
             self._content_layout.insertWidget(self._content_layout.count() - 1, row)
             self._rows.append(row)
 
 
-class TopAppListWidget(QFrame):
-    """Top app list card with horizontal bars."""
-
+class TrendChartWidget(QFrame):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("dashboardCard")
         self.setStyleSheet(DASHBOARD_CARD_STYLE)
-        self.setFixedHeight(235)
-        self._rows: list[tuple[QLabel, QProgressBar, QLabel]] = []
-
+        self.setFixedHeight(215)
+        self._mode = "today"
+        self._series = {"today": [], "7d": [], "30d": []}
         root = QVBoxLayout(self)
-        root.setContentsMargins(16, 14, 16, 14)
-        root.setSpacing(8)
+        root.setContentsMargins(14, 12, 14, 12)
+        header = QHBoxLayout()
+        title = QLabel("时间趋势（分钟）")
+        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {COLORS['text']};")
+        header.addWidget(title)
+        header.addStretch()
+        self.group = QButtonGroup(self)
+        for mode, text in [("today", "今日"), ("7d", "近7天"), ("30d", "近30天")]:
+            btn = QPushButton(text)
+            btn.setCheckable(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet(
+                f"padding: 4px 10px; border-radius: 8px; border: 1px solid {COLORS['border']}; color: {COLORS['text_secondary']}; background: {COLORS['panel_bg']};"
+                f"QPushButton:checked {{ background: {COLORS['primary']}; color: white; border-color: {COLORS['primary']}; }}"
+            )
+            btn.clicked.connect(lambda _, m=mode: self.set_mode(m))
+            header.addWidget(btn)
+            self.group.addButton(btn)
+            if mode == "today":
+                btn.setChecked(True)
+        root.addLayout(header)
+        self.canvas = _TrendCanvas()
+        root.addWidget(self.canvas, 1)
 
+    def set_mode(self, mode: str):
+        if mode in self._series:
+            self._mode = mode
+            self.canvas.set_series(self._series[mode])
+
+    def set_data(self, today: list[int], seven_days: list[int], thirty_days: list[int]):
+        self._series["today"] = today
+        self._series["7d"] = seven_days
+        self._series["30d"] = thirty_days
+        self.canvas.set_series(self._series[self._mode])
+
+
+class _TrendCanvas(QWidget):
+    def __init__(self):
+        super().__init__()
+        self._points: list[int] = []
+
+    def set_series(self, points: list[int]):
+        self._points = [max(0, int(v)) for v in points]
+        self.update()
+
+    def paintEvent(self, event):  # noqa: N802
+        super().paintEvent(event)
+        if len(self._points) < 2:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        r = self.rect().adjusted(8, 8, -8, -14)
+        painter.setPen(QPen(QColor(COLORS["border"]), 1))
+        for i in range(5):
+            y = r.top() + i * r.height() / 4.0
+            painter.drawLine(r.left(), int(y), r.right(), int(y))
+        max_v = max(self._points) or 1
+        step = r.width() / (len(self._points) - 1)
+        points = []
+        for i, v in enumerate(self._points):
+            points.append(QPointF(r.left() + i * step, r.bottom() - (v / max_v) * r.height()))
+        path = QPainterPath()
+        path.moveTo(points[0])
+        for p in points[1:]:
+            path.lineTo(p)
+        painter.setPen(QPen(QColor(COLORS["primary"]), 2))
+        painter.drawPath(path)
+
+
+class TopAppListWidget(QFrame):
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("dashboardCard")
+        self.setStyleSheet(DASHBOARD_CARD_STYLE)
+        self.setFixedHeight(248)
+        self._rows: list[tuple[QLabel, QLabel, QProgressBar, QLabel]] = []
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 12, 16, 12)
         title = QLabel("软件使用 TOP5")
         title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {COLORS['text']};")
         root.addWidget(title)
-
         self.rows_container = QVBoxLayout()
         self.rows_container.setSpacing(8)
         root.addLayout(self.rows_container)
         root.addStretch()
-
         for rank in range(1, 6):
             row = self._build_row(rank)
             self.rows_container.addLayout(row[0])
-            self._rows.append((row[1], row[2], row[3]))
+            self._rows.append((row[1], row[2], row[3], row[4]))
 
     def _build_row(self, rank: int):
         layout = QHBoxLayout()
-        layout.setSpacing(8)
-
         idx = QLabel(str(rank))
         idx.setFixedWidth(16)
         idx.setStyleSheet(f"font-size: 15px; color: {COLORS['text_secondary']}; font-weight: 700;")
         layout.addWidget(idx)
-
+        icon = QLabel("")
+        icon.setFixedSize(18, 18)
+        icon.setStyleSheet(f"background: {COLORS['panel_bg']}; border-radius: 4px;")
+        layout.addWidget(icon)
         name = QLabel("--")
-        name.setMinimumWidth(90)
+        name.setMinimumWidth(100)
         name.setStyleSheet(f"font-size: 13px; color: {COLORS['text']};")
-        layout.addWidget(name, 1)
-
+        layout.addWidget(name)
         bar = QProgressBar()
         bar.setTextVisible(False)
         bar.setRange(0, 100)
         bar.setFixedHeight(8)
         bar.setStyleSheet(
-            f"""
-            QProgressBar {{
-                background: {COLORS['panel_bg']};
-                border: none;
-                border-radius: 4px;
-            }}
-            QProgressBar::chunk {{
-                background: {COLORS['primary']};
-                border-radius: 4px;
-            }}
-            """
+            f"QProgressBar {{ background: {COLORS['panel_bg']}; border: none; border-radius: 4px; }}"
+            f"QProgressBar::chunk {{ background: {COLORS['primary']}; border-radius: 4px; }}"
         )
         layout.addWidget(bar, 1)
-
         duration = QLabel("--")
         duration.setFixedWidth(66)
         duration.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         duration.setStyleSheet(f"font-size: 12px; color: {COLORS['text_secondary']};")
         layout.addWidget(duration)
-        return layout, name, bar, duration
+        return layout, icon, name, bar, duration
 
-    def set_items(self, items: list[tuple[str, str, int]]):
-        """Set top apps from list of (process_name, display_name, seconds)."""
-        max_seconds = max((seconds for _, _, seconds in items), default=1)
+    def set_items(self, items: list[tuple[str, str, int, QIcon | None]]):
+        max_seconds = max((seconds for _, _, seconds, _ in items), default=1)
         for i in range(5):
             if i < len(items):
-                name, display, seconds = items[i]
-                pct = int(round((seconds / max_seconds) * 100)) if max_seconds else 0
-                self._rows[i][0].setText(_compact_app_name(display))
-                tooltip = name if display != name else ""
-                self._rows[i][0].setToolTip(tooltip)
-                self._rows[i][1].setValue(max(0, min(100, pct)))
-                self._rows[i][2].setText(fmt_seconds(seconds))
+                process_name, display_name, seconds, icon = items[i]
+                self._rows[i][0].setPixmap(icon.pixmap(18, 18) if icon else QIcon().pixmap(18, 18))
+                self._rows[i][1].setText(_compact_app_name(display_name))
+                self._rows[i][1].setToolTip(process_name if display_name != process_name else "")
+                self._rows[i][2].setValue(int(round((seconds / max_seconds) * 100)))
+                self._rows[i][3].setText(fmt_seconds(seconds))
             else:
-                self._rows[i][0].setText("--")
-                self._rows[i][1].setValue(0)
-                self._rows[i][2].setText("--")
+                self._rows[i][0].clear()
+                self._rows[i][1].setText("--")
+                self._rows[i][2].setValue(0)
+                self._rows[i][3].setText("--")
 
 
 class DistributionLegend(QWidget):
-    """Legend list with category name, duration and percent."""
-
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.layout = QVBoxLayout(self)
@@ -555,41 +455,29 @@ class DistributionLegend(QWidget):
             row = self._rows.pop()
             self.layout.removeWidget(row)
             row.deleteLater()
-
         total = max(1, total_seconds)
         for name, seconds, color in items:
             row = QWidget()
             line = QGridLayout(row)
             line.setContentsMargins(0, 0, 0, 0)
-            line.setHorizontalSpacing(6)
-            line.setVerticalSpacing(0)
-
             dot = QLabel("●")
             dot.setStyleSheet(f"color: {color}; font-size: 13px;")
             line.addWidget(dot, 0, 0)
-
             name_label = QLabel(name)
             name_label.setStyleSheet(f"font-size: 13px; color: {COLORS['text_secondary']};")
             line.addWidget(name_label, 0, 1)
-
             time_label = QLabel(fmt_seconds(seconds))
             time_label.setStyleSheet(f"font-size: 13px; color: {COLORS['text']}; font-weight: 600;")
             line.addWidget(time_label, 0, 2, Qt.AlignRight)
-
-            percent = int(round(seconds / total * 100))
-            pct_label = QLabel(f"{percent}%")
+            pct_label = QLabel(f"{int(round(seconds / total * 100))}%")
             pct_label.setStyleSheet(f"font-size: 13px; color: {COLORS['text_muted']};")
             line.addWidget(pct_label, 0, 3, Qt.AlignRight)
-
             line.setColumnStretch(1, 1)
             self.layout.addWidget(row)
             self._rows.append(row)
 
 
 def _compact_app_name(name: str, limit: int = 18) -> str:
-    """Keep app names readable in the narrow TOP5 column."""
     if not name:
         return "--"
-    if len(name) <= limit:
-        return name
-    return f"{name[: limit - 1]}..."
+    return name if len(name) <= limit else f"{name[: limit - 1]}..."
