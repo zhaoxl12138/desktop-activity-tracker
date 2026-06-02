@@ -62,7 +62,8 @@ GLOBAL_STYLE = f"""
 QMainWindow, QWidget {{
     background: {COLORS['bg']};
     color: {COLORS['text']};
-    font-family: "Microsoft YaHei", "Segoe UI";
+    font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC",
+                 "Noto Sans CJK SC", "SimHei", "SimSun", "Segoe UI", sans-serif;
 }}
 QLabel {{
     background: transparent;

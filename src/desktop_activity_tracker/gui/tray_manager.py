@@ -1,15 +1,21 @@
-"""System tray icon and menu for Desktop Activity Tracker."""
+"""System tray icon and popup menu for DayLens."""
+
+from __future__ import annotations
 
 import os
 import sys
 from datetime import datetime
 
-from PySide6.QtWidgets import (
-    QSystemTrayIcon, QMenu, QStyle, QApplication,
-    QWidget, QVBoxLayout, QPushButton,
-)
-from PySide6.QtGui import QIcon, QAction, QCursor
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QCursor, QIcon
+from PySide6.QtWidgets import (
+    QApplication,
+    QPushButton,
+    QStyle,
+    QSystemTrayIcon,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .. import database, get_app_root
 from ..utils import fmt_seconds
@@ -22,55 +28,45 @@ class TrayManager:
         self.config = config
         self.main_window = None
 
-        # Try to load an icon, fallback to system default
-        if getattr(sys, 'frozen', False):
+        if getattr(sys, "frozen", False):
             base = sys._MEIPASS
         else:
             base = get_app_root()
-        icon_paths = [
-            os.path.join(base, "assets", "icon.ico"),
-            os.path.join(base, "icon.ico"),
-        ]
+
         icon = None
-        for p in icon_paths:
-            if os.path.exists(p):
-                icon = QIcon(p)
+        for path in [os.path.join(base, "assets", "icon.ico"), os.path.join(base, "icon.ico")]:
+            if os.path.exists(path):
+                icon = QIcon(path)
                 break
 
         if icon:
             app.setWindowIcon(icon)
-        self.tray = QSystemTrayIcon(icon or app.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
-        self.tray.setToolTip("DayLens\n启动中...")
 
-        self._build_menu()
+        self.tray = QSystemTrayIcon(
+            icon or app.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
+        )
+        self.tray.setToolTip("DayLens\n启动中...")
+        self.tray.activated.connect(self._on_tray_activated)
         self.tray.show()
 
-        # Update tooltip every 60s
         self.tooltip_timer = QTimer()
         self.tooltip_timer.timeout.connect(self._update_tooltip)
         self.tooltip_timer.start(60000)
         self._update_tooltip()
 
-        # Auto-generate daily report every 5 minutes
         self.report_timer = QTimer()
         self.report_timer.timeout.connect(self._auto_generate_report)
         self.report_timer.start(300000)
         self._auto_generate_report()
 
-    def set_main_window(self, window):
+    def set_main_window(self, window) -> None:
         self.main_window = window
 
-    def _build_menu(self):
-        # Don't use setContextMenu / QMenu — unreliable on some Windows versions.
-        # Instead use a frameless QWidget popup triggered on right-click.
-        self.tray.activated.connect(self._on_tray_activated)
-
-    def _show_tray_popup(self):
+    def _show_tray_popup(self) -> None:
         popup = QWidget()
-        popup.setWindowFlags(
-            Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
-        )
-        popup.setStyleSheet("""
+        popup.setWindowFlags(Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        popup.setStyleSheet(
+            """
             QWidget {
                 background: #0E203D;
                 border: 1px solid #2C4772;
@@ -97,7 +93,8 @@ class TrayManager:
                 background: #321827;
                 color: #F87171;
             }
-        """)
+            """
+        )
 
         layout = QVBoxLayout(popup)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -113,10 +110,10 @@ class TrayManager:
         btn_pause.clicked.connect(lambda: (popup.close(), self._toggle_pause()))
         layout.addWidget(btn_pause)
 
-        sep = QWidget()
-        sep.setFixedHeight(1)
-        sep.setStyleSheet("background: #2C4772; margin: 2px 8px;")
-        layout.addWidget(sep)
+        separator = QWidget()
+        separator.setFixedHeight(1)
+        separator.setStyleSheet("background: #2C4772; margin: 2px 8px;")
+        layout.addWidget(separator)
 
         btn_quit = QPushButton("退出程序")
         btn_quit.setObjectName("btnQuit")
@@ -126,109 +123,118 @@ class TrayManager:
 
         popup.adjustSize()
 
-        # Position popup ABOVE the tray icon (near bottom of screen)
         cursor_pos = QCursor.pos()
         screen = QApplication.primaryScreen().availableGeometry()
         x = cursor_pos.x()
-        y = cursor_pos.y() - popup.height() - 8  # 8px gap above cursor
-
-        # Keep within screen bounds
+        y = cursor_pos.y() - popup.height() - 8
         if x + popup.width() > screen.right():
             x = screen.right() - popup.width() - 4
         if x < screen.left():
             x = screen.left() + 4
         if y < screen.top():
-            y = cursor_pos.y() + 20  # Fallback: show below cursor
+            y = cursor_pos.y() + 20
 
         popup.move(x, y)
         popup.setAttribute(Qt.WA_DeleteOnClose)
         popup.show()
 
-    def _on_tray_activated(self, reason):
+    def _on_tray_activated(self, reason) -> None:
         if reason == QSystemTrayIcon.Context:
             self._show_tray_popup()
         elif reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
             self._open_window()
 
-    def _open_window(self):
+    def _open_window(self) -> None:
         if self.main_window:
             self.main_window.show()
             self.main_window.raise_()
             self.main_window.activateWindow()
 
-    def _toggle_pause(self):
-        if self.main_window and hasattr(self.main_window, 'worker'):
-            w = self.main_window.worker
-            if w.is_paused():
-                w.resume()
-            else:
-                w.pause()
+    def _toggle_pause(self) -> None:
+        if not self.main_window or not hasattr(self.main_window, "worker"):
+            return
+        worker = self.main_window.worker
+        if worker.is_paused():
+            worker.resume()
+        else:
+            worker.pause()
 
-    def _auto_generate_report(self):
-        """Silent auto-generation every 5 minutes — overwrites today's report."""
+    def _auto_generate_report(self) -> None:
+        """Silent auto-generation every 5 minutes; overwrites today's report."""
         today = datetime.now().strftime("%Y-%m-%d")
         reports_dir = os.path.join(get_app_root(), "reports", "daily")
         os.makedirs(reports_dir, exist_ok=True)
-        from .. import exporter as exp
+        from .. import exporter as exporter
+
         try:
-            exp.export_markdown(self.db_path, today, reports_dir)
+            exporter.export_markdown(self.db_path, today, reports_dir)
             obsidian_path = self.config.get("obsidian_output_path", "").strip()
             if obsidian_path:
-                md_file = os.path.join(reports_dir, f"{today}.md")
-                exp.sync_to_obsidian(md_file, obsidian_path)
+                markdown_file = os.path.join(reports_dir, f"{today}.md")
+                exporter.sync_to_obsidian(markdown_file, obsidian_path)
         except Exception:
-            pass  # silent — don't bother the user on auto-save errors
+            pass
 
-    def _generate_report(self):
+    def _generate_report(self) -> None:
         today = datetime.now().strftime("%Y-%m-%d")
         reports_dir = os.path.join(get_app_root(), "reports", "daily")
         os.makedirs(reports_dir, exist_ok=True)
-        from .. import exporter as exp
+        from .. import exporter as exporter
+
         try:
-            exp.export_markdown(self.db_path, today, reports_dir)
+            exporter.export_markdown(self.db_path, today, reports_dir)
             obsidian_path = self.config.get("obsidian_output_path", "").strip()
             if obsidian_path:
-                md_file = os.path.join(reports_dir, f"{today}.md")
-                exp.sync_to_obsidian(md_file, obsidian_path)
+                markdown_file = os.path.join(reports_dir, f"{today}.md")
+                exporter.sync_to_obsidian(markdown_file, obsidian_path)
             self.tray.showMessage("DayLens", f"日报已生成\n{today}.md")
-        except Exception as e:
-            self.tray.showMessage("DayLens", f"生成失败: {e}")
+        except Exception as exc:
+            self.tray.showMessage("DayLens", f"生成失败: {exc}")
 
-    def _open_reports(self):
+    def _open_reports(self) -> None:
         reports_dir = os.path.join(get_app_root(), "reports")
         os.makedirs(reports_dir, exist_ok=True)
         os.startfile(reports_dir)
 
-    def _quit(self):
-        if self.main_window and hasattr(self.main_window, 'worker'):
+    def _quit(self) -> None:
+        if self.main_window and hasattr(self.main_window, "worker"):
             self.main_window.worker.stop()
             self.main_window.worker.wait(5000)
         self.tray.hide()
         self.app.quit()
 
-    def _update_tooltip(self):
+    def _update_tooltip(self) -> None:
         try:
             today = datetime.now().strftime("%Y-%m-%d")
             stats = database.query_date_stats(self.db_path, today)
-            totals = stats.get('totals', {})
-            effective = totals.get('effective_seconds', 0) or 0
-            work_cats = {"ai_tools", "coding", "reading", "creative"}
-            work_sec = sum(c.get('effective_seconds', 0) or 0 for c in stats.get('by_category', [])
-                          if c.get('category_key') in work_cats)
-            video_sec = sum(c.get('effective_seconds', 0) or 0 for c in stats.get('by_category', [])
-                           if c.get('category_key') in ('video', 'gaming'))
+            totals = stats.get("totals", {})
+            effective = totals.get("effective_seconds", 0) or 0
+            work_categories = {"ai_tools", "coding", "reading", "creative"}
+            work_seconds = sum(
+                item.get("effective_seconds", 0) or 0
+                for item in stats.get("by_category", [])
+                if item.get("category_key") in work_categories
+            )
+            video_seconds = sum(
+                item.get("effective_seconds", 0) or 0
+                for item in stats.get("by_category", [])
+                if item.get("category_key") in ("video", "gaming")
+            )
             status = "记录中"
-            if self.main_window and hasattr(self.main_window, 'worker') and self.main_window.worker.is_paused():
+            if (
+                self.main_window
+                and hasattr(self.main_window, "worker")
+                and self.main_window.worker.is_paused()
+            ):
                 status = "已暂停"
+
             tooltip = (
                 f"DayLens\n"
                 f"今日有效: {fmt_seconds(effective)}\n"
-                f"学习/工作: {fmt_seconds(work_sec)}\n"
-                f"娱乐: {fmt_seconds(video_sec)}\n"
+                f"学习/工作: {fmt_seconds(work_seconds)}\n"
+                f"娱乐: {fmt_seconds(video_seconds)}\n"
                 f"状态: {status}"
             )
             self.tray.setToolTip(tooltip)
-        except Exception as e:
-            import sys, traceback
-            print(f"[TrayManager] _update_tooltip error: {e}", file=sys.stderr)
-            traceback.print_exc()
+        except Exception as exc:
+            print(f"[TrayManager] _update_tooltip error: {exc}", file=sys.stderr)

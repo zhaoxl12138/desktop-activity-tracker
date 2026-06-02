@@ -13,7 +13,7 @@ from pathlib import Path
 
 import yaml
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QAbstractButton, QLabel
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -107,13 +107,51 @@ def main():
 
         assert window.width() >= 1280, f"default width too small: {window.width()}"
         assert window.height() >= 780, f"default height too small: {window.height()}"
-        assert window.stack.count() == 6, f"unexpected page count: {window.stack.count()}"
+        assert window.stack.count() == 7, f"unexpected page count: {window.stack.count()}"
+        assert window.nav_list.count() == 7, f"unexpected nav count: {window.nav_list.count()}"
+        assert window.chk_dark_mode.isChecked() is True, "dark mode toggle should default on"
+        assert window.sidebar_quit_btn.text(), "sidebar quit button should exist"
+        assert window.sidebar_record_status.text(), "sidebar record status should exist"
+        assert window.nav_list.verticalScrollBar().maximum() == 0, "sidebar nav should not require scrolling"
+
+        nav_titles = [window.nav_list.item(i).text() for i in range(window.nav_list.count())]
+        assert nav_titles == [
+            "今日概览",
+            "实时监控",
+            "软件统计",
+            "分类统计",
+            "日报/周报",
+            "目标管理",
+            "设置中心",
+        ], f"unexpected nav titles: {nav_titles}"
+
+        forbidden_text = [
+            "开机自启动",
+            "最小化到托盘",
+            "快捷键设置",
+            "数据备份",
+            "帮助与反馈",
+            "关于 DayLens",
+            "备份数据库",
+        ]
+
+        overview = window.pages["today"]
+        assert overview.trend_card is not None, "trend card missing"
+        assert overview.top_app_card is not None, "top app card missing"
+        assert overview.timeline_widget is not None, "timeline widget missing"
+        assert overview.focus_axis is not None, "focus axis missing"
+        assert overview.timeline_widget.more_label.text() == "查看更多 ↓"
 
         for row in range(window.nav_list.count()):
             item = window.nav_list.item(row)
             if item is not None and item.flags():
                 window.nav_list.setCurrentRow(row)
                 app.processEvents()
+                current_page = window.stack.currentWidget()
+                page_widgets = current_page.findChildren(QLabel) + current_page.findChildren(QAbstractButton)
+                page_text = " ".join(widget.text() for widget in page_widgets if widget.text())
+                for text in forbidden_text:
+                    assert text not in page_text, f"forbidden UI entry leaked into page {row}: {text}"
 
         worker_state_before = worker.is_paused()
         window.btn_pause.click()

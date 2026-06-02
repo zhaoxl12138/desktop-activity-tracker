@@ -1,9 +1,5 @@
-"""Settings page - general, paths, data management."""
+"""Settings page - general configuration and data maintenance."""
 
-import os
-import sys
-import shutil
-import winreg
 import yaml
 from datetime import datetime
 
@@ -54,17 +50,6 @@ BROWSE_BTN_STYLE = f"""
     }}
 """
 
-AUTOSTART_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-AUTOSTART_NAME = "DesktopActivityTracker"
-
-
-def _get_exe_path():
-    """Get the exe path or script path for autostart."""
-    if getattr(sys, 'frozen', False):
-        return sys.executable
-    return sys.executable
-
-
 class SettingsPage(QWidget):
     def __init__(self, config_path, db_path, reports_dir, worker=None):
         super().__init__()
@@ -99,9 +84,9 @@ class SettingsPage(QWidget):
         g1l.setContentsMargins(16, 20, 16, 16)
         g1l.setSpacing(12)
 
-        self.chk_autostart = QCheckBox("开机自启动")
-        self.chk_autostart.setChecked(self._is_autostart_enabled())
-        g1l.addWidget(self.chk_autostart)
+        basic_hint = QLabel("调整采样频率、空闲判定和数据输出路径。")
+        basic_hint.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
+        g1l.addWidget(basic_hint)
 
         h1 = QHBoxLayout()
         h1.setSpacing(10)
@@ -162,29 +147,21 @@ class SettingsPage(QWidget):
         layout.addWidget(g2)
 
         # ── Data management ──
-        g3 = QGroupBox("数据管理")
+        g3 = QGroupBox("数据维护")
         g3.setStyleSheet(GROUP_STYLE)
         g3l = QVBoxLayout(g3)
         g3l.setContentsMargins(16, 20, 16, 16)
         g3l.setSpacing(10)
 
-        data_btns = QHBoxLayout()
-        data_btns.setSpacing(10)
-
-        btn_backup = QPushButton("备份数据库")
-        btn_backup.setStyleSheet(BUTTON_SECONDARY_STYLE)
-        btn_backup.setCursor(Qt.PointingHandCursor)
-        btn_backup.clicked.connect(self._backup_db)
+        data_hint = QLabel("可按需清理 30 天前的采样记录，汇总统计不受影响。")
+        data_hint.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
+        g3l.addWidget(data_hint)
 
         btn_clean = QPushButton("清理30天前记录")
         btn_clean.setStyleSheet(BUTTON_SECONDARY_STYLE)
         btn_clean.setCursor(Qt.PointingHandCursor)
         btn_clean.clicked.connect(self._clean_old)
-
-        data_btns.addWidget(btn_backup)
-        data_btns.addWidget(btn_clean)
-        data_btns.addStretch()
-        g3l.addLayout(data_btns)
+        g3l.addWidget(btn_clean, 0, Qt.AlignLeft)
 
         layout.addWidget(g3)
 
@@ -202,30 +179,6 @@ class SettingsPage(QWidget):
     def _load_config(self):
         with open(self.config_path, "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
-
-    def _is_autostart_enabled(self):
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_KEY,
-                                0, winreg.KEY_READ) as key:
-                winreg.QueryValueEx(key, AUTOSTART_NAME)
-                return True
-        except FileNotFoundError:
-            return False
-
-    def _set_autostart(self, enable):
-        exe_path = _get_exe_path()
-        try:
-            if enable:
-                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_KEY,
-                                    0, winreg.KEY_SET_VALUE) as key:
-                    winreg.SetValueEx(key, AUTOSTART_NAME, 0, winreg.REG_SZ,
-                                      f'"{exe_path}"')
-            else:
-                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_KEY,
-                                    0, winreg.KEY_SET_VALUE) as key:
-                    winreg.DeleteValue(key, AUTOSTART_NAME)
-        except (FileNotFoundError, OSError):
-            pass
 
     def _save_all(self):
         sample_interval = self.spin_interval.value()
@@ -249,28 +202,12 @@ class SettingsPage(QWidget):
         if self.worker:
             self.worker.update_settings(self.config)
 
-        # Autostart
-        self._set_autostart(self.chk_autostart.isChecked())
-
         QMessageBox.information(self, "成功", "设置已保存。\n采样间隔和空闲阈值已实时生效。")
 
     def _browse_dir(self, edit):
         d = QFileDialog.getExistingDirectory(self, "选择目录")
         if d:
             edit.setText(d)
-
-    def _backup_db(self):
-        if not os.path.exists(self.db_path):
-            QMessageBox.warning(self, "无数据库", "数据库文件不存在。")
-            return
-        dest, _ = QFileDialog.getSaveFileName(
-            self, "备份数据库",
-            f"usage_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db",
-            "DB Files (*.db)"
-        )
-        if dest:
-            shutil.copy2(self.db_path, dest)
-            QMessageBox.information(self, "成功", f"数据库已备份到\n{dest}")
 
     def _clean_old(self):
         reply = QMessageBox.question(
