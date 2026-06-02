@@ -11,7 +11,7 @@ SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
 
 from daylens import database  # noqa: E402
-from daylens.gui.worker import RecordingWorker  # noqa: E402
+from daylens import classifier  # noqa: E402
 from daylens.gui.widgets.dashboard_widgets import _timeline_duration_text  # noqa: E402
 from daylens.session_tracker import ActivitySession, SessionTracker, normalize_window_title  # noqa: E402
 
@@ -91,16 +91,8 @@ def test_finish_current_closes_session_without_replacement():
 
 
 def test_worker_self_window_snapshot_is_marked_ignored():
-    worker = RecordingWorker("config/config.yaml", "usage.db", {})
-    win_info = {
-        "process_name": "DayLens.exe",
-        "exe_path": "",
-        "window_title": "DayLens",
-    }
-
-    assert worker._is_self_window("daylens.exe", win_info) is True
-    snapshot = worker._ignored_snapshot(win_info, 3.0)
-
-    assert snapshot["is_ignored"] is True
-    assert snapshot["is_effective"] is False
-    assert snapshot["process_name"] == "DayLens.exe"
+    clf = classifier.Classifier("config/config.yaml")
+    result = clf.classify("DayLens.exe", "DayLens")
+    assert result["category_key"] == "tools", (
+        f"DayLens should be classified as tools, got {result['category_key']}"
+    )

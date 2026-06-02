@@ -90,6 +90,7 @@ _DEFAULT_CATEGORIES = {
         "display_name": "系统工具",
         "active_rule": "interactive_required",
         "process_names": [
+            "DayLens.exe",
             "ToDesk.exe", "GameViewer.exe", "msrdc.exe",
             "红海Pro兼容版.exe",
             "Everything.exe", "BaiduNetdisk.exe", "localsend_app.exe",

@@ -6,9 +6,6 @@ from datetime import datetime, timedelta
 
 from . import get_app_root
 
-# Process names of the tracker itself — excluded from all queries
-_SELF_PROCS = {"daylens.exe", "daylens-debug.exe", "desktop-activity-tracker.exe"}
-
 _WAL_CHECKPOINT_INTERVAL = 100  # commits between WAL checkpoints
 
 
@@ -290,14 +287,10 @@ def _query_date_stats_from_logs(db_path, date_str):
     return {
         "totals": dict(totals),
         "by_category": [dict(r) for r in by_category],
-        "by_app": _filter_self([dict(r) for r in by_app]),
-        "by_app_detail": _filter_self([dict(r) for r in by_app_detail]),
+        "by_app": [dict(r) for r in by_app],
+        "by_app_detail": [dict(r) for r in by_app_detail],
     }
 
-
-def _filter_self(rows):
-    """Remove rows where process_name is the tracker itself."""
-    return [r for r in rows if not r.get("process_name", "").lower().startswith("daylens")]
 
 
 
@@ -357,8 +350,8 @@ def _query_date_stats_from_sessions(db_path, date_str):
     return {
         "totals": dict(totals),
         "by_category": [dict(r) for r in by_category],
-        "by_app": _filter_self([dict(r) for r in by_app]),
-        "by_app_detail": _filter_self([dict(r) for r in by_app_detail]),
+        "by_app": [dict(r) for r in by_app],
+        "by_app_detail": [dict(r) for r in by_app_detail],
     }
 
 
@@ -466,7 +459,7 @@ def query_today_sessions(db_path, date_str):
         (date_str,)
     ).fetchall()
     conn.close()
-    return _filter_self([dict(r) for r in rows])
+    return [dict(r) for r in rows]
 
 
 def count_consecutive_days(db_path):
