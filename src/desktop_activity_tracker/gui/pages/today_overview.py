@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 
 from ... import database, timeline
 from ...database import count_consecutive_days, query_today_sessions
-from ..style import COLORS, DASHBOARD_CARD_STYLE
+from .. import style as ui_style
 from ..widgets.dashboard_widgets import (
     DistributionLegend,
     DonutChartWidget,
@@ -52,11 +52,11 @@ class TodayOverviewPage(QWidget):
         root.addLayout(metrics_grid)
         for column, (key, title, icon, color) in enumerate(
             [
-                ("total", "总使用时长", "T", COLORS["primary"]),
-                ("work", "学习/工作时长", "W", COLORS["coding_green"]),
-                ("ent", "娱乐时长", "E", COLORS["video_orange"]),
-                ("social", "社交通讯时长", "S", COLORS["social_purple"]),
-                ("idle", "挂机时长", "I", COLORS["idle_gray"]),
+                ("total", "总使用时长", "T", ui_style.COLORS["primary"]),
+                ("work", "学习/工作时长", "W", ui_style.COLORS["coding_green"]),
+                ("ent", "娱乐时长", "E", ui_style.COLORS["video_orange"]),
+                ("social", "社交通讯时长", "S", ui_style.COLORS["social_purple"]),
+                ("idle", "挂机时长", "I", ui_style.COLORS["idle_gray"]),
             ]
         ):
             card = MetricCard(title, icon, color)
@@ -94,7 +94,7 @@ class TodayOverviewPage(QWidget):
     def _build_distribution_card(self) -> QWidget:
         card = QFrame()
         card.setObjectName("dashboardCard")
-        card.setStyleSheet(DASHBOARD_CARD_STYLE)
+        card.setStyleSheet(ui_style.get_dashboard_card_style())
         card.setFixedHeight(220)
 
         layout = QVBoxLayout(card)
@@ -102,7 +102,7 @@ class TodayOverviewPage(QWidget):
         layout.setSpacing(8)
 
         title = QLabel("时间分布")
-        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {COLORS['text']};")
+        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {ui_style.COLORS['text']};")
         layout.addWidget(title)
 
         row = QHBoxLayout()
@@ -115,7 +115,7 @@ class TodayOverviewPage(QWidget):
         right_layout.addWidget(self.legend_widget, 1)
         self.active_ratio_label = QLabel("活跃时间占比：-")
         self.active_ratio_label.setStyleSheet(
-            f"font-size: 13px; font-weight: 700; color: {COLORS['primary']};"
+            f"font-size: 13px; font-weight: 700; color: {ui_style.COLORS['primary']};"
         )
         right_layout.addWidget(self.active_ratio_label)
         row.addLayout(right_layout, 1)
@@ -126,7 +126,7 @@ class TodayOverviewPage(QWidget):
     def _build_time_stats_card(self) -> QWidget:
         card = QFrame()
         card.setObjectName("dashboardCard")
-        card.setStyleSheet(DASHBOARD_CARD_STYLE)
+        card.setStyleSheet(ui_style.get_dashboard_card_style())
         card.setFixedHeight(220)
 
         layout = QVBoxLayout(card)
@@ -134,7 +134,7 @@ class TodayOverviewPage(QWidget):
         layout.setSpacing(9)
 
         title = QLabel("时间统计")
-        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {COLORS['text']};")
+        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {ui_style.COLORS['text']};")
         layout.addWidget(title)
 
         for key, label_text in [
@@ -145,9 +145,9 @@ class TodayOverviewPage(QWidget):
         ]:
             row = QHBoxLayout()
             name_label = QLabel(label_text)
-            name_label.setStyleSheet(f"font-size: 14px; color: {COLORS['text_secondary']};")
+            name_label.setStyleSheet(f"font-size: 14px; color: {ui_style.COLORS['text_secondary']};")
             value_label = QLabel("--")
-            value_label.setStyleSheet(f"font-size: 14px; color: {COLORS['text']}; font-weight: 700;")
+            value_label.setStyleSheet(f"font-size: 14px; color: {ui_style.COLORS['text']}; font-weight: 700;")
             row.addWidget(name_label)
             row.addStretch()
             row.addWidget(value_label)
@@ -160,7 +160,7 @@ class TodayOverviewPage(QWidget):
     def _build_focus_card(self) -> QWidget:
         card = QFrame()
         card.setObjectName("dashboardCard")
-        card.setStyleSheet(DASHBOARD_CARD_STYLE)
+        card.setStyleSheet(ui_style.get_dashboard_card_style())
         card.setFixedHeight(220)
 
         layout = QVBoxLayout(card)
@@ -169,19 +169,19 @@ class TodayOverviewPage(QWidget):
 
         header = QHBoxLayout()
         title = QLabel("今日专注")
-        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {COLORS['text']};")
+        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {ui_style.COLORS['text']};")
         header.addWidget(title)
         header.addStretch()
         self.consecutive_label = QLabel("")
         self.consecutive_label.setStyleSheet(
-            f"font-size: 11px; color: {COLORS['primary']}; font-weight: 700;"
+            f"font-size: 11px; color: {ui_style.COLORS['primary']}; font-weight: 700;"
         )
         header.addWidget(self.consecutive_label)
         layout.addLayout(header)
 
         self.focus_hint = QLabel("今日暂未识别到连续专注时段。")
         self.focus_hint.setWordWrap(True)
-        self.focus_hint.setStyleSheet(f"font-size: 13px; color: {COLORS['text_secondary']};")
+        self.focus_hint.setStyleSheet(f"font-size: 13px; color: {ui_style.COLORS['text_secondary']};")
         layout.addWidget(self.focus_hint)
         layout.addStretch()
         return card
@@ -189,7 +189,7 @@ class TodayOverviewPage(QWidget):
     def _build_focus_timeline_card(self) -> QWidget:
         card = QFrame()
         card.setObjectName("dashboardCard")
-        card.setStyleSheet(DASHBOARD_CARD_STYLE)
+        card.setStyleSheet(ui_style.get_dashboard_card_style())
         card.setMinimumHeight(300)
 
         layout = QVBoxLayout(card)
@@ -197,7 +197,7 @@ class TodayOverviewPage(QWidget):
         layout.setSpacing(10)
 
         title = QLabel("今日专注时间轴")
-        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {COLORS['text']};")
+        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {ui_style.COLORS['text']};")
         layout.addWidget(title)
 
         self.focus_axis = FocusTimelineBarWidget()
@@ -206,7 +206,7 @@ class TodayOverviewPage(QWidget):
         tick_row = QHBoxLayout()
         for index, text in enumerate(["00:00", "04:00", "08:00", "12:00", "16:00", "20:00", "24:00"]):
             label = QLabel(text)
-            label.setStyleSheet(f"font-size: 11px; color: {COLORS['text_muted']};")
+            label.setStyleSheet(f"font-size: 11px; color: {ui_style.COLORS['text_muted']};")
             tick_row.addWidget(label)
             if index < 6:
                 tick_row.addStretch()
@@ -214,16 +214,16 @@ class TodayOverviewPage(QWidget):
 
         legend_row = QHBoxLayout()
         for name, color in [
-            ("学习/工作", COLORS["coding_green"]),
-            ("视频娱乐", COLORS["video_orange"]),
-            ("社交通讯", COLORS["social_purple"]),
-            ("其他", COLORS["ai_blue"]),
-            ("离开/空闲", COLORS["idle_gray"]),
+            ("学习/工作", ui_style.COLORS["coding_green"]),
+            ("视频娱乐", ui_style.COLORS["video_orange"]),
+            ("社交通讯", ui_style.COLORS["social_purple"]),
+            ("其他", ui_style.COLORS["ai_blue"]),
+            ("离开/空闲", ui_style.COLORS["idle_gray"]),
         ]:
             dot = QLabel("●")
             dot.setStyleSheet(f"font-size: 12px; color: {color};")
             text_label = QLabel(name)
-            text_label.setStyleSheet(f"font-size: 12px; color: {COLORS['text_secondary']};")
+            text_label.setStyleSheet(f"font-size: 12px; color: {ui_style.COLORS['text_secondary']};")
             legend_row.addWidget(dot)
             legend_row.addWidget(text_label)
             legend_row.addSpacing(10)
@@ -255,11 +255,11 @@ class TodayOverviewPage(QWidget):
         )
 
         distribution = [
-            ("学习/工作", work_seconds, COLORS["coding_green"]),
-            ("视频娱乐", entertainment_seconds, COLORS["video_orange"]),
-            ("社交通讯", social_seconds, COLORS["social_purple"]),
-            ("挂机", idle_seconds, COLORS["idle_gray"]),
-            ("其他", other_seconds, COLORS["ai_blue"]),
+            ("学习/工作", work_seconds, ui_style.COLORS["coding_green"]),
+            ("视频娱乐", entertainment_seconds, ui_style.COLORS["video_orange"]),
+            ("社交通讯", social_seconds, ui_style.COLORS["social_purple"]),
+            ("挂机", idle_seconds, ui_style.COLORS["idle_gray"]),
+            ("其他", other_seconds, ui_style.COLORS["ai_blue"]),
         ]
         self.donut_widget.set_data(total_seconds, distribution)
         self.legend_widget.set_items(distribution, total_seconds)
@@ -329,7 +329,7 @@ class TodayOverviewPage(QWidget):
         return None
 
     def _build_focus_axis(self, sessions: list[dict]) -> list[str]:
-        colors = [COLORS["idle_gray"]] * 1440
+        colors = [ui_style.COLORS["idle_gray"]] * 1440
         for session in sessions:
             start = self._to_minute(session.get("start_time", ""))
             end = max(start, self._to_minute(session.get("end_time", "")))
@@ -385,14 +385,14 @@ class TodayOverviewPage(QWidget):
 
     def _color_for_category(self, category_key: str) -> str:
         if category_key in {"ai_tools", "coding", "reading", "creative"}:
-            return COLORS["coding_green"]
+            return ui_style.COLORS["coding_green"]
         if category_key in {"video", "gaming"}:
-            return COLORS["video_orange"]
+            return ui_style.COLORS["video_orange"]
         if category_key == "social":
-            return COLORS["social_purple"]
+            return ui_style.COLORS["social_purple"]
         if category_key in {"idle", "idle_leave"}:
-            return COLORS["idle_gray"]
-        return COLORS["ai_blue"]
+            return ui_style.COLORS["idle_gray"]
+        return ui_style.COLORS["ai_blue"]
 
     def _resolve_display(self, process_name: str, app_details: list[dict]) -> str:
         mapped_name = self.display_name_mapping.get(process_name)

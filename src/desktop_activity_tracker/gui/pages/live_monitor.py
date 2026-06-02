@@ -17,7 +17,8 @@ from PySide6.QtWidgets import (
 )
 
 from ...utils import fmt_seconds
-from ..style import COLORS, DASHBOARD_CARD_STYLE, TABLE_STYLE, get_category_color
+from .. import style as ui_style
+from ..style import COLORS, get_category_color
 
 
 class LiveMonitorPage(QWidget):
@@ -37,7 +38,7 @@ class LiveMonitorPage(QWidget):
     def _build_current_session_card(self):
         card = QFrame()
         card.setObjectName("dashboardCard")
-        card.setStyleSheet(DASHBOARD_CARD_STYLE)
+        card.setStyleSheet(ui_style.get_dashboard_card_style())
 
         root = QVBoxLayout(card)
         root.setContentsMargins(18, 16, 18, 16)
@@ -110,7 +111,7 @@ class LiveMonitorPage(QWidget):
     def _build_history_card(self):
         card = QFrame()
         card.setObjectName("dashboardCard")
-        card.setStyleSheet(DASHBOARD_CARD_STYLE)
+        card.setStyleSheet(ui_style.get_dashboard_card_style())
 
         root = QVBoxLayout(card)
         root.setContentsMargins(18, 16, 18, 16)
@@ -129,7 +130,7 @@ class LiveMonitorPage(QWidget):
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setAlternatingRowColors(True)
-        self.table.setStyleSheet(TABLE_STYLE)
+        self.table.setStyleSheet(ui_style.get_table_style())
         root.addWidget(self.table, 1)
 
         return card
@@ -220,7 +221,7 @@ class LiveMonitorPage(QWidget):
                 f"""
                 QLabel {{
                     color: {COLORS['success_green']};
-                    background: #0F2A23;
+                    background: {ui_style.COLORS['success_bg']};
                     border: 1px solid {COLORS['success_green']};
                     border-radius: 14px;
                     padding: 5px 12px;
@@ -235,7 +236,7 @@ class LiveMonitorPage(QWidget):
                 f"""
                 QLabel {{
                     color: {COLORS['warning_yellow']};
-                    background: #332510;
+                    background: {ui_style.COLORS['warning_bg']};
                     border: 1px solid {COLORS['warning_yellow']};
                     border-radius: 14px;
                     padding: 5px 12px;

@@ -114,6 +114,16 @@ def main():
         assert window.sidebar_record_status.text(), "sidebar record status should exist"
         assert window.nav_list.verticalScrollBar().maximum() == 0, "sidebar nav should not require scrolling"
 
+        dark_style = window.styleSheet()
+        window.chk_dark_mode.click()
+        app.processEvents()
+        assert window.chk_dark_mode.isChecked() is False, "dark mode toggle should switch off"
+        light_style = window.styleSheet()
+        assert light_style != dark_style, "light theme should change window stylesheet"
+        window.chk_dark_mode.click()
+        app.processEvents()
+        assert window.chk_dark_mode.isChecked() is True, "dark mode toggle should switch on"
+
         nav_titles = [window.nav_list.item(i).text() for i in range(window.nav_list.count())]
         assert nav_titles == [
             "今日概览",

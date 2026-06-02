@@ -11,14 +11,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer
 
 from ... import exporter
-from ..style import (
-    COLORS,
-    TABLE_STYLE,
-    BUTTON_PRIMARY_STYLE,
-    BUTTON_SECONDARY_STYLE,
-    SECTION_TITLE,
-    DASHBOARD_CARD_STYLE,
-)
+from .. import style as ui_style
 
 
 class ReportsPage(QWidget):
@@ -33,33 +26,33 @@ class ReportsPage(QWidget):
         layout.setSpacing(14)
 
         lbl = QLabel("报告管理")
-        lbl.setStyleSheet(SECTION_TITLE)
+        lbl.setStyleSheet(ui_style.get_section_title())
         layout.addWidget(lbl)
 
         # Generation buttons row
         gen_frame = QFrame()
         gen_frame.setObjectName("dashboardCard")
-        gen_frame.setStyleSheet(DASHBOARD_CARD_STYLE)
+        gen_frame.setStyleSheet(ui_style.get_dashboard_card_style())
         gen_layout = QHBoxLayout(gen_frame)
         gen_layout.setContentsMargins(12, 8, 12, 8)
         gen_layout.setSpacing(10)
 
         gen_label = QLabel("生成报告:")
-        gen_label.setStyleSheet(f"font-size: 13px; color: {COLORS['text_secondary']}; font-weight: 600;")
+        gen_label.setStyleSheet(f"font-size: 13px; color: {ui_style.COLORS['text_secondary']}; font-weight: 600;")
         gen_layout.addWidget(gen_label)
 
         btn_daily = QPushButton("今日日报")
-        btn_daily.setStyleSheet(BUTTON_PRIMARY_STYLE)
+        btn_daily.setStyleSheet(ui_style.get_button_primary_style())
         btn_daily.setCursor(Qt.PointingHandCursor)
         btn_daily.clicked.connect(self._generate_daily)
 
         btn_weekly = QPushButton("本周周报")
-        btn_weekly.setStyleSheet(BUTTON_PRIMARY_STYLE)
+        btn_weekly.setStyleSheet(ui_style.get_button_primary_style())
         btn_weekly.setCursor(Qt.PointingHandCursor)
         btn_weekly.clicked.connect(self._generate_weekly)
 
         btn_monthly = QPushButton("本月月报")
-        btn_monthly.setStyleSheet(BUTTON_PRIMARY_STYLE)
+        btn_monthly.setStyleSheet(ui_style.get_button_primary_style())
         btn_monthly.setCursor(Qt.PointingHandCursor)
         btn_monthly.clicked.connect(self._generate_monthly)
 
@@ -69,12 +62,12 @@ class ReportsPage(QWidget):
         gen_layout.addStretch()
 
         btn_open_dir = QPushButton("打开报告目录")
-        btn_open_dir.setStyleSheet(BUTTON_SECONDARY_STYLE)
+        btn_open_dir.setStyleSheet(ui_style.get_button_secondary_style())
         btn_open_dir.setCursor(Qt.PointingHandCursor)
         btn_open_dir.clicked.connect(lambda: os.startfile(self.reports_dir) if os.path.exists(self.reports_dir) else None)
 
         btn_obsidian = QPushButton("同步到 Obsidian")
-        btn_obsidian.setStyleSheet(BUTTON_SECONDARY_STYLE)
+        btn_obsidian.setStyleSheet(ui_style.get_button_secondary_style())
         btn_obsidian.setCursor(Qt.PointingHandCursor)
         btn_obsidian.clicked.connect(self._sync_obsidian)
 
@@ -86,28 +79,28 @@ class ReportsPage(QWidget):
         self.tabs = QTabWidget()
         self.tabs.setStyleSheet(f"""
             QTabWidget::pane {{
-                border: 1px solid {COLORS['border']};
+                border: 1px solid {ui_style.COLORS['border']};
                 border-radius: 12px;
-                background: {COLORS['card_bg']};
+                background: {ui_style.COLORS['card_bg']};
             }}
             QTabBar::tab {{
                 padding: 10px 20px;
                 font-size: 13px;
                 font-weight: 600;
-                color: {COLORS['text_secondary']};
-                background: {COLORS['panel_bg']};
-                border: 1px solid {COLORS['border']};
+                color: {ui_style.COLORS['text_secondary']};
+                background: {ui_style.COLORS['panel_bg']};
+                border: 1px solid {ui_style.COLORS['border']};
                 border-radius: 10px;
                 border-bottom: 2px solid transparent;
                 margin-right: 6px;
             }}
             QTabBar::tab:selected {{
-                color: {COLORS['text_inverse']};
-                background: {COLORS['primary']};
-                border-bottom: 2px solid {COLORS['primary']};
+                color: {ui_style.COLORS['text_inverse']};
+                background: {ui_style.COLORS['primary']};
+                border-bottom: 2px solid {ui_style.COLORS['primary']};
             }}
             QTabBar::tab:hover:!selected {{
-                color: {COLORS['text']};
+                color: {ui_style.COLORS['text']};
             }}
         """)
         self.tab_daily = self._make_table()
@@ -131,7 +124,7 @@ class ReportsPage(QWidget):
         table.horizontalHeader().setStretchLastSection(True)
         table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
-        table.setStyleSheet(TABLE_STYLE)
+        table.setStyleSheet(ui_style.get_table_style())
         return table
 
     def refresh(self):

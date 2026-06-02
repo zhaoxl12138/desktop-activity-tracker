@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-COLORS = {
+DARK_COLORS = {
     "bg": "#071326",
     "panel_bg": "#0B1A33",
     "panel_bg_alt": "#0E203D",
@@ -33,32 +33,99 @@ COLORS = {
     "text_inverse": "#FFFFFF",
     "border": "#223B63",
     "border_light": "#2C4772",
+    "success_bg": "#0F2A23",
+    "warning_bg": "#332510",
+    "danger_bg": "#321827",
+    "error_bg": "#3A1620",
 }
 
-
-CATEGORY_COLOR_MAP = {
-    "ai_tools": COLORS["ai_blue"],
-    "coding": COLORS["coding_green"],
-    "reading": COLORS["reading_blue"],
-    "creative": COLORS["creative_pink"],
-    "video": COLORS["video_orange"],
-    "gaming": COLORS["gaming_red"],
-    "social": COLORS["social_purple"],
-    "tools": COLORS["tools_grey"],
-    "system_tools": COLORS["tools_grey"],
-    "browser_general": COLORS["tools_grey"],
-    "browser_other": COLORS["tools_grey"],
-    "idle": COLORS["idle_gray"],
-    "other": "#64748B",
+LIGHT_COLORS = {
+    "bg": "#F3F6FB",
+    "panel_bg": "#FFFFFF",
+    "panel_bg_alt": "#ECF2FB",
+    "card_bg": "#FFFFFF",
+    "card_bg_alt": "#F7FAFF",
+    "sidebar_bg": "#EAF1FB",
+    "sidebar_hover": "#DCE8FA",
+    "sidebar_active": "#2F80FF",
+    "primary": "#2F80FF",
+    "primary_hover": "#5AA2FF",
+    "accent_cyan": "#19D3FF",
+    "coding_green": "#1FBF72",
+    "video_orange": "#F59E0B",
+    "social_purple": "#8B5CF6",
+    "idle_gray": "#94A3B8",
+    "ai_blue": "#3B82F6",
+    "reading_blue": "#38BDF8",
+    "creative_pink": "#EC4899",
+    "tools_grey": "#64748B",
+    "gaming_red": "#EF4444",
+    "danger_red": "#DC2626",
+    "warning_yellow": "#D97706",
+    "success_green": "#16A34A",
+    "text": "#0F172A",
+    "text_secondary": "#334155",
+    "text_muted": "#64748B",
+    "text_inverse": "#FFFFFF",
+    "border": "#C7D5E8",
+    "border_light": "#B6C7E0",
+    "success_bg": "#DCFCE7",
+    "warning_bg": "#FEF3C7",
+    "danger_bg": "#FEE2E2",
+    "error_bg": "#FEE2E2",
 }
+
+THEMES = {
+    "dark": DARK_COLORS,
+    "light": LIGHT_COLORS,
+}
+
+CURRENT_THEME = "dark"
+COLORS = dict(THEMES[CURRENT_THEME])
+CATEGORY_COLOR_MAP: dict[str, str] = {}
+
+
+def refresh_category_colors() -> None:
+    CATEGORY_COLOR_MAP.clear()
+    CATEGORY_COLOR_MAP.update(
+        {
+            "ai_tools": COLORS["ai_blue"],
+            "coding": COLORS["coding_green"],
+            "reading": COLORS["reading_blue"],
+            "creative": COLORS["creative_pink"],
+            "video": COLORS["video_orange"],
+            "gaming": COLORS["gaming_red"],
+            "social": COLORS["social_purple"],
+            "tools": COLORS["tools_grey"],
+            "system_tools": COLORS["tools_grey"],
+            "browser_general": COLORS["tools_grey"],
+            "browser_other": COLORS["tools_grey"],
+            "idle": COLORS["idle_gray"],
+            "other": "#64748B",
+        }
+    )
+
+
+def apply_theme(theme_name: str) -> str:
+    global CURRENT_THEME
+    CURRENT_THEME = "light" if theme_name == "light" else "dark"
+    COLORS.clear()
+    COLORS.update(THEMES[CURRENT_THEME])
+    refresh_category_colors()
+    refresh_styles()
+    return CURRENT_THEME
+
+
+def is_dark_theme() -> bool:
+    return CURRENT_THEME == "dark"
 
 
 def get_category_color(category_key: str) -> str:
-    """Return the theme color for a category key."""
     return CATEGORY_COLOR_MAP.get(category_key, CATEGORY_COLOR_MAP["other"])
 
 
-GLOBAL_STYLE = f"""
+def get_global_style() -> str:
+    return f"""
 QMainWindow, QWidget {{
     background: {COLORS['bg']};
     color: {COLORS['text']};
@@ -100,7 +167,8 @@ QScrollBar::handle:horizontal {{
 """
 
 
-SIDEBAR_STYLE = f"""
+def get_sidebar_style() -> str:
+    return f"""
 QListWidget {{
     background: transparent;
     border: none;
@@ -129,7 +197,8 @@ QListWidget::item:selected {{
 """
 
 
-TOP_BAR_STYLE = f"""
+def get_top_bar_style() -> str:
+    return f"""
 QFrame#topBar {{
     background: {COLORS['bg']};
     border-bottom: 1px solid {COLORS['border']};
@@ -137,7 +206,8 @@ QFrame#topBar {{
 """
 
 
-BOTTOM_BAR_STYLE = f"""
+def get_bottom_bar_style() -> str:
+    return f"""
 QFrame#bottomBar {{
     background: {COLORS['panel_bg']};
     border-top: 1px solid {COLORS['border']};
@@ -145,7 +215,8 @@ QFrame#bottomBar {{
 """
 
 
-BUTTON_PRIMARY_STYLE = f"""
+def get_button_primary_style() -> str:
+    return f"""
 QPushButton {{
     background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
         stop:0 {COLORS['primary']}, stop:1 {COLORS['social_purple']});
@@ -165,7 +236,8 @@ QPushButton:pressed {{
 """
 
 
-BUTTON_SECONDARY_STYLE = f"""
+def get_button_secondary_style() -> str:
+    return f"""
 QPushButton {{
     background: {COLORS['panel_bg_alt']};
     color: {COLORS['text']};
@@ -182,7 +254,8 @@ QPushButton:hover {{
 """
 
 
-BUTTON_DANGER_STYLE = f"""
+def get_button_danger_style() -> str:
+    return f"""
 QPushButton {{
     background: transparent;
     color: {COLORS['danger_red']};
@@ -193,13 +266,14 @@ QPushButton {{
     font-weight: 700;
 }}
 QPushButton:hover {{
-    background: #321827;
+    background: {COLORS['danger_bg']};
     border-color: {COLORS['danger_red']};
 }}
 """
 
 
-DASHBOARD_CARD_STYLE = f"""
+def get_dashboard_card_style() -> str:
+    return f"""
 QFrame#dashboardCard {{
     background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
         stop:0 {COLORS['card_bg_alt']}, stop:1 {COLORS['card_bg']});
@@ -209,10 +283,8 @@ QFrame#dashboardCard {{
 """
 
 
-CARD_STYLE = DASHBOARD_CARD_STYLE
-
-
-SUBTLE_TAG_STYLE = f"""
+def get_subtle_tag_style() -> str:
+    return f"""
 QLabel {{
     font-size: 12px;
     font-weight: 700;
@@ -225,14 +297,16 @@ QLabel {{
 """
 
 
-SECTION_TITLE = f"""
+def get_section_title() -> str:
+    return f"""
 font-size: 17px;
 font-weight: 800;
 color: {COLORS['text']};
 """
 
 
-INPUT_STYLE = f"""
+def get_input_style() -> str:
+    return f"""
 QLineEdit, QComboBox, QTextEdit, QPlainTextEdit, QSpinBox {{
     background: {COLORS['panel_bg_alt']};
     color: {COLORS['text']};
@@ -274,4 +348,39 @@ QCheckBox {{
 """
 
 
-TABLE_STYLE = INPUT_STYLE
+def get_table_style() -> str:
+    return get_input_style()
+
+
+def refresh_styles() -> None:
+    global GLOBAL_STYLE
+    global SIDEBAR_STYLE
+    global TOP_BAR_STYLE
+    global BOTTOM_BAR_STYLE
+    global BUTTON_PRIMARY_STYLE
+    global BUTTON_SECONDARY_STYLE
+    global BUTTON_DANGER_STYLE
+    global DASHBOARD_CARD_STYLE
+    global CARD_STYLE
+    global SUBTLE_TAG_STYLE
+    global SECTION_TITLE
+    global INPUT_STYLE
+    global TABLE_STYLE
+
+    GLOBAL_STYLE = get_global_style()
+    SIDEBAR_STYLE = get_sidebar_style()
+    TOP_BAR_STYLE = get_top_bar_style()
+    BOTTOM_BAR_STYLE = get_bottom_bar_style()
+    BUTTON_PRIMARY_STYLE = get_button_primary_style()
+    BUTTON_SECONDARY_STYLE = get_button_secondary_style()
+    BUTTON_DANGER_STYLE = get_button_danger_style()
+    DASHBOARD_CARD_STYLE = get_dashboard_card_style()
+    CARD_STYLE = DASHBOARD_CARD_STYLE
+    SUBTLE_TAG_STYLE = get_subtle_tag_style()
+    SECTION_TITLE = get_section_title()
+    INPUT_STYLE = get_input_style()
+    TABLE_STYLE = get_table_style()
+
+
+refresh_category_colors()
+refresh_styles()

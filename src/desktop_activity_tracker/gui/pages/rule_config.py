@@ -8,14 +8,14 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
-from ..style import (
-    COLORS, SECTION_TITLE, BUTTON_PRIMARY_STYLE, BUTTON_SECONDARY_STYLE, INPUT_STYLE
-)
+from .. import style as ui_style
+from ..style import COLORS
 
-LIST_STYLE = f"""
+def build_list_style() -> str:
+    return f"""
     QListWidget {{
-        background: {COLORS['panel_bg']};
-        border: 1px solid {COLORS['border']};
+        background: {ui_style.COLORS['panel_bg']};
+        border: 1px solid {ui_style.COLORS['border']};
         border-radius: 10px;
         font-size: 13px;
         padding: 4px;
@@ -27,12 +27,12 @@ LIST_STYLE = f"""
         margin: 1px 4px;
     }}
     QListWidget::item:selected {{
-        background: {COLORS['primary']};
+        background: {ui_style.COLORS['primary']};
         color: white;
         font-weight: 600;
     }}
     QListWidget::item:hover:!selected {{
-        background: {COLORS['panel_bg_alt']};
+        background: {ui_style.COLORS['panel_bg_alt']};
     }}
 """
 
@@ -48,7 +48,7 @@ class RuleConfigPage(QWidget):
         layout.setSpacing(14)
 
         lbl = QLabel("规则配置")
-        lbl.setStyleSheet(SECTION_TITLE)
+        lbl.setStyleSheet(ui_style.get_section_title())
         layout.addWidget(lbl)
 
         splitter = QSplitter(Qt.Horizontal)
@@ -56,7 +56,7 @@ class RuleConfigPage(QWidget):
         # Left: category list
         left = QFrame()
         left.setStyleSheet(
-            f"background: {COLORS['card_bg']}; border: 1px solid {COLORS['border']};"
+            f"background: {ui_style.COLORS['card_bg']}; border: 1px solid {ui_style.COLORS['border']};"
             f"border-radius: 14px; padding: 4px;"
         )
         left_layout = QVBoxLayout(left)
@@ -65,13 +65,13 @@ class RuleConfigPage(QWidget):
 
         cat_header = QLabel("分类列表")
         cat_header.setStyleSheet(
-            f"font-size: 13px; font-weight: 700; color: {COLORS['text_secondary']};"
+            f"font-size: 13px; font-weight: 700; color: {ui_style.COLORS['text_secondary']};"
             f"padding: 2px 4px;"
         )
         left_layout.addWidget(cat_header)
 
         self.cat_list = QListWidget()
-        self.cat_list.setStyleSheet(LIST_STYLE)
+        self.cat_list.setStyleSheet(build_list_style())
         self.cat_list.currentRowChanged.connect(self._on_cat_selected)
         left_layout.addWidget(self.cat_list, 1)
         splitter.addWidget(left)
@@ -79,20 +79,20 @@ class RuleConfigPage(QWidget):
         # Right: editor
         right = QFrame()
         right.setStyleSheet(
-            f"background: {COLORS['card_bg']}; border: 1px solid {COLORS['border']};"
+            f"background: {ui_style.COLORS['card_bg']}; border: 1px solid {ui_style.COLORS['border']};"
             f"border-radius: 14px; padding: 4px;"
         )
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(16, 16, 16, 16)
         right_layout.setSpacing(10)
 
-        section_label_style = f"font-size: 12px; font-weight: 700; color: {COLORS['text_secondary']};"
+        section_label_style = f"font-size: 12px; font-weight: 700; color: {ui_style.COLORS['text_secondary']};"
 
         lbl_name = QLabel("分类名称")
         lbl_name.setStyleSheet(section_label_style)
         right_layout.addWidget(lbl_name)
         self.edit_name = QLineEdit()
-        self.edit_name.setStyleSheet(INPUT_STYLE)
+        self.edit_name.setStyleSheet(ui_style.get_input_style())
         right_layout.addWidget(self.edit_name)
 
         lbl_procs = QLabel("进程名（每行一个）")
@@ -101,9 +101,9 @@ class RuleConfigPage(QWidget):
         self.edit_processes = QTextEdit()
         self.edit_processes.setMaximumHeight(120)
         self.edit_processes.setStyleSheet(
-            f"border: 1px solid {COLORS['border']}; border-radius: 6px;"
-            f"padding: 8px; font-size: 13px; background: {COLORS['panel_bg_alt']};"
-            f"color: {COLORS['text']};"
+            f"border: 1px solid {ui_style.COLORS['border']}; border-radius: 6px;"
+            f"padding: 8px; font-size: 13px; background: {ui_style.COLORS['panel_bg_alt']};"
+            f"color: {ui_style.COLORS['text']};"
         )
         right_layout.addWidget(self.edit_processes)
 
@@ -113,9 +113,9 @@ class RuleConfigPage(QWidget):
         self.edit_keywords = QTextEdit()
         self.edit_keywords.setMaximumHeight(120)
         self.edit_keywords.setStyleSheet(
-            f"border: 1px solid {COLORS['border']}; border-radius: 6px;"
-            f"padding: 8px; font-size: 13px; background: {COLORS['panel_bg_alt']};"
-            f"color: {COLORS['text']};"
+            f"border: 1px solid {ui_style.COLORS['border']}; border-radius: 6px;"
+            f"padding: 8px; font-size: 13px; background: {ui_style.COLORS['panel_bg_alt']};"
+            f"color: {ui_style.COLORS['text']};"
         )
         right_layout.addWidget(self.edit_keywords)
 
@@ -126,20 +126,20 @@ class RuleConfigPage(QWidget):
         self.edit_rule.addItems(["interactive_required (需要活跃)", "passive_allowed (允许被动观看)"])
         self.edit_rule.setStyleSheet(f"""
             QComboBox {{
-                border: 1px solid {COLORS['border']};
+                border: 1px solid {ui_style.COLORS['border']};
                 border-radius: 6px;
                 padding: 8px 12px;
                 font-size: 13px;
-                background: {COLORS['panel_bg_alt']};
-                color: {COLORS['text']};
+                background: {ui_style.COLORS['panel_bg_alt']};
+                color: {ui_style.COLORS['text']};
             }}
-            QComboBox:hover {{ border-color: {COLORS['primary']}; }}
+            QComboBox:hover {{ border-color: {ui_style.COLORS['primary']}; }}
             QComboBox::drop-down {{ border: none; width: 24px; }}
             QComboBox QAbstractItemView {{
-                background: {COLORS['panel_bg_alt']};
-                border: 1px solid {COLORS['border']};
+                background: {ui_style.COLORS['panel_bg_alt']};
+                border: 1px solid {ui_style.COLORS['border']};
                 border-radius: 4px;
-                selection-background-color: {COLORS['primary']};
+                selection-background-color: {ui_style.COLORS['primary']};
                 selection-color: white;
                 padding: 4px;
             }}
@@ -152,17 +152,17 @@ class RuleConfigPage(QWidget):
         btn_row.setSpacing(10)
 
         btn_save = QPushButton("保存修改")
-        btn_save.setStyleSheet(BUTTON_PRIMARY_STYLE)
+        btn_save.setStyleSheet(ui_style.get_button_primary_style())
         btn_save.setCursor(Qt.PointingHandCursor)
         btn_save.clicked.connect(self._save_current)
 
         btn_add = QPushButton("添加分类")
-        btn_add.setStyleSheet(BUTTON_SECONDARY_STYLE)
+        btn_add.setStyleSheet(ui_style.get_button_secondary_style())
         btn_add.setCursor(Qt.PointingHandCursor)
         btn_add.clicked.connect(self._add_category)
 
         btn_delete = QPushButton("删除分类")
-        btn_delete.setStyleSheet(BUTTON_SECONDARY_STYLE)
+        btn_delete.setStyleSheet(ui_style.get_button_secondary_style())
         btn_delete.setCursor(Qt.PointingHandCursor)
         btn_delete.clicked.connect(self._delete_current)
 

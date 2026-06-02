@@ -21,7 +21,8 @@ from PySide6.QtWidgets import (
 )
 
 from ...utils import fmt_seconds
-from ..style import COLORS, DASHBOARD_CARD_STYLE, get_category_color
+from .. import style as ui_style
+from ..style import COLORS, get_category_color
 
 
 class MiniSparkline(QWidget):
@@ -358,7 +359,7 @@ class TrendChartWidget(QFrame):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("dashboardCard")
-        self.setStyleSheet(DASHBOARD_CARD_STYLE)
+        self.setStyleSheet(ui_style.get_dashboard_card_style())
         self.setFixedHeight(196)
         self._mode = "today"
         self._series = {"today": [], "7d": [], "30d": []}
@@ -460,7 +461,7 @@ class TopAppListWidget(QFrame):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("dashboardCard")
-        self.setStyleSheet(DASHBOARD_CARD_STYLE)
+        self.setStyleSheet(ui_style.get_dashboard_card_style())
         self.setFixedHeight(238)
         self._rows: list[tuple[QLabel, QLabel, QProgressBar, QLabel]] = []
 

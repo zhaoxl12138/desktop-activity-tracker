@@ -9,44 +9,44 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
-from ..style import (
-    COLORS, SECTION_TITLE, BUTTON_PRIMARY_STYLE, BUTTON_SECONDARY_STYLE, INPUT_STYLE
-)
+from .. import style as ui_style
 
 
-GROUP_STYLE = f"""
+def build_group_style() -> str:
+    return f"""
     QGroupBox {{
         font-size: 14px;
         font-weight: 700;
-        color: {COLORS['text']};
-        border: 1px solid {COLORS['border']};
+        color: {ui_style.COLORS['text']};
+        border: 1px solid {ui_style.COLORS['border']};
         border-radius: 14px;
         margin-top: 14px;
-        background: {COLORS['card_bg']};
+        background: {ui_style.COLORS['card_bg']};
         padding: 24px 16px 16px 16px;
     }}
     QGroupBox::title {{
         subcontrol-origin: margin;
         left: 16px;
         padding: 0 8px;
-        color: {COLORS['text']};
+        color: {ui_style.COLORS['text']};
     }}
 """
 
-BROWSE_BTN_STYLE = f"""
+def build_browse_btn_style() -> str:
+    return f"""
     QPushButton {{
-        background: {COLORS['panel_bg_alt']};
-        color: {COLORS['text_secondary']};
-        border: 1px solid {COLORS['border']};
+        background: {ui_style.COLORS['panel_bg_alt']};
+        color: {ui_style.COLORS['text_secondary']};
+        border: 1px solid {ui_style.COLORS['border']};
         border-radius: 8px;
         font-size: 14px;
         font-weight: 700;
         padding: 4px 0;
     }}
     QPushButton:hover {{
-        background: {COLORS['card_bg_alt']};
-        border-color: {COLORS['primary']};
-        color: {COLORS['primary']};
+        background: {ui_style.COLORS['card_bg_alt']};
+        border-color: {ui_style.COLORS['primary']};
+        color: {ui_style.COLORS['primary']};
     }}
 """
 
@@ -74,18 +74,18 @@ class SettingsPage(QWidget):
         layout.setSpacing(16)
 
         lbl = QLabel("设置")
-        lbl.setStyleSheet(SECTION_TITLE)
+        lbl.setStyleSheet(ui_style.get_section_title())
         layout.addWidget(lbl)
 
         # ── Basic settings ──
         g1 = QGroupBox("基础设置")
-        g1.setStyleSheet(GROUP_STYLE)
+        g1.setStyleSheet(build_group_style())
         g1l = QVBoxLayout(g1)
         g1l.setContentsMargins(16, 20, 16, 16)
         g1l.setSpacing(12)
 
         basic_hint = QLabel("调整采样频率、空闲判定和数据输出路径。")
-        basic_hint.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
+        basic_hint.setStyleSheet(f"font-size: 12px; color: {ui_style.COLORS['text_muted']};")
         g1l.addWidget(basic_hint)
 
         h1 = QHBoxLayout()
@@ -115,7 +115,7 @@ class SettingsPage(QWidget):
 
         # ── Path settings ──
         g2 = QGroupBox("路径设置")
-        g2.setStyleSheet(GROUP_STYLE)
+        g2.setStyleSheet(build_group_style())
         g2l = QVBoxLayout(g2)
         g2l.setContentsMargins(16, 20, 16, 16)
         g2l.setSpacing(10)
@@ -138,7 +138,7 @@ class SettingsPage(QWidget):
             h.addWidget(edit, 1)
             btn = QPushButton("...")
             btn.setFixedWidth(36)
-            btn.setStyleSheet(BROWSE_BTN_STYLE)
+            btn.setStyleSheet(build_browse_btn_style())
             btn.setCursor(Qt.PointingHandCursor)
             btn.clicked.connect(lambda checked, e=edit: self._browse_dir(e))
             h.addWidget(btn)
@@ -148,17 +148,17 @@ class SettingsPage(QWidget):
 
         # ── Data management ──
         g3 = QGroupBox("数据维护")
-        g3.setStyleSheet(GROUP_STYLE)
+        g3.setStyleSheet(build_group_style())
         g3l = QVBoxLayout(g3)
         g3l.setContentsMargins(16, 20, 16, 16)
         g3l.setSpacing(10)
 
         data_hint = QLabel("可按需清理 30 天前的采样记录，汇总统计不受影响。")
-        data_hint.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
+        data_hint.setStyleSheet(f"font-size: 12px; color: {ui_style.COLORS['text_muted']};")
         g3l.addWidget(data_hint)
 
         btn_clean = QPushButton("清理30天前记录")
-        btn_clean.setStyleSheet(BUTTON_SECONDARY_STYLE)
+        btn_clean.setStyleSheet(ui_style.get_button_secondary_style())
         btn_clean.setCursor(Qt.PointingHandCursor)
         btn_clean.clicked.connect(self._clean_old)
         g3l.addWidget(btn_clean, 0, Qt.AlignLeft)
@@ -168,7 +168,7 @@ class SettingsPage(QWidget):
         # ── Save ──
         layout.addStretch()
         btn_save = QPushButton("保存设置")
-        btn_save.setStyleSheet(BUTTON_PRIMARY_STYLE)
+        btn_save.setStyleSheet(ui_style.get_button_primary_style())
         btn_save.setCursor(Qt.PointingHandCursor)
         btn_save.clicked.connect(self._save_all)
         layout.addWidget(btn_save, 0, Qt.AlignRight)

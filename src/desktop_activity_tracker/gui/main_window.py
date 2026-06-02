@@ -33,17 +33,7 @@ from .pages.rule_config import RuleConfigPage
 from .pages.settings import SettingsPage
 from .pages.software_stats import SoftwareStatsPage
 from .pages.today_overview import TodayOverviewPage
-from .style import (
-    BOTTOM_BAR_STYLE,
-    BUTTON_DANGER_STYLE,
-    BUTTON_PRIMARY_STYLE,
-    BUTTON_SECONDARY_STYLE,
-    COLORS,
-    GLOBAL_STYLE,
-    INPUT_STYLE,
-    SIDEBAR_STYLE,
-    TOP_BAR_STYLE,
-)
+from . import style as ui_style
 
 
 NAV_ITEMS = [
@@ -82,12 +72,24 @@ class MainWindow(QMainWindow):
         self.config_path = config_path
         self.reports_dir = reports_dir
         self.worker = worker
+        self._theme_rebuilding = False
+        self.current_theme = ui_style.apply_theme(self.config.get("theme", "dark"))
 
         self.setWindowTitle("DayLens")
-        self.setStyleSheet(GLOBAL_STYLE + INPUT_STYLE)
+        self.setStyleSheet(ui_style.get_global_style() + ui_style.get_input_style())
         self.resize(1440, 860)
         self.setMinimumSize(1280, 780)
+        self._build_ui()
+        self._apply_initial_geometry()
 
+        self.worker.sample_updated.connect(self._on_sample)
+        self.nav_list.setCurrentRow(0)
+
+        self.refresh_timer = QTimer(self)
+        self.refresh_timer.timeout.connect(self._update_top_bar)
+        self.refresh_timer.start(30000)
+
+    def _build_ui(self, current_key: str = "today") -> None:
         central = QWidget()
         self.setCentralWidget(central)
 
@@ -104,19 +106,13 @@ class MainWindow(QMainWindow):
         root_layout.addLayout(content_layout, 1)
 
         root_layout.addWidget(self._build_bottom_bar())
-        self._apply_initial_geometry()
-
-        self.worker.sample_updated.connect(self._on_sample)
-        self.nav_list.setCurrentRow(0)
-
-        self.refresh_timer = QTimer(self)
-        self.refresh_timer.timeout.connect(self._update_top_bar)
-        self.refresh_timer.start(30000)
+        current_row = next((index for index, (_, key, _) in enumerate(NAV_ITEMS) if key == current_key), 0)
+        self.nav_list.setCurrentRow(current_row)
 
     def _build_sidebar(self) -> QWidget:
         frame = QFrame()
         frame.setFixedWidth(236)
-        frame.setStyleSheet(f"background: {COLORS['sidebar_bg']};")
+        frame.setStyleSheet(f"background: {ui_style.COLORS['sidebar_bg']};")
 
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(0, 20, 0, 14)
@@ -136,7 +132,7 @@ class MainWindow(QMainWindow):
 
         brand = QLabel("DayLens")
         brand.setStyleSheet(
-            f"font-size: 20px; font-weight: 800; color: {COLORS['text_inverse']};"
+            f"font-size: 20px; font-weight: 800; color: {ui_style.COLORS['text_inverse']};"
         )
         brand_row.addWidget(brand)
         brand_row.addStretch()
@@ -144,7 +140,7 @@ class MainWindow(QMainWindow):
 
         tagline = QLabel("Focus · Analyze · Improve")
         tagline.setStyleSheet(
-            f"font-size: 11px; color: {COLORS['text_muted']}; padding: 0 20px 14px 66px;"
+            f"font-size: 11px; color: {ui_style.COLORS['text_muted']}; padding: 0 20px 14px 66px;"
         )
         layout.addWidget(tagline)
 
@@ -154,7 +150,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(divider)
 
         self.nav_list = QListWidget()
-        self.nav_list.setStyleSheet(SIDEBAR_STYLE)
+        self.nav_list.setStyleSheet(ui_style.get_sidebar_style())
         self.nav_list.setFont(QFont("Microsoft YaHei", 11))
         self.nav_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.nav_list.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -172,16 +168,16 @@ class MainWindow(QMainWindow):
 
         other_title = QLabel("其他")
         other_title.setStyleSheet(
-            f"font-size: 12px; color: {COLORS['text_muted']}; padding: 10px 18px 4px 18px; font-weight: 700;"
+            f"font-size: 12px; color: {ui_style.COLORS['text_muted']}; padding: 10px 18px 4px 18px; font-weight: 700;"
         )
         layout.addWidget(other_title)
 
         self.chk_dark_mode = QCheckBox("深色模式")
-        self.chk_dark_mode.setChecked(True)
+        self.chk_dark_mode.setChecked(ui_style.is_dark_theme())
         self.chk_dark_mode.setStyleSheet(
             f"""
             QCheckBox {{
-                color: {COLORS['text_secondary']};
+                color: {ui_style.COLORS['text_secondary']};
                 font-size: 14px;
                 padding: 4px 18px 8px 18px;
             }}
@@ -189,34 +185,34 @@ class MainWindow(QMainWindow):
                 width: 34px;
                 height: 18px;
                 border-radius: 9px;
-                background: {COLORS['panel_bg']};
-                border: 1px solid {COLORS['border']};
+                background: {ui_style.COLORS['panel_bg']};
+                border: 1px solid {ui_style.COLORS['border']};
             }}
             QCheckBox::indicator:checked {{
-                background: {COLORS['primary']};
-                border: 1px solid {COLORS['primary']};
+                background: {ui_style.COLORS['primary']};
+                border: 1px solid {ui_style.COLORS['primary']};
             }}
             """
         )
-        self.chk_dark_mode.stateChanged.connect(self._keep_dark_mode)
+        self.chk_dark_mode.clicked.connect(self._toggle_theme)
         layout.addWidget(self.chk_dark_mode)
 
         layout.addStretch()
 
         self.sidebar_version = QLabel("v1.4.0")
         self.sidebar_version.setStyleSheet(
-            f"font-size: 10px; color: {COLORS['text_muted']}; padding: 4px 16px;"
+            f"font-size: 10px; color: {ui_style.COLORS['text_muted']}; padding: 4px 16px;"
         )
         layout.addWidget(self.sidebar_version)
 
         self.sidebar_record_status = QLabel("● 记录中")
         self.sidebar_record_status.setStyleSheet(
-            f"font-size: 12px; color: {COLORS['success_green']}; font-weight: 700; padding: 2px 16px 8px 16px;"
+            f"font-size: 12px; color: {ui_style.COLORS['success_green']}; font-weight: 700; padding: 2px 16px 8px 16px;"
         )
         layout.addWidget(self.sidebar_record_status)
 
         self.sidebar_quit_btn = QPushButton("退出程序")
-        self.sidebar_quit_btn.setStyleSheet(BUTTON_DANGER_STYLE)
+        self.sidebar_quit_btn.setStyleSheet(ui_style.get_button_danger_style())
         self.sidebar_quit_btn.clicked.connect(self._quit_app)
         layout.addWidget(self.sidebar_quit_btn)
         return frame
@@ -249,7 +245,7 @@ class MainWindow(QMainWindow):
     def _build_top_bar(self) -> QWidget:
         bar = QFrame()
         bar.setObjectName("topBar")
-        bar.setStyleSheet(TOP_BAR_STYLE)
+        bar.setStyleSheet(ui_style.get_top_bar_style())
         bar.setFixedHeight(84)
 
         layout = QHBoxLayout(bar)
@@ -264,13 +260,13 @@ class MainWindow(QMainWindow):
 
         self.lbl_page_title = QLabel("今日概览")
         self.lbl_page_title.setStyleSheet(
-            f"font-size: 32px; font-weight: 800; color: {COLORS['text']};"
+            f"font-size: 32px; font-weight: 800; color: {ui_style.COLORS['text']};"
         )
         top_line.addWidget(self.lbl_page_title)
 
         self.lbl_today = QLabel(self._today_text())
         self.lbl_today.setStyleSheet(
-            f"font-size: 14px; color: {COLORS['text_secondary']}; font-weight: 600;"
+            f"font-size: 14px; color: {ui_style.COLORS['text_secondary']}; font-weight: 600;"
         )
         top_line.addWidget(self.lbl_today)
         top_line.addStretch()
@@ -278,7 +274,7 @@ class MainWindow(QMainWindow):
 
         self.lbl_page_hint = QLabel("聚焦今天的使用结构、效率与提醒")
         self.lbl_page_hint.setStyleSheet(
-            f"font-size: 12px; color: {COLORS['text_secondary']};"
+            f"font-size: 12px; color: {ui_style.COLORS['text_secondary']};"
         )
         title_wrap.addWidget(self.lbl_page_hint)
         layout.addLayout(title_wrap)
@@ -287,18 +283,18 @@ class MainWindow(QMainWindow):
 
         self.top_summary = QLabel()
         self.top_summary.setStyleSheet(
-            f"font-size: 13px; color: {COLORS['text_secondary']}; font-weight: 700;"
+            f"font-size: 13px; color: {ui_style.COLORS['text_secondary']}; font-weight: 700;"
         )
         self._update_top_bar()
         layout.addWidget(self.top_summary)
 
         self.btn_pause = QPushButton("暂停记录")
-        self.btn_pause.setStyleSheet(BUTTON_SECONDARY_STYLE)
+        self.btn_pause.setStyleSheet(ui_style.get_button_secondary_style())
         self.btn_pause.clicked.connect(self._toggle_pause)
         layout.addWidget(self.btn_pause)
 
         self.btn_report = QPushButton("生成日报")
-        self.btn_report.setStyleSheet(BUTTON_PRIMARY_STYLE)
+        self.btn_report.setStyleSheet(ui_style.get_button_primary_style())
         self.btn_report.clicked.connect(self._quick_report)
         layout.addWidget(self.btn_report)
         return bar
@@ -306,7 +302,7 @@ class MainWindow(QMainWindow):
     def _build_bottom_bar(self) -> QWidget:
         bar = QFrame()
         bar.setObjectName("bottomBar")
-        bar.setStyleSheet(BOTTOM_BAR_STYLE)
+        bar.setStyleSheet(ui_style.get_bottom_bar_style())
         bar.setFixedHeight(38)
 
         layout = QHBoxLayout(bar)
@@ -315,19 +311,19 @@ class MainWindow(QMainWindow):
 
         self._status_dot = QLabel("●")
         self._status_dot.setStyleSheet(
-            f"font-size: 12px; color: {COLORS['success_green']}; font-weight: 700;"
+            f"font-size: 12px; color: {ui_style.COLORS['success_green']}; font-weight: 700;"
         )
         layout.addWidget(self._status_dot)
 
         self.lbl_status = QLabel("记录中")
         self.lbl_status.setStyleSheet(
-            f"font-size: 12px; color: {COLORS['success_green']}; font-weight: 700;"
+            f"font-size: 12px; color: {ui_style.COLORS['success_green']}; font-weight: 700;"
         )
         layout.addWidget(self.lbl_status)
 
         layout.addSpacing(16)
         self.lbl_time = QLabel(f"最近采样：{datetime.now().strftime('%H:%M:%S')}")
-        self.lbl_time.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
+        self.lbl_time.setStyleSheet(f"font-size: 12px; color: {ui_style.COLORS['text_muted']};")
         layout.addWidget(self.lbl_time)
         layout.addStretch()
         return bar
@@ -376,15 +372,15 @@ class MainWindow(QMainWindow):
         if self.worker.is_paused():
             self.worker.resume()
             self.btn_pause.setText("暂停记录")
-            self.btn_pause.setStyleSheet(BUTTON_SECONDARY_STYLE)
+            self.btn_pause.setStyleSheet(ui_style.get_button_secondary_style())
             text = "记录中"
-            color = COLORS["success_green"]
+            color = ui_style.COLORS["success_green"]
         else:
             self.worker.pause()
             self.btn_pause.setText("继续记录")
-            self.btn_pause.setStyleSheet(BUTTON_PRIMARY_STYLE)
+            self.btn_pause.setStyleSheet(ui_style.get_button_primary_style())
             text = "已暂停"
-            color = COLORS["warning_yellow"]
+            color = ui_style.COLORS["warning_yellow"]
 
         self.lbl_status.setText(text)
         self.lbl_status.setStyleSheet(
@@ -452,8 +448,31 @@ class MainWindow(QMainWindow):
         event.ignore()
         self.hide()
 
-    def _keep_dark_mode(self, state: int) -> None:
-        if state != Qt.Checked:
-            self.chk_dark_mode.blockSignals(True)
-            self.chk_dark_mode.setChecked(True)
-            self.chk_dark_mode.blockSignals(False)
+    def _toggle_theme(self, checked: bool) -> None:
+        if self._theme_rebuilding:
+            return
+        self._theme_rebuilding = True
+        self.current_theme = ui_style.apply_theme("dark" if checked else "light")
+        self.config["theme"] = self.current_theme
+        self._persist_theme_preference()
+        current_key = NAV_ITEMS[self.nav_list.currentRow()][1] if self.nav_list.currentRow() >= 0 else "today"
+        self.setStyleSheet(ui_style.get_global_style() + ui_style.get_input_style())
+        self._build_ui(current_key)
+        self._update_top_bar()
+        if self.worker.is_paused():
+            self._toggle_pause()
+            self._toggle_pause()
+        self._theme_rebuilding = False
+
+    def _persist_theme_preference(self) -> None:
+        import yaml
+
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                latest_config = yaml.safe_load(f) or {}
+        except FileNotFoundError:
+            latest_config = {}
+
+        latest_config["theme"] = self.current_theme
+        with open(self.config_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(latest_config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)

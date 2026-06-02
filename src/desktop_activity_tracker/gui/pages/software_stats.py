@@ -12,7 +12,8 @@ from PySide6.QtGui import QColor, QBrush
 
 from ... import database
 from ...utils import fmt_seconds
-from ..style import COLORS, BUTTON_PRIMARY_STYLE, BUTTON_SECONDARY_STYLE, SECTION_TITLE, get_category_color
+from .. import style as ui_style
+from ..style import COLORS, get_category_color
 
 
 class SoftwareStatsPage(QWidget):
@@ -26,7 +27,7 @@ class SoftwareStatsPage(QWidget):
         layout.setSpacing(14)
 
         title = QLabel("软件统计")
-        title.setStyleSheet(SECTION_TITLE)
+        title.setStyleSheet(ui_style.get_section_title())
         layout.addWidget(title)
 
         # Buttons row
@@ -34,12 +35,12 @@ class SoftwareStatsPage(QWidget):
         btn_layout.setSpacing(10)
 
         btn_export_csv = QPushButton("导出 CSV")
-        btn_export_csv.setStyleSheet(BUTTON_SECONDARY_STYLE)
+        btn_export_csv.setStyleSheet(ui_style.get_button_secondary_style())
         btn_export_csv.setCursor(Qt.PointingHandCursor)
         btn_export_csv.clicked.connect(self._export_csv)
 
         btn_export_md = QPushButton("导出 Markdown")
-        btn_export_md.setStyleSheet(BUTTON_PRIMARY_STYLE)
+        btn_export_md.setStyleSheet(ui_style.get_button_primary_style())
         btn_export_md.setCursor(Qt.PointingHandCursor)
         btn_export_md.clicked.connect(self._export_md)
 
