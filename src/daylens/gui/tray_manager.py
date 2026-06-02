@@ -231,7 +231,7 @@ class TrayManager:
             tooltip = (
                 f"DayLens\n"
                 f"今日有效: {fmt_seconds(effective)}\n"
-                f"学习/工作: {fmt_seconds(work_seconds)}\n"
+                f"办公: {fmt_seconds(work_seconds)}\n"
                 f"娱乐: {fmt_seconds(video_seconds)}\n"
                 f"状态: {status}"
             )

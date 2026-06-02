@@ -53,7 +53,7 @@ def _generate_suggestions(db_path, today_date, stats):
     if effective_sec > 0:
         work_ratio = work_sec / effective_sec
         if work_ratio < 0.3 and total_sec > 7200:
-            suggestions.append("今日学习/工作占比较低（<30%），建议增加学习时间")
+            suggestions.append("今日办公占比较低（<30%），建议增加办公时间")
 
     return suggestions, work_sec, video_sec
 
@@ -132,7 +132,7 @@ def export_markdown(db_path, date_str, output_dir):
     lines.append(f"- 挂机/空闲时间：{fmt_seconds(idle_sec)}")
     lines.append(f"- 娱乐时间：{fmt_seconds(entertain_sec)}")
     lines.append(f"- 最长使用软件：{top_app_title or top_app}")
-    lines.append(f"- 学习/工作占比：{work_pct}%")
+    lines.append(f"- 办公占比：{work_pct}%")
     lines.append(f"- 娱乐占比：{entertain_pct}%")
     lines.append("")
 
@@ -373,7 +373,7 @@ def export_weekly_report(db_path, year, week_number, output_dir):
     lines.append("")
     lines.append(f"- 总电脑使用：{fmt_seconds(totals['total_seconds'])}")
     lines.append(f"- 活跃时间：{fmt_seconds(totals['effective_seconds'])}")
-    lines.append(f"- 学习/工作：{fmt_seconds(totals['work_seconds'])}")
+    lines.append(f"- 办公：{fmt_seconds(totals['work_seconds'])}")
     lines.append(f"- 视频娱乐：{fmt_seconds(totals['video_seconds'])}")
     lines.append(f"- 日均有效：{fmt_seconds(totals['effective_seconds'] // max(days_with_data, 1))}")
     lines.append("")
@@ -385,7 +385,7 @@ def export_weekly_report(db_path, year, week_number, output_dir):
     # ── 每日趋势 ──
     lines.append("## 每日趋势")
     lines.append("")
-    lines.append("| 日期 | 有效时长 | 学习工作 | 视频娱乐 | 日效率 |")
+    lines.append("| 日期 | 有效时长 | 办公 | 视频娱乐 | 日效率 |")
     lines.append("|---|---:|---:|---:|---:|")
     work_spark = []
     video_spark = []
@@ -402,7 +402,7 @@ def export_weekly_report(db_path, year, week_number, output_dir):
 
     # Sparklines
     max_val = max(max(work_spark), max(video_spark)) or 1
-    lines.append(f"学习/工作趋势: `{_sparkline(work_spark, width=14, max_val=max_val)}`")
+    lines.append(f"办公趋势: `{_sparkline(work_spark, width=14, max_val=max_val)}`")
     lines.append(f"视频娱乐趋势: `{_sparkline(video_spark, width=14, max_val=max_val)}`")
     lines.append("")
 
@@ -431,7 +431,7 @@ def export_weekly_report(db_path, year, week_number, output_dir):
     if video_days >= 4:
         lines.append(f"- 本周有 {video_days} 天娱乐时间超过90分钟，建议下周控制")
     if work_days < 3 and days_with_data >= 5:
-        lines.append(f"- 本周仅 {work_days} 天学习/工作时间超过2小时，建议增加学习投入")
+        lines.append(f"- 本周仅 {work_days} 天办公时间超过2小时，建议增加办公投入")
     if days_with_data < 5:
         lines.append(f"- 本周仅 {days_with_data} 天有有效记录，建议提高电脑利用率")
     if not totals["video_seconds"] and not totals["work_seconds"]:
@@ -486,10 +486,10 @@ def export_monthly_report(db_path, year, month, output_dir):
     lines.append("")
     lines.append(f"- 总电脑使用：{fmt_seconds(totals['total_seconds'])}")
     lines.append(f"- 活跃时间：{fmt_seconds(eff_total)}")
-    lines.append(f"- 学习/工作：{fmt_seconds(work_total)}")
+    lines.append(f"- 办公：{fmt_seconds(work_total)}")
     lines.append(f"- 视频娱乐：{fmt_seconds(video_total)}")
     lines.append(f"- 日均有效：{fmt_seconds(avg_daily_eff)}")
-    lines.append(f"- 日均学习/工作：{fmt_seconds(work_total // max(days_with_data, 1))}")
+    lines.append(f"- 日均办公：{fmt_seconds(work_total // max(days_with_data, 1))}")
     lines.append(f"- 日均视频娱乐：{fmt_seconds(video_total // max(days_with_data, 1))}")
     lines.append("")
 
@@ -513,7 +513,7 @@ def export_monthly_report(db_path, year, month, output_dir):
         weeks[wkey]["eff"] += d["effective_seconds"]
         weeks[wkey]["days"] += 1
 
-    lines.append("| 周 | 有效时长 | 学习工作 | 视频娱乐 | 周效率 |")
+    lines.append("| 周 | 有效时长 | 办公 | 视频娱乐 | 周效率 |")
     lines.append("|---|---:|---:|---:|---:|")
     for wkey in sorted(weeks.keys()):
         w = weeks[wkey]
@@ -548,7 +548,7 @@ def export_monthly_report(db_path, year, month, output_dir):
     if video_total > 5400 * 30:
         lines.append("- 本月娱乐时间偏高，建议每月娱乐控制在 45 小时以内")
     if work_total > 0 and work_total / max(eff_total, 1) < 0.4:
-        lines.append("- 本月学习/工作占比偏低 (<40%)，下月可以设定学习目标")
+        lines.append("- 本月办公占比偏低 (<40%)，下月可以设定办公目标")
     if not totals["video_seconds"] and not totals["work_seconds"]:
         lines.append("- 数据不足，请保持记录以获取分析建议")
     lines.append("")

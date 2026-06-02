@@ -24,7 +24,7 @@ _DEFAULT_CATEGORIES = {
     "ai_tools": {
         "display_name": "AI工具",
         "active_rule": "interactive_required",
-        "process_names": ["chrome.exe", "msedge.exe", "Doubao.exe"],
+        "process_names": ["chrome.exe", "claude.exe", "msedge.exe", "Doubao.exe"],
         "title_keywords": [
             "ChatGPT", "Claude", "DeepSeek", "Gemini", "Kimi",
             "通义千问", "文心一言", "豆包", "Copilot", "Grok",

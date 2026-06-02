@@ -6,7 +6,7 @@ import os
 from datetime import date, datetime, timedelta
 
 import psutil
-from PySide6.QtCore import QFileInfo, QTimer
+from PySide6.QtCore import QFileInfo, Qt, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QFileIconProvider,
@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ... import database, timeline
+from ... import database, get_app_root, timeline
 from ...database import count_consecutive_days, query_today_sessions
 from .. import style as ui_style
 from ..widgets.dashboard_widgets import (
@@ -53,10 +53,10 @@ class TodayOverviewPage(QWidget):
         for column, (key, title, icon, color) in enumerate(
             [
                 ("total", "总使用时长", "T", ui_style.COLORS["primary"]),
-                ("work", "学习/工作时长", "W", ui_style.COLORS["coding_green"]),
+                ("work", "办公时长", "W", ui_style.COLORS["coding_green"]),
                 ("ent", "娱乐时长", "E", ui_style.COLORS["video_orange"]),
                 ("social", "社交通讯时长", "S", ui_style.COLORS["social_purple"]),
-                ("idle", "挂机时长", "I", ui_style.COLORS["idle_gray"]),
+                ("tools", "系统工具", "U", ui_style.COLORS["tools_grey"]),
             ]
         ):
             card = MetricCard(title, icon, color)
@@ -97,10 +97,10 @@ class TodayOverviewPage(QWidget):
         card = QFrame()
         card.setObjectName("dashboardCard")
         card.setStyleSheet(ui_style.get_dashboard_card_style())
-        card.setFixedHeight(220)
+        card.setFixedHeight(284)
 
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setContentsMargins(16, 14, 16, 12)
         layout.setSpacing(8)
 
         title = QLabel("时间分布")
@@ -108,21 +108,49 @@ class TodayOverviewPage(QWidget):
         layout.addWidget(title)
 
         row = QHBoxLayout()
-        row.setSpacing(10)
+        row.setSpacing(16)
         self.donut_widget = DonutChartWidget()
-        row.addWidget(self.donut_widget, 1)
+        self.donut_widget.setFixedWidth(158)
+        row.addWidget(self.donut_widget)
 
-        right_layout = QVBoxLayout()
         self.legend_widget = DistributionLegend()
-        right_layout.addWidget(self.legend_widget, 1)
-        self.active_ratio_label = QLabel("活跃时间占比：-")
-        self.active_ratio_label.setStyleSheet(
-            f"font-size: 13px; font-weight: 700; color: {ui_style.COLORS['primary']};"
-        )
-        right_layout.addWidget(self.active_ratio_label)
-        row.addLayout(right_layout, 1)
+        row.addWidget(self.legend_widget, 1)
 
-        layout.addLayout(row)
+        layout.addLayout(row, 1)
+
+        # Status bar: active ratio + idle
+        status_row = QHBoxLayout()
+        status_row.setSpacing(6)
+        self.active_dot = QLabel("●")
+        self.active_dot.setStyleSheet(
+            f"font-size: 13px; color: {ui_style.COLORS['success_green']}; font-weight: 700;"
+        )
+        status_row.addWidget(self.active_dot)
+        self.active_status_label = QLabel("活跃占比 --")
+        self.active_status_label.setStyleSheet(
+            f"font-size: 14px; font-weight: 700; color: {ui_style.COLORS['text']};"
+        )
+        status_row.addWidget(self.active_status_label)
+        status_row.addSpacing(16)
+        self.idle_dot = QLabel("●")
+        self.idle_dot.setStyleSheet(
+            f"font-size: 13px; color: {ui_style.COLORS['idle_gray']}; font-weight: 700;"
+        )
+        status_row.addWidget(self.idle_dot)
+        self.idle_status_label = QLabel("挂机 --")
+        self.idle_status_label.setStyleSheet(
+            f"font-size: 14px; color: {ui_style.COLORS['text_secondary']};"
+        )
+        status_row.addWidget(self.idle_status_label)
+        status_row.addStretch()
+        layout.addLayout(status_row)
+
+        # Auto-summary
+        self.summary_label = QLabel("")
+        self.summary_label.setStyleSheet(
+            f"font-size: 13px; color: {ui_style.COLORS['text_secondary']};"
+        )
+        layout.addWidget(self.summary_label)
         return card
 
     def _build_time_stats_card(self) -> QWidget:
@@ -216,7 +244,7 @@ class TodayOverviewPage(QWidget):
 
         legend_row = QHBoxLayout()
         for name, color in [
-            ("学习/工作", ui_style.COLORS["coding_green"]),
+            ("办公", ui_style.COLORS["coding_green"]),
             ("视频娱乐", ui_style.COLORS["video_orange"]),
             ("社交通讯", ui_style.COLORS["social_purple"]),
             ("其他", ui_style.COLORS["ai_blue"]),
@@ -232,7 +260,7 @@ class TodayOverviewPage(QWidget):
         legend_row.addStretch()
         layout.addLayout(legend_row)
 
-        self.timeline_widget = TimelineWidget(max_rows=6)
+        self.timeline_widget = TimelineWidget(max_rows=12)
         layout.addWidget(self.timeline_widget, 1)
         return card
 
@@ -244,30 +272,46 @@ class TodayOverviewPage(QWidget):
         idle_seconds = totals.get("idle_seconds", 0) or 0
         total_seconds = effective + idle_seconds
 
-        work_seconds, social_seconds, entertainment_seconds = self._category_stats(stats)
-        other_seconds = max(effective - work_seconds - social_seconds - entertainment_seconds, 0)
+        work_seconds, social_seconds, entertainment_seconds, tools_seconds = self._category_stats(stats)
+        other_seconds = max(effective - work_seconds - social_seconds - entertainment_seconds - tools_seconds, 0)
         history = self._load_metric_history(8)
         self._update_metrics(
             total_seconds,
             work_seconds,
             entertainment_seconds,
             social_seconds,
-            idle_seconds,
+            tools_seconds,
             history,
         )
 
+        # Donut chart: active time only — idle shown separately below
         distribution = [
-            ("学习/工作", work_seconds, ui_style.COLORS["coding_green"]),
+            ("办公", work_seconds, ui_style.COLORS["coding_green"]),
             ("视频娱乐", entertainment_seconds, ui_style.COLORS["video_orange"]),
             ("社交通讯", social_seconds, ui_style.COLORS["social_purple"]),
-            ("挂机", idle_seconds, ui_style.COLORS["idle_gray"]),
-            ("其他", other_seconds, ui_style.COLORS["ai_blue"]),
+            ("系统工具", tools_seconds, ui_style.COLORS["tools_grey"]),
         ]
-        self.donut_widget.set_data(total_seconds, distribution)
-        self.legend_widget.set_items(distribution, total_seconds)
+        if other_seconds > 0:
+            distribution.append(("其他", other_seconds, ui_style.COLORS["ai_blue"]))
+
+        self.donut_widget.set_data(effective, distribution)
+        self.legend_widget.set_items(distribution, effective)
 
         active_ratio = int(round((effective / total_seconds) * 100)) if total_seconds else 0
-        self.active_ratio_label.setText(f"活跃时间占比：{active_ratio}%")
+        idle_text = _compact_duration(idle_seconds)
+        self.active_status_label.setText(f"活跃占比 {active_ratio}%")
+        self.idle_status_label.setText(f"挂机 {idle_text}")
+        # Auto-summary: find category with highest percentage
+        max_name = ""
+        max_pct = 0
+        for name, seconds, _ in distribution:
+            pct = int(round(seconds / max(1, effective) * 100))
+            if pct > max_pct:
+                max_pct = pct
+                max_name = name
+        self.summary_label.setText(
+            f"{max_name}时间占比最高（{max_pct}%）" if max_name and max_pct > 0 else ""
+        )
         self.time_stats_labels["total"].setText(_compact_duration(total_seconds))
         self.time_stats_labels["active"].setText(_compact_duration(effective))
         self.time_stats_labels["idle"].setText(_compact_duration(idle_seconds))
@@ -306,38 +350,99 @@ class TodayOverviewPage(QWidget):
         rows = []
         for display_name, info in sorted(merged.items(), key=lambda item: -int(item[1]["seconds"]))[:5]:
             process_name = str(info["process"])
-            rows.append((process_name, display_name, int(info["seconds"]), self._app_icon(process_name)))
+            icon_process = self._icon_process_for_display(process_name, display_name)
+            rows.append((process_name, display_name, int(info["seconds"]), self._app_icon(icon_process)))
         self.top_app_card.set_items(rows)
+
+    @staticmethod
+    def _icon_process_for_display(process_name: str, display_name: str) -> str:
+        resolved_icons = {
+            "Codex": "Codex.exe",
+            "Claude Code": "claude.exe",
+            "Cursor": "Cursor.exe",
+        }
+        return resolved_icons.get(display_name, process_name)
 
     def _app_icon(self, process_name: str) -> QIcon | None:
         cache_key = process_name.lower()
         if cache_key in self._icon_cache:
             return self._icon_cache[cache_key]
 
-        # 1. Try pre-cached PNG icon
-        png_path = self._icon_png_path(cache_key)
-        if png_path:
-            icon = QIcon(png_path)
-            self._icon_cache[cache_key] = icon
-            return icon
-
-        # 2. Fall back to EXE icon extraction via QFileIconProvider
-        exe_path = self._find_exe_path(process_name)
-        icon = self._icon_provider.icon(QFileInfo(exe_path)) if exe_path else None
+        icon_source = self._resolve_icon_source(process_name)
+        icon = self._icon_from_source(icon_source) if icon_source else None
         self._icon_cache[cache_key] = icon
         return icon
 
+    def _resolve_icon_source(self, process_name: str) -> str | None:
+        shortcut_icon = self._desktop_shortcut_icon_path(process_name)
+        if shortcut_icon:
+            return shortcut_icon
+
+        png_path = self._icon_png_path(process_name.lower())
+        if png_path:
+            return png_path
+
+        return self._find_exe_path(process_name)
+
+    def _icon_from_source(self, icon_source: str) -> QIcon:
+        ext = os.path.splitext(icon_source)[1].lower()
+        if ext in {".ico", ".png", ".jpg", ".jpeg"}:
+            return QIcon(icon_source)
+        return self._icon_provider.icon(QFileInfo(icon_source))
+
     @staticmethod
     def _icon_png_path(process_name_lower: str) -> str | None:
-        """Return path to cached PNG icon, or None if not found."""
-        import sys
-        if getattr(sys, 'frozen', False):
-            base = sys._MEIPASS
-        else:
-            base = os.path.dirname(os.path.dirname(os.path.dirname(
-                os.path.dirname(os.path.abspath(__file__)))))
-        p = os.path.join(base, "assets", "icons", f"{process_name_lower}.png")
+        p = os.path.join(get_app_root(), "assets", "icons", f"{process_name_lower}.png")
         return p if os.path.isfile(p) else None
+
+    @staticmethod
+    def _desktop_shortcut_icon_path(process_name: str) -> str | None:
+        if os.name != "nt":
+            return None
+        try:
+            import win32com.client
+        except Exception:
+            return None
+
+        wanted = process_name.lower()
+        desktop_dirs = []
+        for env_name in ("USERPROFILE", "PUBLIC"):
+            base = os.environ.get(env_name)
+            if not base:
+                continue
+            desktop = os.path.join(base, "Desktop")
+            if os.path.isdir(desktop):
+                desktop_dirs.append(desktop)
+
+        shell = win32com.client.Dispatch("WScript.Shell")
+        for desktop in desktop_dirs:
+            for name in os.listdir(desktop):
+                if not name.lower().endswith(".lnk"):
+                    continue
+                shortcut_path = os.path.join(desktop, name)
+                try:
+                    shortcut = shell.CreateShortcut(shortcut_path)
+                    target_path = shortcut.TargetPath or ""
+                    if os.path.basename(target_path).lower() != wanted:
+                        continue
+                    icon_path = TodayOverviewPage._parse_icon_location(shortcut.IconLocation or "")
+                    if icon_path and os.path.exists(icon_path):
+                        return icon_path
+                    if target_path and os.path.exists(target_path):
+                        return target_path
+                except Exception:
+                    continue
+        return None
+
+    @staticmethod
+    def _parse_icon_location(icon_location: str) -> str:
+        icon_location = (icon_location or "").strip().strip('"')
+        if not icon_location:
+            return ""
+        if "," not in icon_location:
+            return icon_location
+        path_part, index_part = icon_location.rsplit(",", 1)
+        return path_part.strip().strip('"') if index_part.strip().lstrip("-").isdigit() else icon_location
 
     def _find_exe_path(self, process_name: str) -> str | None:
         for proc in psutil.process_iter(attrs=["name", "exe"]):
@@ -412,11 +517,12 @@ class TodayOverviewPage(QWidget):
         except Exception:
             return None
 
-    def _category_stats(self, stats: dict) -> tuple[int, int, int]:
+    def _category_stats(self, stats: dict) -> tuple[int, int, int, int]:
         work_keys = {"ai_tools", "coding", "reading", "creative"}
         work_seconds = 0
         social_seconds = 0
         entertainment_seconds = 0
+        tools_seconds = 0
         for item in stats.get("by_category", []):
             seconds = item.get("effective_seconds", 0) or 0
             category_key = item.get("category_key")
@@ -426,7 +532,9 @@ class TodayOverviewPage(QWidget):
                 social_seconds += seconds
             elif category_key in {"video", "gaming"}:
                 entertainment_seconds += seconds
-        return work_seconds, social_seconds, entertainment_seconds
+            elif category_key == "tools":
+                tools_seconds += seconds
+        return work_seconds, social_seconds, entertainment_seconds, tools_seconds
 
     def _color_for_category(self, category_key: str) -> str:
         if category_key in {"ai_tools", "coding", "reading", "creative"}:
@@ -440,27 +548,34 @@ class TodayOverviewPage(QWidget):
         return ui_style.COLORS["ai_blue"]
 
     def _resolve_display(self, process_name: str, app_details: list[dict]) -> str:
+        wrapper_processes = {"WindowsTerminal.exe", "cmd.exe", "powershell.exe", "Code.exe", "Cursor.exe"}
+
+        # Wrapper processes: resolve actual app from window title first
+        if process_name in wrapper_processes:
+            top_title = ""
+            top_seconds = 0
+            for detail in app_details:
+                if detail.get("process_name") != process_name:
+                    continue
+                seconds = detail.get("effective_seconds", 0) or 0
+                if seconds > top_seconds:
+                    top_seconds = seconds
+                    top_title = detail.get("window_title", "") or ""
+
+            for keyword, label in [
+                ("Claude Code", "Claude Code"),
+                ("Codex", "Codex"),
+                ("Cursor", "Cursor"),
+            ]:
+                if keyword.lower() in top_title.lower():
+                    return label
+            # Fallback: use display mapping or process name
+            return self.display_name_mapping.get(process_name) or process_name
+
+        # Non-wrapper: use static display name mapping
         mapped_name = self.display_name_mapping.get(process_name)
         if mapped_name and mapped_name != process_name:
             return mapped_name
-
-        wrapper_processes = {"WindowsTerminal.exe", "cmd.exe", "powershell.exe", "Code.exe", "Cursor.exe"}
-        if process_name not in wrapper_processes:
-            return mapped_name or process_name
-
-        top_title = ""
-        top_seconds = 0
-        for detail in app_details:
-            if detail.get("process_name") != process_name:
-                continue
-            seconds = detail.get("effective_seconds", 0) or 0
-            if seconds > top_seconds:
-                top_seconds = seconds
-                top_title = detail.get("window_title", "") or ""
-
-        for keyword, label in [("Codex", "Codex"), ("Cursor", "Cursor"), ("Claude Code", "Claude Code")]:
-            if keyword.lower() in top_title.lower():
-                return label
         return mapped_name or process_name
 
     def _load_metric_history(self, days: int) -> list[dict]:
@@ -472,14 +587,14 @@ class TodayOverviewPage(QWidget):
             totals = stats.get("totals", {})
             effective = totals.get("effective_seconds", 0) or 0
             idle_seconds = totals.get("idle_seconds", 0) or 0
-            work_seconds, social_seconds, entertainment_seconds = self._category_stats(stats)
+            work_seconds, social_seconds, entertainment_seconds, tools_seconds = self._category_stats(stats)
             result.append(
                 {
                     "total": effective + idle_seconds,
                     "work": work_seconds,
                     "ent": entertainment_seconds,
                     "social": social_seconds,
-                    "idle": idle_seconds,
+                    "tools": tools_seconds,
                 }
             )
         return result
@@ -490,7 +605,7 @@ class TodayOverviewPage(QWidget):
         work_seconds: int,
         entertainment_seconds: int,
         social_seconds: int,
-        idle_seconds: int,
+        tools_seconds: int,
         history: list[dict],
     ) -> None:
         values = {
@@ -498,7 +613,7 @@ class TodayOverviewPage(QWidget):
             "work": work_seconds,
             "ent": entertainment_seconds,
             "social": social_seconds,
-            "idle": idle_seconds,
+            "tools": tools_seconds,
         }
         for key, current in values.items():
             yesterday = history[-2].get(key, 0) if len(history) >= 2 else 0

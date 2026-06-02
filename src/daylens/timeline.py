@@ -111,7 +111,7 @@ def identify_focus_blocks(timeline):
     i = 0
     while i < len(timeline):
         b = timeline[i]
-        if b.work_seconds < 1200 or b.dominant_category not in ("学习/工作", "AI工具"):
+        if b.work_seconds < 1200 or b.dominant_category not in ("办公", "AI工具"):
             i += 1
             continue
 
@@ -126,7 +126,7 @@ def identify_focus_blocks(timeline):
 
         while j < len(timeline):
             bj = timeline[j]
-            if bj.dominant_category in ("学习/工作", "AI工具"):
+            if bj.dominant_category in ("办公", "AI工具"):
                 if entertainment_break < 300:  # < 5 min entertainment in gap
                     total_eff += bj.effective_seconds
                     total_work += bj.work_seconds
@@ -195,7 +195,7 @@ def calc_fragmentation(timeline, switch_count):
 
 def generate_one_line_review(timeline, focus_blocks, fragmentation_index):
     """Generate a one-sentence review of today's usage pattern."""
-    work_blocks = [b for b in timeline if b.dominant_category in ("学习/工作", "AI工具") and b.work_seconds >= 600]
+    work_blocks = [b for b in timeline if b.dominant_category in ("办公", "AI工具") and b.work_seconds >= 600]
     entertainment_blocks = [b for b in timeline if b.dominant_category == "娱乐" and b.entertainment_seconds >= 600]
 
     # Morning: 06:00-12:00, Afternoon: 12:00-18:00, Evening: 18:00-24:00
@@ -215,9 +215,9 @@ def generate_one_line_review(timeline, focus_blocks, fragmentation_index):
         key=lambda x: x[1]
     )
     if max_work_period[1] >= 1800:
-        parts.append(f"{max_work_period[0]}学习较集中")
+        parts.append(f"{max_work_period[0]}办公较集中")
     elif morning_work + afternoon_work + evening_work < 1800:
-        parts.append("今日学习/工作时间偏少")
+        parts.append("今日办公时间偏少")
 
     # Entertainment pattern
     max_ent_period = max(
@@ -345,7 +345,7 @@ def _finalise_block(b):
         return
 
     if b.work_seconds >= 1200:
-        b.dominant_category = "学习/工作"
+        b.dominant_category = "办公"
     elif b.entertainment_seconds >= 900:
         b.dominant_category = "娱乐"
     elif idle >= 1200 and b.work_seconds < 600:

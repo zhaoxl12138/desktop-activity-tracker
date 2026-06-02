@@ -144,15 +144,21 @@ class DonutChartWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        side = max(120, min(self.width(), self.height()) - 18)
+        side = max(100, min(self.width(), self.height()) - 24)
         rect = QRectF((self.width() - side) / 2, (self.height() - side) / 2, side, side)
-        ring_width = max(12.0, side * 0.12)
+        ring_width = min(24.0, max(20.0, side * 0.14))
 
         base_pen = QPen(QColor(COLORS["border"]), ring_width)
+        base_pen.setCapStyle(Qt.RoundCap)
         painter.setPen(base_pen)
         painter.drawArc(rect, 0, 360 * 16)
 
         if self._total_seconds <= 0:
+            painter.setPen(QColor(COLORS["text_muted"]))
+            font = painter.font()
+            font.setPixelSize(12)
+            painter.setFont(font)
+            painter.drawText(rect, Qt.AlignCenter, "暂无数据")
             return
 
         start_angle = 90 * 16
@@ -165,6 +171,21 @@ class DonutChartWidget(QWidget):
             painter.setPen(pen)
             painter.drawArc(rect, -start_angle, -span)
             start_angle += span
+
+        # Center text: active duration
+        font = painter.font()
+        font.setPixelSize(11)
+        painter.setFont(font)
+        painter.setPen(QColor(COLORS["text_muted"]))
+        painter.drawText(QRectF(rect.left(), rect.center().y() - 18, rect.width(), 16),
+                         Qt.AlignCenter, "活跃时长")
+
+        font.setPixelSize(17)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QColor(COLORS["text"]))
+        painter.drawText(QRectF(rect.left(), rect.center().y(), rect.width(), 22),
+                         Qt.AlignCenter, fmt_seconds(self._total_seconds))
 
 
 class FocusTimelineBarWidget(QWidget):
@@ -211,7 +232,7 @@ class FocusTimelineBarWidget(QWidget):
 
 class TimelineWidget(QFrame):
     CATEGORY_COLORS = {
-        "学习/工作": COLORS["coding_green"],
+        "办公": COLORS["coding_green"],
         "视频娱乐": COLORS["video_orange"],
         "社交通讯": COLORS["social_purple"],
         "挂机": COLORS["idle_gray"],
@@ -675,7 +696,7 @@ class DistributionLegend(QWidget):
         super().__init__(parent)
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
-        self.layout.setSpacing(6)
+        self.layout.setSpacing(10)
         self._rows: list[QWidget] = []
 
     def set_items(self, items: list[tuple[str, int, str]], total_seconds: int) -> None:
@@ -687,28 +708,56 @@ class DistributionLegend(QWidget):
         total = max(1, total_seconds)
         for name, seconds, color in items:
             row = QWidget()
-            line = QGridLayout(row)
-            line.setContentsMargins(0, 0, 0, 0)
-            line.setHorizontalSpacing(6)
-            line.setVerticalSpacing(0)
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(8)
 
             dot = QLabel("●")
+            dot.setFixedWidth(16)
             dot.setStyleSheet(f"color: {color}; font-size: 13px;")
-            line.addWidget(dot, 0, 0)
+            row_layout.addWidget(dot)
 
             name_label = QLabel(name)
-            name_label.setStyleSheet(f"font-size: 13px; color: {COLORS['text_secondary']};")
-            line.addWidget(name_label, 0, 1)
+            name_label.setFixedWidth(64)
+            name_label.setStyleSheet(
+                f"font-size: 14px; font-weight: 600; color: {COLORS['text']};"
+            )
+            row_layout.addWidget(name_label)
+
+            bar = QProgressBar()
+            bar.setTextVisible(False)
+            bar.setRange(0, 100)
+            bar.setValue(int(round(seconds / total * 100)))
+            bar.setFixedHeight(8)
+            bar.setStyleSheet(f"""
+                QProgressBar {{
+                    background: {COLORS['panel_bg']};
+                    border: none;
+                    border-radius: 4px;
+                }}
+                QProgressBar::chunk {{
+                    background: {color};
+                    border-radius: 4px;
+                }}
+            """)
+            row_layout.addWidget(bar, 1)
 
             time_label = QLabel(fmt_seconds(seconds))
-            time_label.setStyleSheet(f"font-size: 13px; color: {COLORS['text']}; font-weight: 600;")
-            line.addWidget(time_label, 0, 2, Qt.AlignRight)
+            time_label.setFixedWidth(60)
+            time_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            time_label.setStyleSheet(
+                f"font-size: 14px; color: {COLORS['text']}; font-weight: 700;"
+            )
+            row_layout.addWidget(time_label)
 
-            percent_label = QLabel(f"{int(round(seconds / total * 100))}%")
-            percent_label.setStyleSheet(f"font-size: 13px; color: {COLORS['text_muted']};")
-            line.addWidget(percent_label, 0, 3, Qt.AlignRight)
+            pct_label = QLabel(f"{int(round(seconds / total * 100))}%")
+            pct_label.setFixedWidth(36)
+            pct_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            pct_label.setStyleSheet(
+                f"font-size: 13px; color: {COLORS['text_secondary']}; font-weight: 600;"
+            )
+            row_layout.addWidget(pct_label)
 
-            line.setColumnStretch(1, 1)
             self.layout.addWidget(row)
             self._rows.append(row)
 

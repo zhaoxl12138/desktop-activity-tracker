@@ -120,16 +120,11 @@ class SessionTracker:
         self._last_process_name = ""
         self._last_exe_path = ""
 
-        # Phantom input filter — some systems have drivers/services that
-        # generate spurious HID events, resetting GetLastInputInfo() every
-        # ~5–10s. We detect phantom resets by the sharp drop in raw idle
-        # (3–12s in one tick) and accumulate idle by wall-clock time.
-        self._last_raw_idle: float = 0.0
-        self._effective_idle: float = 0.0
-        self._phantom_active: bool = False
-        self._phantom_ticks: int = 0
-        self._phantom_low_ticks: int = 0
-        self._oscillation_ticks: int = 0
+        # Rolling idle average: smooths out phantom HID resets that cause
+        # GetLastInputInfo() to jump 15→0 in one tick. A single phantom
+        # event barely moves the 5-sample average.
+        self._idle_samples: list[float] = []
+        self._avg_idle: float = 0.0
 
     # ── Public API ──────────────────────────────────────────────────
 
@@ -178,10 +173,17 @@ class SessionTracker:
             cat_name = "空闲"
             active_rule = "interactive_required"
         else:
-            cat = self.classifier.classify(process_name, raw_title)
-            cat_key = cat["category_key"]
-            cat_name = cat["category_name"]
-            active_rule = cat["active_rule"]
+            # DayLens self-window: running from source (python.exe / pythonw.exe)
+            # shows up as python, not DayLens.exe. Force tools category.
+            if process_name in ("python.exe", "pythonw.exe") and "daylens" in raw_title.lower():
+                cat_key = "tools"
+                cat_name = "系统工具"
+                active_rule = "interactive_required"
+            else:
+                cat = self.classifier.classify(process_name, raw_title)
+                cat_key = cat["category_key"]
+                cat_name = cat["category_name"]
+                active_rule = cat["active_rule"]
 
         # Normalize title
         norm_title = normalize_window_title(process_name, raw_title)
@@ -216,11 +218,8 @@ class SessionTracker:
 
         # Start new session if needed
         if self._current is None:
-            self._effective_idle = 0.0
-            self._phantom_active = False
-            self._phantom_ticks = 0
-            self._phantom_low_ticks = 0
-            self._oscillation_ticks = 0
+            self._idle_samples.clear()
+            self._avg_idle = 0.0
             self._current = ActivitySession(
                 session_id=uuid.uuid4().hex[:12],
                 start_time=now,
@@ -269,78 +268,20 @@ class SessionTracker:
                     self._current.effective_seconds += self.sample_interval
             else:
                 self._current.effective_seconds += self.sample_interval
-            self._effective_idle = 0.0
-            self._phantom_active = False
-            self._phantom_ticks = 0
-            self._phantom_low_ticks = 0
-            self._oscillation_ticks = 0
-            self._last_raw_idle = idle_seconds
+            self._idle_samples.clear()
+            self._avg_idle = 0.0
             return
 
         # ── Idle tracking for interactive_required activities ────
-        # _effective_idle tracks our best estimate of genuine idle time.
-        #
-        # Phantom HID filter: some drivers generate spurious input events
-        # that reset GetLastInputInfo() every 5-10s. We detect the
-        # characteristic sharp drop from [10, idle_threshold) by [5,10]s.
-        # During uncertain phantom periods we freeze _effective_idle
-        # rather than accumulating — false positives must not eat
-        # effective time.
-        idle_delta = self._last_raw_idle - idle_seconds
-        is_phantom = (
-            5 <= idle_delta <= 10
-            and 10 <= self._last_raw_idle < self.idle_threshold
-        )
+        # Rolling average of last 5 raw idle samples. Spurious HID events
+        # that reset GetLastInputInfo() (e.g. 15s→0s) barely affect the
+        # average, so no special phantom filtering is needed.
+        self._idle_samples.append(idle_seconds)
+        if len(self._idle_samples) > 5:
+            self._idle_samples.pop(0)
+        self._avg_idle = sum(self._idle_samples) / len(self._idle_samples)
 
-        if is_phantom:
-            self._phantom_active = True
-            self._phantom_ticks = 0
-            self._phantom_low_ticks = 0
-            # Freeze _effective_idle — don't accumulate during uncertainty
-
-        elif self._phantom_active:
-            self._phantom_ticks += 1
-
-            # Exit A: idle genuinely growing → confirm real idle
-            if idle_seconds > 15:
-                self._effective_idle = idle_seconds + self._phantom_ticks * self.sample_interval
-                self._phantom_active = False
-                self._phantom_ticks = 0
-            # Exit B: user active (idle < 2) for 5+ consecutive ticks
-            elif idle_seconds < 2:
-                self._phantom_low_ticks += 1
-                if self._phantom_low_ticks >= 5:
-                    self._effective_idle = idle_seconds
-                    self._phantom_active = False
-                    self._phantom_ticks = 0
-                    self._phantom_low_ticks = 0
-            else:
-                self._phantom_low_ticks = 0
-            # Exit C: safety timeout (5 min) → treat as real idle
-            if self._phantom_ticks > 300:
-                self._effective_idle = self.idle_threshold + 1
-                self._phantom_active = False
-                self._phantom_ticks = 0
-
-        elif idle_seconds < 2 and self._last_raw_idle < 2:
-            # User is continuously active — keep effective_idle at 0
-            self._effective_idle = 0.0
-            self._oscillation_ticks = 0
-
-        elif idle_seconds >= self._last_raw_idle:
-            # Idle stable or increasing — normal accumulation
-            self._effective_idle = max(self._effective_idle, idle_seconds)
-            self._oscillation_ticks = 0
-
-        else:
-            # Natural decrease → genuine user activity resuming
-            self._effective_idle = idle_seconds
-            self._phantom_active = False
-            self._oscillation_ticks = 0
-
-        self._last_raw_idle = idle_seconds
-
-        if self._effective_idle <= self.idle_threshold:
+        if self._avg_idle <= self.idle_threshold:
             self._current.effective_seconds += self.sample_interval
         else:
             self._current.idle_seconds += self.sample_interval
@@ -376,6 +317,6 @@ class SessionTracker:
             "is_user_active": idle_seconds <= self.idle_threshold,
             "is_effective": (
                 s.active_rule == "passive_allowed" or
-                self._effective_idle <= self.idle_threshold
+                self._avg_idle <= self.idle_threshold
             ) if s else False,
         }

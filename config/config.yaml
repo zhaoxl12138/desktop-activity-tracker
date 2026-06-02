@@ -10,7 +10,7 @@ tracker:
 # ── 基础配置 ──
 sample_interval_seconds: 5
 idle_threshold_seconds: 60
-db_path: data/usage.db
+db_path: D:\OfficeSoftware\DayLens\data\usage.db
 obsidian_output_path: ''
 
 # ── 分类规则 ──
@@ -22,6 +22,7 @@ categories:
     match:
       process_names:
       - chrome.exe
+      - claude.exe
       - Doubao.exe
       - msedge.exe
       title_keywords:
@@ -224,3 +225,4 @@ categories:
     match:
       process_names: []
       title_keywords: []
+theme: dark

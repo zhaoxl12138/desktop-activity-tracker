@@ -47,19 +47,26 @@ NAV_ITEMS = [
 ]
 
 DISPLAY_NAME_MAPPING = {
-    "WindowsTerminal.exe": "Windows Terminal",
+    "WindowsTerminal.exe": "终端",
     "Code.exe": "VS Code",
     "Cursor.exe": "Cursor",
     "chrome.exe": "Chrome",
     "msedge.exe": "Edge",
-    "QyClient.exe": "QQ",
+    "QyClient.exe": "爱奇艺",
+    "QyPlayer.exe": "爱奇艺",
+    "QQ.exe": "QQ",
+    "QQLive.exe": "腾讯视频",
+    "QQMusic.exe": "QQ音乐",
     "WeChat.exe": "微信",
     "Weixin.exe": "微信",
     "Codex.exe": "Codex",
     "codex.exe": "Codex",
     "Obsidian.exe": "Obsidian",
     "python.exe": "Python",
+    "pythonw.exe": "DayLens",
+    "DayLens.exe": "DayLens",
     "explorer.exe": "资源管理器",
+    "claude.exe": "Claude Code",
 }
 
 
@@ -134,7 +141,7 @@ class MainWindow(QMainWindow):
 
         brand = QLabel("DayLens")
         brand.setStyleSheet(
-            f"font-size: 20px; font-weight: 800; color: {ui_style.COLORS['text_inverse']};"
+            f"font-size: 20px; font-weight: 800; color: {ui_style.COLORS['brand']};"
         )
         brand_row.addWidget(brand)
         brand_row.addStretch()
@@ -232,7 +239,7 @@ class MainWindow(QMainWindow):
                 self.reports_dir,
                 self.config.get("obsidian_output_path", "").strip(),
             ),
-            "rules": RuleConfigPage(self.config_path),
+            "rules": RuleConfigPage(self.config_path, self.worker),
             "settings": SettingsPage(
                 self.config_path,
                 self.db_path,
@@ -411,13 +418,18 @@ class MainWindow(QMainWindow):
             for item in stats.get("by_category", [])
             if item.get("category_key") in work_keys
         )
+        tools_seconds = sum(
+            item.get("effective_seconds", 0) or 0
+            for item in stats.get("by_category", [])
+            if item.get("category_key") == "tools"
+        )
         video_seconds = sum(
             item.get("effective_seconds", 0) or 0
             for item in stats.get("by_category", [])
             if item.get("category_key") in {"video", "gaming"}
         )
         self.top_summary.setText(
-            f"总活跃 {fmt_seconds(effective)}  |  学习/工作 {fmt_seconds(work_seconds)}  |  娱乐 {fmt_seconds(video_seconds)}"
+            f"总活跃 {fmt_seconds(effective)}  |  系统工具 {fmt_seconds(tools_seconds)}  |  办公 {fmt_seconds(work_seconds)}  |  娱乐 {fmt_seconds(video_seconds)}"
         )
 
     def _quick_report(self) -> None:

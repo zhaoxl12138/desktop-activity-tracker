@@ -1,14 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-from pathlib import Path
-
-
-spec_root = Path(SPECPATH) if 'SPECPATH' in globals() else Path.cwd()
-stale_onefile_exe = spec_root / 'dist' / 'DayLens.exe'
-if stale_onefile_exe.exists():
-    stale_onefile_exe.unlink()
-
-
 a = Analysis(
     ['src\\daylens\\main.py'],
     pathex=[],

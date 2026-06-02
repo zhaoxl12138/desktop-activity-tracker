@@ -184,11 +184,13 @@ class SettingsPage(QWidget):
         sample_interval = self.spin_interval.value()
         idle_threshold = self.spin_idle.value()
 
+        # Reload config to pick up any external changes
+        self._load_config()
+
         # Write to both top-level and tracker sub-dict for compatibility
         self.config["sample_interval_seconds"] = sample_interval
         self.config["idle_threshold_seconds"] = idle_threshold
         self.config["db_path"] = self.edit_db.text().strip()
-        self.config["reports_dir"] = self.edit_reports.text().strip()
         self.config["obsidian_output_path"] = self.edit_obsidian.text().strip()
 
         tracker = self.config.setdefault("tracker", {})
@@ -196,13 +198,13 @@ class SettingsPage(QWidget):
         tracker["idle_threshold_seconds"] = idle_threshold
 
         with open(self.config_path, "w", encoding="utf-8") as f:
-            yaml.dump(self.config, f, allow_unicode=True, default_flow_style=False)
+            yaml.safe_dump(self.config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
-        # Hot-reload worker settings
+        # Hot-reload worker (settings + classifier)
         if self.worker:
             self.worker.update_settings(self.config)
 
-        QMessageBox.information(self, "成功", "设置已保存。\n采样间隔和空闲阈值已实时生效。")
+        QMessageBox.information(self, "成功", "设置已保存，采样间隔和空闲阈值已实时生效。")
 
     def _browse_dir(self, edit):
         d = QFileDialog.getExistingDirectory(self, "选择目录")

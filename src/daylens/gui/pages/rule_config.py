@@ -38,9 +38,10 @@ def build_list_style() -> str:
 
 
 class RuleConfigPage(QWidget):
-    def __init__(self, config_path):
+    def __init__(self, config_path, worker=None):
         super().__init__()
         self.config_path = config_path
+        self.worker = worker
         self._load_config()
 
         layout = QVBoxLayout(self)
@@ -218,7 +219,9 @@ class RuleConfigPage(QWidget):
         cat["active_rule"] = "interactive_required" if self.edit_rule.currentIndex() == 0 else "passive_allowed"
         self._save_config()
         self._populate_list()
-        QMessageBox.information(self, "成功", f"分类 '{cat['display_name']}' 已保存")
+        if self.worker:
+            self.worker.reload_classifier()
+        QMessageBox.information(self, "成功", f"分类 '{cat['display_name']}' 已保存（已实时生效）")
 
     def _add_category(self):
         new_key = f"custom_{len(self.config['categories'])}"
@@ -229,6 +232,8 @@ class RuleConfigPage(QWidget):
         }
         self._save_config()
         self._populate_list()
+        if self.worker:
+            self.worker.reload_classifier()
         self.cat_list.setCurrentRow(self.cat_list.count() - 1)
 
     def _delete_current(self):
@@ -244,4 +249,6 @@ class RuleConfigPage(QWidget):
         if reply == QMessageBox.Yes:
             del self.config["categories"][key]
             self._save_config()
+            if self.worker:
+                self.worker.reload_classifier()
             self._populate_list()
