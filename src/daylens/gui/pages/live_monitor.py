@@ -180,11 +180,9 @@ class LiveMonitorPage(QWidget):
         return tile
 
     def on_sample_updated(self, sample):
-        is_ignored = bool(sample.get("is_ignored"))
-        if not is_ignored:
-            self._samples.insert(0, sample)
-            if len(self._samples) > 20:
-                self._samples = self._samples[:20]
+        self._samples.insert(0, sample)
+        if len(self._samples) > 20:
+            self._samples = self._samples[:20]
 
         proc = sample.get("process_name", "--")
         title = (sample.get("window_title", "--") or "--")[:90]
@@ -217,7 +215,7 @@ class LiveMonitorPage(QWidget):
         self.lbl_session_idle.setText(fmt_seconds(sidle))
         self.lbl_idle.setText(f"{idle_s:.0f}s")
 
-        if is_ignored:
+        if sample.get("is_ignored"):
             self.lbl_status.setText("不计入统计")
             self.lbl_status.setStyleSheet(
                 f"""

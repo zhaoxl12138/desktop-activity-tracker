@@ -8,12 +8,6 @@ from . import get_app_root
 
 # Process names of the tracker itself — excluded from all queries
 _SELF_PROCS = {"daylens.exe", "daylens-debug.exe", "desktop-activity-tracker.exe"}
-SELF_PROCESS_FILTER_SQL = """
-(
-    LOWER(COALESCE(process_name, '')) NOT LIKE 'daylens%'
-    AND LOWER(COALESCE(process_name, '')) NOT IN ('desktop-activity-tracker.exe')
-)
-"""
 
 _WAL_CHECKPOINT_INTERVAL = 100  # commits between WAL checkpoints
 
@@ -234,11 +228,8 @@ def _maybe_checkpoint(conn):
 def query_date(db_path, date_str):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    rows = conn.execute(f"""
-        SELECT * FROM activity_logs
-        WHERE date = ? AND {SELF_PROCESS_FILTER_SQL}
-        ORDER BY timestamp
-        """,
+    rows = conn.execute(
+        "SELECT * FROM activity_logs WHERE date = ? ORDER BY timestamp",
         (date_str,)
     ).fetchall()
     conn.close()
@@ -250,28 +241,28 @@ def _query_date_stats_from_logs(db_path, date_str):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
 
-    totals = conn.execute(f"""
+    totals = conn.execute("""
         SELECT
             COUNT(*) as total_samples,
             SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds,
             SUM(CASE WHEN is_effective = 0 THEN duration_seconds ELSE 0 END) as idle_seconds,
             SUM(duration_seconds) as total_seconds
-        FROM activity_logs WHERE date = ? AND {SELF_PROCESS_FILTER_SQL}
+        FROM activity_logs WHERE date = ?
     """, (date_str,)).fetchone()
 
-    by_category = conn.execute(f"""
+    by_category = conn.execute("""
         SELECT
             category_key,
             category_name,
             SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds,
             SUM(CASE WHEN is_effective = 0 THEN duration_seconds ELSE 0 END) as idle_seconds,
             SUM(duration_seconds) as total_seconds
-        FROM activity_logs WHERE date = ? AND {SELF_PROCESS_FILTER_SQL}
+        FROM activity_logs WHERE date = ?
         GROUP BY category_key, category_name
         ORDER BY effective_seconds DESC
     """, (date_str,)).fetchall()
 
-    by_app = conn.execute(f"""
+    by_app = conn.execute("""
         SELECT
             process_name,
             window_title,
@@ -279,17 +270,17 @@ def _query_date_stats_from_logs(db_path, date_str):
             category_name,
             SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds,
             COUNT(*) as samples
-        FROM activity_logs WHERE date = ? AND is_effective = 1 AND {SELF_PROCESS_FILTER_SQL}
+        FROM activity_logs WHERE date = ? AND is_effective = 1
         GROUP BY process_name, category_key
         ORDER BY effective_seconds DESC
     """, (date_str,)).fetchall()
 
-    by_app_detail = conn.execute(f"""
+    by_app_detail = conn.execute("""
         SELECT
             process_name,
             window_title,
             SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds
-        FROM activity_logs WHERE date = ? AND is_effective = 1 AND {SELF_PROCESS_FILTER_SQL}
+        FROM activity_logs WHERE date = ? AND is_effective = 1
         GROUP BY process_name, window_title
         ORDER BY effective_seconds DESC
         LIMIT 50
@@ -317,28 +308,28 @@ def _query_date_stats_from_sessions(db_path, date_str):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
 
-    totals = conn.execute(f"""
+    totals = conn.execute("""
         SELECT
             COUNT(*) as total_samples,
             SUM(effective_seconds) as effective_seconds,
             SUM(idle_seconds) as idle_seconds,
             SUM(duration_seconds) as total_seconds
-        FROM activity_sessions WHERE date = ? AND {SELF_PROCESS_FILTER_SQL}
+        FROM activity_sessions WHERE date = ?
     """, (date_str,)).fetchone()
 
-    by_category = conn.execute(f"""
+    by_category = conn.execute("""
         SELECT
             category_key,
             category_name,
             SUM(effective_seconds) as effective_seconds,
             SUM(idle_seconds) as idle_seconds,
             SUM(duration_seconds) as total_seconds
-        FROM activity_sessions WHERE date = ? AND {SELF_PROCESS_FILTER_SQL}
+        FROM activity_sessions WHERE date = ?
         GROUP BY category_key, category_name
         ORDER BY effective_seconds DESC
     """, (date_str,)).fetchall()
 
-    by_app = conn.execute(f"""
+    by_app = conn.execute("""
         SELECT
             process_name,
             normalized_title as window_title,
@@ -346,17 +337,17 @@ def _query_date_stats_from_sessions(db_path, date_str):
             category_name,
             SUM(effective_seconds) as effective_seconds,
             COUNT(*) as samples
-        FROM activity_sessions WHERE date = ? AND effective_seconds > 0 AND {SELF_PROCESS_FILTER_SQL}
+        FROM activity_sessions WHERE date = ? AND effective_seconds > 0
         GROUP BY process_name, category_key
         ORDER BY effective_seconds DESC
     """, (date_str,)).fetchall()
 
-    by_app_detail = conn.execute(f"""
+    by_app_detail = conn.execute("""
         SELECT
             process_name,
             normalized_title as window_title,
             SUM(effective_seconds) as effective_seconds
-        FROM activity_sessions WHERE date = ? AND effective_seconds > 0 AND {SELF_PROCESS_FILTER_SQL}
+        FROM activity_sessions WHERE date = ? AND effective_seconds > 0
         GROUP BY process_name, normalized_title
         ORDER BY effective_seconds DESC
         LIMIT 50
@@ -380,7 +371,7 @@ def query_date_stats(db_path, date_str):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     row = conn.execute(
-        f"SELECT COUNT(*) as cnt FROM activity_sessions WHERE date = ? AND {SELF_PROCESS_FILTER_SQL}",
+        "SELECT COUNT(*) as cnt FROM activity_sessions WHERE date = ?",
         (date_str,)
     ).fetchone()
     conn.close()
@@ -404,7 +395,7 @@ def query_session_entertainment_trend(db_path, days=3):
         SELECT date,
                SUM(effective_seconds) as entertainment_seconds
         FROM activity_sessions
-        WHERE date IN ({placeholders}) AND category_key = 'video' AND {SELF_PROCESS_FILTER_SQL}
+        WHERE date IN ({placeholders}) AND category_key = 'video'
         GROUP BY date
         ORDER BY date
     """, dates).fetchall()
@@ -422,7 +413,7 @@ def query_entertainment_trend(db_path, days=3):
     """
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    row = conn.execute(f"SELECT COUNT(*) as cnt FROM activity_sessions WHERE {SELF_PROCESS_FILTER_SQL}").fetchone()
+    row = conn.execute("SELECT COUNT(*) as cnt FROM activity_sessions").fetchone()
     conn.close()
 
     if row and row["cnt"] > 0:
@@ -440,7 +431,7 @@ def query_entertainment_trend(db_path, days=3):
         SELECT date,
                SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as entertainment_seconds
         FROM activity_logs
-        WHERE date IN ({placeholders}) AND category_key = 'video' AND {SELF_PROCESS_FILTER_SQL}
+        WHERE date IN ({placeholders}) AND category_key = 'video'
         GROUP BY date
         ORDER BY date
     """, dates).fetchall()
@@ -454,7 +445,7 @@ def query_session_count(db_path, date_str):
     """Return the number of sessions for a given date (used as switch count)."""
     conn = sqlite3.connect(db_path)
     row = conn.execute(
-        f"SELECT COUNT(*) as cnt FROM activity_sessions WHERE date = ? AND {SELF_PROCESS_FILTER_SQL}",
+        "SELECT COUNT(*) as cnt FROM activity_sessions WHERE date = ?",
         (date_str,)
     ).fetchone()
     conn.close()
@@ -466,11 +457,11 @@ def query_today_sessions(db_path, date_str):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        f"""SELECT session_id, start_time, end_time, process_name,
+        """SELECT session_id, start_time, end_time, process_name,
                   normalized_title, category_key, category_name,
                   duration_seconds, effective_seconds, idle_seconds
            FROM activity_sessions
-           WHERE date = ? AND {SELF_PROCESS_FILTER_SQL}
+           WHERE date = ?
            ORDER BY start_time""",
         (date_str,)
     ).fetchall()
@@ -483,7 +474,7 @@ def count_consecutive_days(db_path):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        f"SELECT DISTINCT date FROM activity_sessions WHERE {SELF_PROCESS_FILTER_SQL} ORDER BY date DESC"
+        "SELECT DISTINCT date FROM activity_sessions ORDER BY date DESC"
     ).fetchall()
     conn.close()
 
@@ -517,7 +508,7 @@ def query_date_range_stats(db_path, dates):
 
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    row = conn.execute(f"SELECT COUNT(*) as cnt FROM activity_sessions WHERE {SELF_PROCESS_FILTER_SQL}").fetchone()
+    row = conn.execute("SELECT COUNT(*) as cnt FROM activity_sessions").fetchone()
     conn.close()
 
     if row and row["cnt"] > 0:
@@ -537,7 +528,7 @@ def _query_date_range_from_sessions(db_path, dates):
                SUM(idle_seconds) as idle_seconds,
                SUM(duration_seconds) as total_seconds
         FROM activity_sessions
-        WHERE date IN ({placeholders}) AND {SELF_PROCESS_FILTER_SQL}
+        WHERE date IN ({placeholders})
         GROUP BY date
         ORDER BY date
     """, dates).fetchall()
@@ -547,7 +538,7 @@ def _query_date_range_from_sessions(db_path, dates):
                SUM(CASE WHEN category_key IN ('ai_tools','coding','reading','creative') THEN effective_seconds ELSE 0 END) as work_seconds,
                SUM(CASE WHEN category_key IN ('video','gaming') THEN effective_seconds ELSE 0 END) as video_seconds
         FROM activity_sessions
-        WHERE date IN ({placeholders}) AND {SELF_PROCESS_FILTER_SQL}
+        WHERE date IN ({placeholders})
         GROUP BY date
         ORDER BY date
     """, dates).fetchall()
@@ -558,7 +549,7 @@ def _query_date_range_from_sessions(db_path, dates):
                SUM(idle_seconds) as idle_seconds,
                SUM(duration_seconds) as total_seconds
         FROM activity_sessions
-        WHERE date IN ({placeholders}) AND {SELF_PROCESS_FILTER_SQL}
+        WHERE date IN ({placeholders})
         GROUP BY category_key, category_name
         ORDER BY effective_seconds DESC
     """, dates).fetchall()
@@ -568,7 +559,7 @@ def _query_date_range_from_sessions(db_path, dates):
                SUM(effective_seconds) as effective_seconds,
                COUNT(*) as samples
         FROM activity_sessions
-        WHERE date IN ({placeholders}) AND effective_seconds > 0 AND {SELF_PROCESS_FILTER_SQL}
+        WHERE date IN ({placeholders}) AND effective_seconds > 0
         GROUP BY process_name
         ORDER BY effective_seconds DESC
         LIMIT 20
@@ -624,7 +615,7 @@ def _query_date_range_from_logs(db_path, dates):
                SUM(CASE WHEN is_effective = 0 THEN duration_seconds ELSE 0 END) as idle_seconds,
                SUM(duration_seconds) as total_seconds
         FROM activity_logs
-        WHERE date IN ({placeholders}) AND {SELF_PROCESS_FILTER_SQL}
+        WHERE date IN ({placeholders})
         GROUP BY date
         ORDER BY date
     """, dates).fetchall()
@@ -636,7 +627,7 @@ def _query_date_range_from_logs(db_path, dates):
                SUM(CASE WHEN category_key = 'video' AND is_effective
                    THEN duration_seconds ELSE 0 END) as video_seconds
         FROM activity_logs
-        WHERE date IN ({placeholders}) AND {SELF_PROCESS_FILTER_SQL}
+        WHERE date IN ({placeholders})
         GROUP BY date
         ORDER BY date
     """, dates).fetchall()
@@ -647,7 +638,7 @@ def _query_date_range_from_logs(db_path, dates):
                SUM(CASE WHEN is_effective = 0 THEN duration_seconds ELSE 0 END) as idle_seconds,
                SUM(duration_seconds) as total_seconds
         FROM activity_logs
-        WHERE date IN ({placeholders}) AND {SELF_PROCESS_FILTER_SQL}
+        WHERE date IN ({placeholders})
         GROUP BY category_key, category_name
         ORDER BY effective_seconds DESC
     """, dates).fetchall()
@@ -657,7 +648,7 @@ def _query_date_range_from_logs(db_path, dates):
                SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds,
                COUNT(*) as samples
         FROM activity_logs
-        WHERE date IN ({placeholders}) AND is_effective = 1 AND {SELF_PROCESS_FILTER_SQL}
+        WHERE date IN ({placeholders}) AND is_effective = 1
         GROUP BY process_name
         ORDER BY effective_seconds DESC
         LIMIT 20

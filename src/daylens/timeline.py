@@ -5,7 +5,6 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from .database import SELF_PROCESS_FILTER_SQL
 from .utils import fmt_seconds
 
 
@@ -59,11 +58,11 @@ def build_timeline(db_path, date_str):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        f"""SELECT session_id, start_time, end_time, process_name,
+        """SELECT session_id, start_time, end_time, process_name,
                   window_title, normalized_title, category_key, category_name,
                   duration_seconds, effective_seconds, idle_seconds
            FROM activity_sessions
-           WHERE date = ? AND {SELF_PROCESS_FILTER_SQL}
+           WHERE date = ?
            ORDER BY start_time""",
         (date_str,)
     ).fetchall()
