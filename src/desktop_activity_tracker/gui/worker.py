@@ -7,6 +7,11 @@ from PySide6.QtCore import QThread, Signal
 from .. import window_detector, activity_detector, classifier, database
 from ..session_tracker import SessionTracker
 
+try:
+    from ..audio_detector import AudioDetector
+except Exception:  # Optional dependency; startup must not fail without it.
+    AudioDetector = None
+
 
 class RecordingWorker(QThread):
     sample_updated = Signal(dict)
@@ -70,6 +75,14 @@ class RecordingWorker(QThread):
             classifier=clf,
             on_session_end=on_session_end,
             on_flush=on_flush,
+            audio_detector=(
+                AudioDetector(
+                    check_interval=self.config.get("tracker", {}).get(
+                        "audio_check_interval_seconds", 3.0)
+                )
+                if AudioDetector is not None
+                else None
+            ),
         )
         tracker = self._tracker
 

@@ -194,7 +194,10 @@ obsidian_output_path: E:\obsidian_github\Daylog\时间追踪\桌面活动日报
 reports_dir: D:\OfficeSoftware\desktop-activity-tracker\reports
 sample_interval_seconds: 1
 tracker:
+  audio_detection_enabled: true
+  audio_check_interval_seconds: 3
   flush_interval_seconds: 10
   idle_threshold_seconds: 60
   min_session_seconds: 3
   sample_interval_seconds: 1
+theme: light

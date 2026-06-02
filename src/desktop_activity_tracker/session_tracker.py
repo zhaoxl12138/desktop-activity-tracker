@@ -93,7 +93,8 @@ class SessionTracker:
     """
 
     def __init__(self, config, classifier,
-                 on_session_end=None, on_flush=None):
+                 on_session_end=None, on_flush=None,
+                 audio_detector=None):
         tracker = config.get("tracker", {})
         self.sample_interval = tracker.get("sample_interval_seconds",
             config.get("sample_interval_seconds", 1))
@@ -107,6 +108,7 @@ class SessionTracker:
         self.classifier = classifier
         self._on_session_end = on_session_end
         self._on_flush = on_flush
+        self._audio_detector = audio_detector
 
         self._current: ActivitySession | None = None
         self._tick_count = 0
@@ -236,7 +238,14 @@ class SessionTracker:
         self._current.duration_seconds += self.sample_interval
 
         if self._current.active_rule == "passive_allowed":
-            self._current.effective_seconds += self.sample_interval
+            # Entertainment categories: check audio output to avoid
+            # counting paused/idle video as effective time.
+            if (self._current.category_key in ("video", "gaming")
+                    and self._audio_detector is not None
+                    and not self._audio_detector.is_playing(self._last_pid)):
+                self._current.idle_seconds += self.sample_interval
+            else:
+                self._current.effective_seconds += self.sample_interval
             self._effective_idle = 0.0
             self._phantom_active = False
             self._phantom_ticks = 0
