@@ -402,7 +402,7 @@ def query_today_sessions(db_path, date_str):
                   normalized_title, category_key, category_name,
                   duration_seconds, effective_seconds, idle_seconds
            FROM activity_sessions
-           WHERE date = ? AND effective_seconds > 0
+           WHERE date = ?
            ORDER BY start_time""",
         (date_str,)
     ).fetchall()

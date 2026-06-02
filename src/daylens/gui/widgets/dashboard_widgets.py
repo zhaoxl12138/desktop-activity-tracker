@@ -287,6 +287,7 @@ class TimelineWidget(QFrame):
             same_window = (
                 current.get("process_name") == next_sess.get("process_name")
                 and current.get("category_key") == next_sess.get("category_key")
+                and current.get("normalized_title") == next_sess.get("normalized_title")
             )
             adjacent = False
             if same_window:
@@ -371,8 +372,7 @@ class TimelineWidget(QFrame):
             category_label.setStyleSheet(f"font-size: 12px; color: {color}; font-weight: 700;")
             row_layout.addWidget(category_label, 1)
 
-            effective_seconds = session.get("effective_seconds", 0) or 0
-            duration_label = QLabel(f"{max(1, effective_seconds // 60)}分钟")
+            duration_label = QLabel(_timeline_duration_text(session))
             duration_label.setFixedWidth(60)
             duration_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             duration_label.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
@@ -719,3 +719,13 @@ def _compact_app_name(name: str, limit: int = 18) -> str:
     if len(name) <= limit:
         return name
     return f"{name[: limit - 1]}..."
+
+
+def _timeline_duration_text(session: dict) -> str:
+    seconds = (
+        session.get("effective_seconds", 0)
+        or session.get("idle_seconds", 0)
+        or session.get("duration_seconds", 0)
+        or 0
+    )
+    return fmt_seconds(seconds)

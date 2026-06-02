@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-06-02
+
+### Added
+- `.docs/skills/maintainer.md`，用于提交前检查 README、CHANGELOG、TODO、TEST_PLAN 与生成 commit message。
+- `tests/test_timeline_logic.py`，覆盖今日时间线秒级显示、空闲会话查询、动态标题归一化和 DayLens 自身窗口忽略逻辑。
+
+### Fixed
+- 修复今日时间线将 1-59 秒会话强制显示为 `1分钟` 的问题，现在按真实秒级时长显示。
+- 修复今日时间线只显示有效会话、遗漏空闲/挂机会话的问题。
+- 修复 Windows Terminal 等动态标题前缀导致大量 1 秒碎片会话的问题。
+- 修复 DayLens 自身窗口处于前台时实时监控停留在上一个应用的问题；当前会话会被正确结束，DayLens 自身显示为“不计入统计”。
+- 修复测试与打包入口仍引用旧包名 `desktop_activity_tracker` 导致全量测试无法收集的问题。
+
 ## 2026-06-01
 
 ### Added

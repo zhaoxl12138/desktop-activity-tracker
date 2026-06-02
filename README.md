@@ -71,7 +71,8 @@ src/daylens/
         ├── architect.md      # 开发前架构分析 Prompt
         ├── bug_hunter.md     # 开发后 Bug 审查 Prompt
         ├── daylens_reviewer.md # 产品视角审查 Prompt
-        └── ui_reviewer.md    # UI/UX 审查 Prompt
+        ├── ui_reviewer.md    # UI/UX 审查 Prompt
+        └── maintainer.md     # 提交前维护检查 Prompt
 ```
 
 ## 技术栈

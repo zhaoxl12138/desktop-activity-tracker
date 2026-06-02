@@ -215,7 +215,22 @@ class LiveMonitorPage(QWidget):
         self.lbl_session_idle.setText(fmt_seconds(sidle))
         self.lbl_idle.setText(f"{idle_s:.0f}s")
 
-        if sample.get("is_effective"):
+        if sample.get("is_ignored"):
+            self.lbl_status.setText("不计入统计")
+            self.lbl_status.setStyleSheet(
+                f"""
+                QLabel {{
+                    color: {COLORS['text_secondary']};
+                    background: {COLORS['panel_bg']};
+                    border: 1px solid {COLORS['border_light']};
+                    border-radius: 14px;
+                    padding: 5px 12px;
+                    font-size: 12px;
+                    font-weight: 700;
+                }}
+                """
+            )
+        elif sample.get("is_effective"):
             self.lbl_status.setText("有效记录中")
             self.lbl_status.setStyleSheet(
                 f"""

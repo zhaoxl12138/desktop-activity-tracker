@@ -97,10 +97,9 @@ class RecordingWorker(QThread):
 
                 # Skip self — don't track the tracker's own window
                 proc_lower = (win_info.get("process_name") or "").lower() if win_info else ""
-                if proc_lower.startswith("daylens"):
-                    self._sleep_check(int(self.sample_interval * 1000))
-                    continue
-                if proc_lower == "python.exe" and "DayLens" in (win_info.get("window_title") or ""):
+                if self._is_self_window(proc_lower, win_info):
+                    tracker.finish_current("ignored_process")
+                    self.sample_updated.emit(self._ignored_snapshot(win_info, idle_sec))
                     self._sleep_check(int(self.sample_interval * 1000))
                     continue
 
@@ -134,6 +133,37 @@ class RecordingWorker(QThread):
         while self._running and remaining > 0:
             self.msleep(min(chunk, remaining))
             remaining -= chunk
+
+    def _is_self_window(self, proc_lower, win_info):
+        if proc_lower.startswith("daylens"):
+            return True
+        title = (win_info.get("window_title") or "") if win_info else ""
+        return proc_lower == "python.exe" and "DayLens" in title
+
+    def _ignored_snapshot(self, win_info, idle_sec):
+        now = datetime.now()
+        tracker_cfg = self.config.get("tracker", {})
+        idle_threshold = tracker_cfg.get("idle_threshold_seconds",
+            self.config.get("idle_threshold_seconds", 60))
+        return {
+            "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "date": now.strftime("%Y-%m-%d"),
+            "session_id": "",
+            "process_name": win_info.get("process_name", "") if win_info else "",
+            "exe_path": win_info.get("exe_path", "") if win_info else "",
+            "window_title": win_info.get("window_title", "") if win_info else "",
+            "normalized_title": win_info.get("window_title", "") if win_info else "",
+            "category_key": "tools",
+            "category_name": "系统工具",
+            "active_rule": "ignored",
+            "duration_seconds": 0,
+            "effective_seconds": 0,
+            "idle_seconds": idle_sec,
+            "session_idle_seconds": 0,
+            "is_user_active": idle_sec <= idle_threshold,
+            "is_effective": False,
+            "is_ignored": True,
+        }
 
     def update_settings(self, config):
         """Hot-reload settings from config without restart."""

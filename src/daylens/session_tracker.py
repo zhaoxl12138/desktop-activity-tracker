@@ -16,6 +16,7 @@ BROWSER_SUFFIXES = [
 _BROWSER_PROCS = {"chrome.exe", "msedge.exe", "iexplore.exe", "firefox.exe", "chromium.exe"}
 
 _NUMERIC_PARENTHESIS = re.compile(r'\(\d+\)')
+_DYNAMIC_TITLE_PREFIX = re.compile(r'^[\u2800-\u28ff\u25e0-\u25ff\u2600-\u27bf]+\s+')
 
 
 def normalize_window_title(process_name, window_title):
@@ -28,6 +29,8 @@ def normalize_window_title(process_name, window_title):
 
     title = window_title.strip()
     is_browser = (process_name or "").lower() in _BROWSER_PROCS
+
+    title = _DYNAMIC_TITLE_PREFIX.sub('', title).strip()
 
     # Strip known browser suffixes
     for suffix in BROWSER_SUFFIXES:
@@ -133,6 +136,14 @@ class SessionTracker:
     @property
     def current_session(self) -> ActivitySession | None:
         return self._current
+
+    def finish_current(self, reason="manual"):
+        """End the current session without starting a replacement session."""
+        if self._current is None:
+            return
+        self._current.end_time = datetime.now()
+        self._current.switch_reason = reason
+        self._emit_session()
 
     # ── Tick ────────────────────────────────────────────────────────
 
