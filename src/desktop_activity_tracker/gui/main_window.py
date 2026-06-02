@@ -465,14 +465,20 @@ class MainWindow(QMainWindow):
         self._theme_rebuilding = False
 
     def _persist_theme_preference(self) -> None:
-        import yaml
+        """Write only the theme key back, preserving the rest of the file."""
+        import re
 
         try:
             with open(self.config_path, "r", encoding="utf-8") as f:
-                latest_config = yaml.safe_load(f) or {}
+                content = f.read()
         except FileNotFoundError:
-            latest_config = {}
+            return
 
-        latest_config["theme"] = self.current_theme
+        theme_line = f"theme: {self.current_theme}"
+        if re.search(r'^theme:', content, re.MULTILINE):
+            content = re.sub(r'^theme:.*$', theme_line, content, flags=re.MULTILINE)
+        else:
+            content = content.rstrip() + "\n" + theme_line + "\n"
+
         with open(self.config_path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(latest_config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            f.write(content)
