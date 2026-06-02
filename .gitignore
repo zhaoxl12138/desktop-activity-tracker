@@ -7,6 +7,7 @@ build/
 *.egg-info/
 *.egg
 *.spec
+!DayLens.spec
 
 # Exe
 *.exe

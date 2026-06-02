@@ -11,6 +11,10 @@ _SELF_PROCS = {"daylens.exe", "daylens-debug.exe", "desktop-activity-tracker.exe
 
 _WAL_CHECKPOINT_INTERVAL = 100  # commits between WAL checkpoints
 
+
+class _TrackedConnection(sqlite3.Connection):
+    """SQLite connection subclass that can keep lightweight runtime state."""
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS activity_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -107,7 +111,7 @@ def get_db_path(config):
 def init_db(db_path):
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     _recover_stale_wal(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, factory=_TrackedConnection)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA busy_timeout=5000")

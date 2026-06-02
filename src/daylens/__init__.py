@@ -16,11 +16,19 @@ def get_app_root():
     """
     if getattr(sys, 'frozen', False):
         exe_dir = os.path.dirname(sys.executable)
-        # If exe is in a dist-like directory, check parent for config/data
         parent = os.path.dirname(exe_dir)
+        grandparent = os.path.dirname(parent)
+
+        # onedir build: project/dist/DayLens/DayLens.exe
+        if (os.path.basename(parent).startswith("dist")
+                and os.path.isfile(os.path.join(grandparent, "config", "config.yaml"))):
+            return grandparent
+
+        # onefile/local build: project/dist/DayLens.exe or project/dist2/DayLens.exe
         if (os.path.basename(exe_dir).startswith("dist")
-                and os.path.isdir(os.path.join(parent, "config"))):
+                and os.path.isfile(os.path.join(parent, "config", "config.yaml"))):
             return parent
+
         return exe_dir
     # Navigate: __init__.py -> daylens/ -> src/ -> project_root/
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

@@ -85,7 +85,7 @@ src/daylens/
 | 窗口检测 | Win32 API (GetWindowText, GetWindowThreadProcessId) |
 | 空闲检测 | Win32 API (GetLastInputInfo) |
 | 音频检测 | Windows Core Audio API (pycaw + comtypes) |
-| 打包 | PyInstaller (单文件 exe, ~60MB) |
+| 打包 | PyInstaller onedir (单目录应用, 避免单文件父子双进程) |
 
 ## 快速开始
 
@@ -140,7 +140,7 @@ display_name_mapping:
 ```bash
 pip install pyinstaller
 pyinstaller DayLens.spec --noconfirm
-# 输出: dist/DayLens.exe (带图标, 无控制台窗口)
+# 输出: dist/DayLens/DayLens.exe (带图标, 无控制台窗口)
 ```
 
 ## 版本历史

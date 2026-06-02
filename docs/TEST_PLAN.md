@@ -305,6 +305,21 @@ GUI：PySide6
 
 ---
 
+## TC-019 打包后单进程启动
+
+测试目标：验证点击打包后的 DayLens 图标只保留一个 `DayLens.exe` 进程。
+
+步骤：
+1. 运行 `pyinstaller DayLens.spec --noconfirm`。
+2. 双击 `dist/DayLens/DayLens.exe`。
+3. 在任务管理器或进程列表中检查 `DayLens.exe` 数量。
+
+预期结果：只存在一个 `DayLens.exe` 进程，不再出现单文件模式的父子双进程。
+
+结果：`PASS / FAIL`
+
+---
+
 # 4. 性能测试
 
 ---

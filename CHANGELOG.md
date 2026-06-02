@@ -7,6 +7,7 @@
 - `tests/test_timeline_logic.py`，覆盖今日时间线秒级显示、空闲会话查询、动态标题归一化和 DayLens 自身窗口忽略逻辑。
 
 ### Fixed
+- 修复 PyInstaller 单文件模式导致点击 DayLens 图标后出现父子两个 `DayLens.exe` 进程的问题；打包改为 onedir 输出。
 - 修复今日时间线将 1-59 秒会话强制显示为 `1分钟` 的问题，现在按真实秒级时长显示。
 - 修复今日时间线只显示有效会话、遗漏空闲/挂机会话的问题。
 - 修复 Windows Terminal 等动态标题前缀导致大量 1 秒碎片会话的问题。

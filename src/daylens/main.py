@@ -302,7 +302,6 @@ def cmd_gui():
         from .gui.tray_manager import TrayManager
         from .gui.main_window import MainWindow
 
-    app_root = get_app_root()
     config_path = resolve_config_path()
     reports_dir = resolve_reports_dir()
 
@@ -311,7 +310,7 @@ def cmd_gui():
         os.makedirs(os.path.join(reports_dir, sub), exist_ok=True)
 
     config = load_config(config_path)
-    db_path = os.path.join(app_root, config.get("db_path", "data/usage.db"))
+    db_path = database.get_db_path(config)
 
     # Ensure DB is initialized
     database.init_db(db_path)
@@ -328,7 +327,7 @@ def cmd_gui():
     tray = TrayManager(app, db_path, config)
 
     # Create main window
-    window = MainWindow(app_root, config, db_path, config_path, reports_dir, worker)
+    window = MainWindow(get_app_root(), config, db_path, config_path, reports_dir, worker)
     window.tray = tray
     tray.set_main_window(window)
     window.show()
