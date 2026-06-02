@@ -208,7 +208,7 @@ class MainWindow(QMainWindow):
 
         layout.addStretch()
 
-        self.sidebar_version = QLabel("v1.5.0")
+        self.sidebar_version = QLabel("v1.5.2")
         self.sidebar_version.setStyleSheet(
             f"font-size: 10px; color: {ui_style.COLORS['text_muted']}; padding: 4px 16px;"
         )

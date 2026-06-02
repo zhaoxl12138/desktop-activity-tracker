@@ -38,7 +38,7 @@ DayLens 是一款 Windows 桌面时间追踪工具，通过 1 秒级精度采集
 ```
 src/daylens/
 ├── main.py                 # QApplication 入口 + CLI 命令
-├── __init__.py             # get_app_root()
+├── __init__.py             # get_app_root() (frozen → sys._MEIPASS)
 ├── __main__.py             # python -m daylens
 ├── window_detector.py      # Win32 API 获取前台窗口
 ├── activity_detector.py    # GetLastInputInfo() 空闲检测
@@ -65,14 +65,11 @@ src/daylens/
 │   │   └── settings.py         # 设置中心
 │   └── widgets/
 │       └── dashboard_widgets.py  # 自定义控件 (环形图/时间线/趋势图/FocusBar)
-└── .docs/
-    ├── issues.md            # 工程化 Issue 清单 (给 AI 工具)
-    └── skills/
-        ├── architect.md      # 开发前架构分析 Prompt
-        ├── bug_hunter.md     # 开发后 Bug 审查 Prompt
-        ├── daylens_reviewer.md # 产品视角审查 Prompt
-        ├── ui_reviewer.md    # UI/UX 审查 Prompt
-        └── maintainer.md     # 提交前维护检查 Prompt
+├── assets/
+│   ├── icon.ico            # 程序图标
+│   └── icons/              # 应用图标缓存 (PNG)
+└── tools/
+    └── extract_icons.py    # 图标提取工具
 ```
 
 ## 技术栈
@@ -126,30 +123,33 @@ tracker:
   audio_detection_enabled: true
   audio_check_interval_seconds: 3
 
-db_path: usage.db
+db_path: D:\OfficeSoftware\DayLens\data\usage.db   # 必须使用绝对路径
 reports_dir: reports
 obsidian_output_path: ""               # 可选: Obsidian vault 路径
 
-display_name_mapping:
+display_name_mapping:                  # 软件别名映射
   Code.exe: VS Code
   Cursor.exe: Cursor
+  DayLens.exe: DayLens
 ```
 
 ## 打包
 
 ```bash
 pip install pyinstaller
-pyinstaller DayLens.spec --noconfirm
-# 输出: dist/DayLens/DayLens.exe (带图标, 无控制台窗口)
+python -m PyInstaller -y DayLens.spec
+# 输出: dist/DayLens/DayLens.exe + _internal/ (onedir 模式)
+# 部署: cp -r dist/DayLens release/
 ```
 
 ## 版本历史
 
 | 版本 | 日期 | 更新 |
 |------|------|------|
-| v1.5.1 | 2026-06-02 | **关键修复**: 空闲检测重写 (连续使用误判为挂机的 P0 bug)；时间线 Session 聚合；趋势图 float 精度 + 24 小时固定点；X 轴标签 QPainter 渲染；窗口几何自适应；`.docs/skills/` AI 开发工作流 |
+| v1.5.2 | 2026-06-02 | **关键修复**: get_app_root() 简化 (修复 frozen 模式路径解析 → 彻底解决数据库丢失)；软件识别优化 (Claude Code/爱奇艺/WindowsTerminal wrapper)；图标系统修复 + DayLens 图标深色主题可辨识；时间分布卡片 UI 重设计 (加粗环形图 + 进度条图例) |
+| v1.5.1 | 2026-06-02 | **关键修复**: 空闲检测重写 (连续使用误判为挂机的 P0 bug)；时间线 Session 聚合；趋势图 float 精度 + 24 小时固定点；X 轴标签 QPainter 渲染；窗口几何自适应 |
 | v1.5.0 | 2026-06-02 | 项目重命名 DayLens；时间线秒级显示；重复会话去重 + UNIQUE 索引防护；INSERT OR REPLACE；config 持久化修复 |
-| v1.4.0 | 2026-05 | 音频检测 (娱乐空转过滤)；幻影 HID 过滤；会话状态机重构；_db_row_id 防重复写入 |
+| v1.4.0 | 2026-05 | 音频检测 (娱乐空转过滤)；幻影 HID 过滤；会话状态机重构 |
 | v1.3.0 | 2026-05 | PySide6 GUI；系统托盘；7 功能页面；深色/浅色主题 |
 | v1.2.0 | 2026-05 | CLI 完善；日报/周报/月报导出；Obsidian 同步 |
 | v1.0.0 | 2026-05 | 初版: 窗口检测 + 空闲检测 + 分类 + SQLite |
