@@ -93,6 +93,32 @@ class TodayOverviewPage(QWidget):
         self.timer.start(5000)
         self.refresh()
 
+    def on_sample_updated(self, sample: dict) -> None:
+        """Real-time idle status from worker — cursor/window-based persistent timer."""
+        is_effective = sample.get("is_effective", True)
+        persistent_idle = sample.get("persistent_idle", 0) or 0
+        category_key = sample.get("category_key", "") or ""
+        audio_playing = sample.get("audio_playing", False)
+
+        if not is_effective:
+            self.idle_dot.setStyleSheet(
+                f"font-size: 13px; color: {ui_style.COLORS['warning_yellow']}; font-weight: 700;"
+            )
+            self.idle_status_label.setText(
+                f"挂机中 {_compact_duration(int(persistent_idle))}"
+            )
+        else:
+            self.idle_dot.setStyleSheet(
+                f"font-size: 13px; color: {ui_style.COLORS['idle_gray']}; font-weight: 700;"
+            )
+            if persistent_idle > 5:
+                parts = [f"空闲 {int(persistent_idle)}s"]
+                if category_key in ("video", "gaming"):
+                    parts.append("| 音频=" + ("有" if audio_playing else "无"))
+                self.idle_status_label.setText(" ".join(parts))
+            else:
+                self.idle_status_label.setText("活跃中")
+
     def _build_distribution_card(self) -> QWidget:
         card = QFrame()
         card.setObjectName("dashboardCard")

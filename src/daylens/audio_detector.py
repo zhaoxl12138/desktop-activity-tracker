@@ -1,31 +1,38 @@
 """Audio output detection via Windows Core Audio API.
 
-Uses IAudioSessionControl2::GetState() to determine whether a process
-is actively playing audio. Cached to avoid COM overhead every tick.
+Uses IAudioMeterInformation::GetPeakValue() to read actual audio signal
+level. Unlike GetState(), this returns 0.0 when playback is paused even
+if the audio session stays open.
 """
 
 import time
+from ctypes import c_float, POINTER
+
+from comtypes import COMMETHOD, GUID, HRESULT, IUnknown
 from pycaw.pycaw import AudioUtilities
 
 
+class IAudioMeterInformation(IUnknown):
+    _iid_ = GUID('{C02216F6-8C67-4B5B-9D00-D008E73E0064}')
+    _methods_ = [
+        COMMETHOD([], HRESULT, 'GetPeakValue',
+                  (['out'], POINTER(c_float), 'pfPeak')),
+    ]
+
+
+_PEAK_THRESHOLD = 0.001  # below this → effectively silent
+
+
 class AudioDetector:
-    """Cached per-process audio state checker."""
+    """Audio detector using peak meter (actual signal, not session state)."""
 
     def __init__(self, check_interval=3.0):
         self._interval = check_interval
         self._last_check: float = 0.0
         self._last_pid: int | None = None
-        self._cached: bool = True  # Start True — don't penalise cold start
+        self._cached: bool = True
 
     def is_playing(self, pid: int | None) -> bool:
-        """Check whether a process has an active audio session.
-
-        Returns True when:
-         - pid is None (no PID info -> assume playing, don't penalise)
-         - COM query fails (default-safe)
-         - The process has an audio session with state Active (1)
-         - No audio session found for this PID (child process may handle audio)
-        """
         if pid is None:
             return True
 
@@ -40,30 +47,26 @@ class AudioDetector:
             sessions = AudioUtilities.GetAllSessions()
             for s in sessions:
                 if s.ProcessId == pid:
-                    # 0=Inactive, 1=Active, 2=Expired
-                    self._cached = s._ctl.GetState() == 1
+                    meter = s._ctl.QueryInterface(IAudioMeterInformation)
+                    self._cached = meter.GetPeakValue() > _PEAK_THRESHOLD
                     return self._cached
-            self._cached = True  # No audio session found — assume playing (UI may have child process for audio)
+            # No session for this PID — might be child-process audio
+            self._cached = self.is_any_playing()
         except Exception:
-            self._cached = True  # On error, assume playing (safe default)
+            self._cached = True
 
         return self._cached
 
     def is_any_playing(self) -> bool:
-        """Check whether ANY process is actively playing audio on the system.
-
-        Used as a global signal: if audio is playing anywhere, the user is
-        likely consuming content even if the foreground window doesn't own
-        the audio session directly.
-        """
         try:
             sessions = AudioUtilities.GetAllSessions()
             for s in sessions:
                 try:
-                    if s._ctl.GetState() == 1:  # Active
+                    meter = s._ctl.QueryInterface(IAudioMeterInformation)
+                    if meter.GetPeakValue() > _PEAK_THRESHOLD:
                         return True
                 except Exception:
                     continue
         except Exception:
-            return True  # On error, assume playing (safe default)
+            return True
         return False

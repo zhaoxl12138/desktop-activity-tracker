@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from PySide6.QtCore import QThread, Signal
+from pynput import keyboard
 
 from .. import window_detector, activity_detector, classifier, database
 from ..session_tracker import SessionTracker
@@ -86,6 +87,12 @@ class RecordingWorker(QThread):
         )
         tracker = self._tracker
 
+        kb_listener = keyboard.Listener(
+            on_press=lambda key: tracker.mark_user_active()
+        )
+        kb_listener.daemon = True
+        kb_listener.start()
+
         while self._running:
             if self._paused:
                 self._sleep_check(1000)
@@ -109,6 +116,7 @@ class RecordingWorker(QThread):
             self._sleep_check(int(self.sample_interval * 1000))
 
         # Flush final session on shutdown
+        kb_listener.stop()
         sess = tracker.current_session
         if sess is not None and sess.duration_seconds >= tracker.min_session:
             sess.switch_reason = "shutdown"

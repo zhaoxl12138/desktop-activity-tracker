@@ -1,9 +1,38 @@
 """Session tracker — 1s sampling + session aggregation + state machine."""
 
+import ctypes
 import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
+
+
+# ── Input polling (cursor + keyboard, immune to phantom HID events) ──
+
+class _POINT(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+
+def _get_cursor_pos():
+    pt = _POINT()
+    ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+    return (pt.x, pt.y)
+
+
+def _get_keyboard_snapshot() -> bytes:
+    """Return 256-byte snapshot using GetAsyncKeyState (works from any thread).
+
+    Unlike GetKeyboardState which requires a message pump, GetAsyncKeyState
+    reads the physical key state directly.
+    - 0x8000: key currently held down
+    - 0x0001: key was pressed since last call (catches quick taps between ticks)
+    """
+    buf = bytearray(256)
+    for vk in range(256):
+        state = ctypes.windll.user32.GetAsyncKeyState(vk)
+        if state & 0x8001:  # currently down OR pressed since last poll
+            buf[vk] = 0x80
+    return bytes(buf)
 
 
 # ── Browser title normalization patterns ──
@@ -120,11 +149,15 @@ class SessionTracker:
         self._last_process_name = ""
         self._last_exe_path = ""
 
-        # Rolling idle average: smooths out phantom HID resets that cause
-        # GetLastInputInfo() to jump 15→0 in one tick. A single phantom
-        # event barely moves the 5-sample average.
-        self._idle_samples: list[float] = []
-        self._avg_idle: float = 0.0
+        # Idle detection via cursor position + foreground window.
+        # Phantom HID events reset GetLastInputInfo() but don't move the
+        # mouse or change the foreground window, so we use those as the
+        # reliable "user is actually here" signal.
+        self._persistent_idle: float = 0.0
+        self._last_cursor_pos: tuple[int, int] | None = None
+        self._last_hwnd: int | None = None
+        self._last_kb_state: bytes | None = None
+        self._activity_from_hook: bool = False  # set by pynput listener
 
     # ── Public API ──────────────────────────────────────────────────
 
@@ -139,6 +172,18 @@ class SessionTracker:
         self._current.end_time = datetime.now()
         self._current.switch_reason = reason
         self._emit_session()
+
+    def mark_user_active(self):
+        """Called from pynput keyboard listener (any thread) on keypress.
+
+        Resets the persistent idle timer instantly so typing always
+        interrupts idle without waiting for the next polling tick.
+        """
+        self._persistent_idle = 0.0
+        self._last_cursor_pos = None
+        self._last_kb_state = None
+        self._last_hwnd = None
+        self._activity_from_hook = True
 
     # ── Tick ────────────────────────────────────────────────────────
 
@@ -156,10 +201,12 @@ class SessionTracker:
             process_name = win_info.get("process_name", "")
             exe_path = win_info.get("exe_path", "")
             raw_title = win_info.get("window_title", "")
+            hwnd = win_info.get("hwnd")
         else:
             process_name = "system"
             exe_path = ""
             raw_title = "idle/desktop"
+            hwnd = None
 
         # Cache psutil-heavy lookups
         if process_name != self._last_process_name:
@@ -205,7 +252,7 @@ class SessionTracker:
                     self._consecutive_win_failures += 1
                     if self._consecutive_win_failures < 2:
                         # Continue ticking current session (add idle)
-                        self._tick_current(idle_seconds, now)
+                        self._tick_current(idle_seconds, now, hwnd)
                         return self._make_snapshot(idle_seconds)
                 else:
                     self._consecutive_win_failures = 0
@@ -218,8 +265,10 @@ class SessionTracker:
 
         # Start new session if needed
         if self._current is None:
-            self._idle_samples.clear()
-            self._avg_idle = 0.0
+            self._persistent_idle = 0.0
+            self._last_cursor_pos = None
+            self._last_hwnd = None
+            self._last_kb_state = None
             self._current = ActivitySession(
                 session_id=uuid.uuid4().hex[:12],
                 start_time=now,
@@ -235,7 +284,7 @@ class SessionTracker:
             )
 
         # Tick counters
-        self._tick_current(idle_seconds, now)
+        self._tick_current(idle_seconds, now, hwnd)
 
         # Periodic flush
         self._tick_count += 1
@@ -246,42 +295,53 @@ class SessionTracker:
 
     # ── Internals ──────────────────────────────────────────────────
 
-    def _tick_current(self, idle_seconds, now):
+    def _tick_current(self, idle_seconds, now, hwnd=None):
         if self._current is None:
             return
         self._current.end_time = now
         self._current.duration_seconds += self.sample_interval
 
-        if self._current.active_rule == "passive_allowed":
-            # Entertainment: system-wide audio check first.
-            # If audio is playing anywhere, user is consuming content.
-            # If no audio, fall back to idle threshold (paused + walked away).
-            if self._current.category_key in ("video", "gaming"):
-                if self._audio_detector is not None:
-                    if self._audio_detector.is_any_playing():
-                        self._current.effective_seconds += self.sample_interval
-                    elif idle_seconds <= self.idle_threshold:
-                        self._current.effective_seconds += self.sample_interval
-                    else:
-                        self._current.idle_seconds += self.sample_interval
-                else:
-                    self._current.effective_seconds += self.sample_interval
-            else:
-                self._current.effective_seconds += self.sample_interval
-            self._idle_samples.clear()
-            self._avg_idle = 0.0
+        # ── Cursor / keyboard / window tracking (all categories) ─────
+        # Uses cursor pos, keyboard state, and foreground window — all
+        # immune to phantom HID events that reset GetLastInputInfo().
+        cursor_pos = _get_cursor_pos()
+        cursor_moved = (
+            self._last_cursor_pos is not None
+            and cursor_pos != self._last_cursor_pos
+        )
+        kb_state = _get_keyboard_snapshot()
+        kb_changed = (
+            self._last_kb_state is not None
+            and kb_state != self._last_kb_state
+        )
+        window_changed = (
+            self._last_hwnd is not None
+            and hwnd is not None
+            and hwnd != self._last_hwnd
+        )
+        self._last_cursor_pos = cursor_pos
+        self._last_kb_state = kb_state
+        self._last_hwnd = hwnd
+
+        if self._activity_from_hook or cursor_moved or kb_changed or window_changed:
+            self._persistent_idle = 0.0
+            self._activity_from_hook = False
+        else:
+            self._persistent_idle += self.sample_interval
+
+        # ── Threshold: audio peak detection for entertainment ──────────
+        # Audio actually playing (peak > 0) → user is definitely watching,
+        # no idle timeout. Silent (paused) → standard 60s rule.
+        if (
+            self._current.category_key in ("video", "gaming")
+            and self._audio_detector is not None
+            and self._audio_detector.is_any_playing()
+        ):
+            # Audio peaks detected → always effective
+            self._current.effective_seconds += self.sample_interval
             return
 
-        # ── Idle tracking for interactive_required activities ────
-        # Rolling average of last 5 raw idle samples. Spurious HID events
-        # that reset GetLastInputInfo() (e.g. 15s→0s) barely affect the
-        # average, so no special phantom filtering is needed.
-        self._idle_samples.append(idle_seconds)
-        if len(self._idle_samples) > 5:
-            self._idle_samples.pop(0)
-        self._avg_idle = sum(self._idle_samples) / len(self._idle_samples)
-
-        if self._avg_idle <= self.idle_threshold:
+        if self._persistent_idle <= self.idle_threshold:
             self._current.effective_seconds += self.sample_interval
         else:
             self._current.idle_seconds += self.sample_interval
@@ -299,6 +359,19 @@ class SessionTracker:
     def _make_snapshot(self, idle_seconds):
         """Build a UI-compatible snapshot dict for the sample_updated signal."""
         s = self._current
+        if s:
+            cat_key = s.category_key or ""
+            is_ent = cat_key in ("video", "gaming")
+            audio_playing = (
+                is_ent and self._audio_detector is not None
+                and self._audio_detector.is_any_playing()
+            )
+            is_eff = audio_playing or (self._persistent_idle <= self.idle_threshold)
+        else:
+            cat_key = ""
+            audio_playing = False
+            is_eff = False
+
         return {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "date": s.date if s else datetime.now().strftime("%Y-%m-%d"),
@@ -307,16 +380,15 @@ class SessionTracker:
             "exe_path": s.exe_path if s else "",
             "window_title": s.window_title if s else "",
             "normalized_title": s.normalized_title if s else "",
-            "category_key": s.category_key if s else "",
+            "category_key": cat_key,
             "category_name": s.category_name if s else "",
             "active_rule": s.active_rule if s else "",
             "duration_seconds": s.duration_seconds if s else 0,
             "effective_seconds": s.effective_seconds if s else 0,
             "idle_seconds": idle_seconds,
             "session_idle_seconds": s.idle_seconds if s else 0,
-            "is_user_active": idle_seconds <= self.idle_threshold,
-            "is_effective": (
-                s.active_rule == "passive_allowed" or
-                self._avg_idle <= self.idle_threshold
-            ) if s else False,
+            "persistent_idle": self._persistent_idle,
+            "audio_playing": audio_playing,
+            "is_user_active": self._persistent_idle <= self.idle_threshold,
+            "is_effective": is_eff,
         }

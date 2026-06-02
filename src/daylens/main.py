@@ -62,7 +62,26 @@ def load_config(config_path):
         print(f"[INFO] 配置文件不存在，正在自动生成默认配置：{config_path}")
         generate_default_config(config_path)
     with open(config_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        config = yaml.safe_load(f)
+
+    # Merge persistent user overrides (survives rebuilds)
+    user_config_path = _user_config_path()
+    if os.path.exists(user_config_path):
+        try:
+            with open(user_config_path, "r", encoding="utf-8") as f:
+                user_config = yaml.safe_load(f) or {}
+            for key in ("obsidian_output_path", "theme", "db_path"):
+                if key in user_config and user_config[key]:
+                    config[key] = user_config[key]
+        except Exception:
+            pass
+
+    return config
+
+
+def _user_config_path():
+    from daylens import get_data_dir
+    return os.path.join(get_data_dir(), "user_config.yaml")
 
 
 # ── Commands ────────────────────────────────────────────────────────

@@ -16,3 +16,15 @@ def get_app_root():
     if getattr(sys, 'frozen', False):
         return sys._MEIPASS
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def get_data_dir():
+    """Return the persistent user-data directory (survives rebuilds).
+
+    Frozen: data/ alongside the .exe release folder (project root).
+    Normal Python: data/ under project root.
+    """
+    if getattr(sys, 'frozen', False):
+        # _MEIPASS = release/_internal/ → release/ = parent → project root = grandparent
+        return os.path.join(os.path.dirname(os.path.dirname(sys._MEIPASS)), "data")
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")

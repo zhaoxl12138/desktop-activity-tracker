@@ -3,10 +3,36 @@
 import os
 import csv
 import shutil
-from datetime import datetime
+import sqlite3
+from datetime import datetime, timedelta
 from . import database
 from . import timeline
 from .utils import fmt_seconds
+
+
+def _top_titles_by_category(db_path, date_str, limit=3):
+    """Return {category_key: [title1, title2, title3]} of top window titles."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("""
+        SELECT category_key, normalized_title, SUM(effective_seconds) as total_sec
+        FROM activity_sessions
+        WHERE date = ? AND effective_seconds > 0 AND normalized_title != ''
+        GROUP BY category_key, normalized_title
+        ORDER BY category_key, total_sec DESC
+    """, (date_str,)).fetchall()
+    conn.close()
+
+    result: dict[str, list[str]] = {}
+    for row in rows:
+        ck = row["category_key"]
+        title = row["normalized_title"]
+        if ck not in result:
+            result[ck] = []
+        if len(result[ck]) < limit:
+            title_short = title[:28] + "…" if len(title) > 28 else title
+            result[ck].append(title_short)
+    return result
 
 
 def _calculate_efficiency_score(work_sec, video_sec, total_effective_sec):
@@ -144,13 +170,45 @@ def export_markdown(db_path, date_str, output_dir):
         lines.append(f"**{efficiency}/100** ({grade})")
         lines.append("")
 
-    # ── 分类统计 ──
+    # ── 分类统计 (增强版: 占比 + 环比昨日 + Top应用) ──
     lines.append("## 分类统计")
     lines.append("")
-    lines.append("| 分类 | 有效时长 |")
-    lines.append("|---|---:|")
+    yesterday = (datetime.strptime(date_str, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+    yesterday_stats = database.query_date_stats(db_path, yesterday)
+    yesterday_by_cat = {
+        item["category_key"]: item.get("effective_seconds", 0) or 0
+        for item in yesterday_stats.get("by_category", [])
+    }
+    # Build top app per category from by_app
+    top_app_by_cat = {}
+    for app in stats.get("by_app", []):
+        ck = app.get("category_key")
+        if ck not in top_app_by_cat or (app.get("effective_seconds", 0) or 0) > top_app_by_cat[ck][1]:
+            top_app_by_cat[ck] = (app.get("process_name") or "", app.get("effective_seconds", 0) or 0)
+
+    def _delta_text(curr: int, yesterday_val: int) -> str:
+        if yesterday_val == 0:
+            return "新增"
+        diff = curr - yesterday_val
+        if diff == 0:
+            return "持平"
+        direction = "↑" if diff > 0 else "↓"
+        return f"{direction} {fmt_seconds(abs(diff))}"
+
+    top_titles = _top_titles_by_category(db_path, date_str)
+
+    lines.append("| 分类 | 时长 | 占比 | 环比昨日 | Top应用 | Top 内容 |")
+    lines.append("|---|---:|---:|---|---|---|")
     for cat in stats["by_category"]:
-        lines.append(f"| {cat['category_name']} | {fmt_seconds(cat['effective_seconds'])} |")
+        name = cat["category_name"]
+        sec = cat.get("effective_seconds", 0) or 0
+        pct = round(sec / effective_sec * 100) if effective_sec else 0
+        delta = _delta_text(sec, yesterday_by_cat.get(cat["category_key"], 0))
+        top = top_app_by_cat.get(cat["category_key"])
+        top_label = top[0] if top else "-"
+        titles = top_titles.get(cat["category_key"], [])
+        titles_text = "、".join(titles) if titles else "-"
+        lines.append(f"| {name} | {fmt_seconds(sec)} | {pct}% | {delta} | {top_label} | {titles_text} |")
     lines.append("")
 
     # ── 软件排行 ──

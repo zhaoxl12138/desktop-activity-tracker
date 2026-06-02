@@ -290,12 +290,15 @@ class MainWindow(QMainWindow):
 
         layout.addStretch()
 
-        self.top_summary = QLabel()
-        self.top_summary.setStyleSheet(
-            f"font-size: 13px; color: {ui_style.COLORS['text_secondary']}; font-weight: 700;"
-        )
-        self._update_top_bar()
-        layout.addWidget(self.top_summary)
+        self.capsule_values: dict[str, QLabel] = {}
+        for emoji, label, key in [
+            ("⚡", "今日活跃", "total"),
+            ("💼", "办公", "work"),
+            ("🎮", "娱乐", "ent"),
+        ]:
+            capsule, value_label = self._make_capsule(emoji, label)
+            layout.addWidget(capsule)
+            self.capsule_values[key] = value_label
 
         self.btn_pause = QPushButton("暂停记录")
         self.btn_pause.setStyleSheet(ui_style.get_button_secondary_style())
@@ -306,7 +309,45 @@ class MainWindow(QMainWindow):
         self.btn_report.setStyleSheet(ui_style.get_button_primary_style())
         self.btn_report.clicked.connect(self._quick_report)
         layout.addWidget(self.btn_report)
+
+        self._update_top_bar()
         return bar
+
+    def _make_capsule(self, emoji: str, label_text: str) -> tuple[QFrame, QLabel]:
+        """Create a capsule-style pill widget like Linear / Raycast / Arc Browser."""
+        capsule = QFrame()
+        capsule.setStyleSheet(
+            f"""
+            QFrame {{
+                background: {ui_style.COLORS['panel_bg']};
+                border: 1px solid {ui_style.COLORS['border_light']};
+                border-radius: 16px;
+            }}
+            """
+        )
+        h = QHBoxLayout(capsule)
+        h.setContentsMargins(10, 6, 12, 6)
+        h.setSpacing(5)
+
+        emoji_lbl = QLabel(emoji)
+        emoji_lbl.setStyleSheet("font-size: 13px; background: transparent;")
+        h.addWidget(emoji_lbl)
+
+        text_lbl = QLabel(label_text)
+        text_lbl.setStyleSheet(
+            f"font-size: 12px; color: {ui_style.COLORS['text_secondary']};"
+            " font-weight: 600; background: transparent;"
+        )
+        h.addWidget(text_lbl)
+
+        value_lbl = QLabel("--")
+        value_lbl.setStyleSheet(
+            f"font-size: 13px; color: {ui_style.COLORS['text']};"
+            " font-weight: 700; background: transparent;"
+        )
+        h.addWidget(value_lbl)
+
+        return capsule, value_lbl
 
     def _build_bottom_bar(self) -> QWidget:
         bar = QFrame()
@@ -370,14 +411,17 @@ class MainWindow(QMainWindow):
                 self.stack.setCurrentIndex(index)
                 self.lbl_page_title.setText(title)
                 self.lbl_page_hint.setText(hint)
-                if key == "live" and self._last_sample is not None:
-                    self.pages["live"].on_sample_updated(self._last_sample)
+                if self._last_sample is not None:
+                    if key == "live":
+                        self.pages["live"].on_sample_updated(self._last_sample)
+                    self.pages["today"].on_sample_updated(self._last_sample)
                 break
 
     def _on_sample(self, sample) -> None:
         self._last_sample = sample
         if self.stack.currentWidget() is self.pages.get("live"):
             self.pages["live"].on_sample_updated(sample)
+        self.pages["today"].on_sample_updated(sample)
         self.lbl_time.setText(f"最近采样：{datetime.now().strftime('%H:%M:%S')}")
 
     def _toggle_pause(self) -> None:
@@ -418,19 +462,14 @@ class MainWindow(QMainWindow):
             for item in stats.get("by_category", [])
             if item.get("category_key") in work_keys
         )
-        tools_seconds = sum(
-            item.get("effective_seconds", 0) or 0
-            for item in stats.get("by_category", [])
-            if item.get("category_key") == "tools"
-        )
         video_seconds = sum(
             item.get("effective_seconds", 0) or 0
             for item in stats.get("by_category", [])
             if item.get("category_key") in {"video", "gaming"}
         )
-        self.top_summary.setText(
-            f"总活跃 {fmt_seconds(effective)}  |  系统工具 {fmt_seconds(tools_seconds)}  |  办公 {fmt_seconds(work_seconds)}  |  娱乐 {fmt_seconds(video_seconds)}"
-        )
+        self.capsule_values["total"].setText(fmt_seconds(effective))
+        self.capsule_values["work"].setText(fmt_seconds(work_seconds))
+        self.capsule_values["ent"].setText(fmt_seconds(video_seconds))
 
     def _quick_report(self) -> None:
         from .. import exporter
@@ -440,12 +479,24 @@ class MainWindow(QMainWindow):
         os.makedirs(daily_dir, exist_ok=True)
         try:
             path = exporter.export_markdown(self.db_path, today, daily_dir)
-            obsidian_path = self.config.get("obsidian_output_path", "").strip()
+            obsidian_path = self._live_obsidian_path()
             if obsidian_path:
-                exporter.sync_to_obsidian(path, obsidian_path)
+                synced = exporter.sync_to_obsidian(path, obsidian_path)
+                if synced:
+                    QMessageBox.information(self, "生成成功", f"日报已保存到\n{path}\n\n已同步到 Obsidian:\n{synced}")
+                    return
             QMessageBox.information(self, "生成成功", f"日报已保存到\n{path}")
         except Exception as exc:
             QMessageBox.warning(self, "生成失败", str(exc))
+
+    def _live_obsidian_path(self) -> str:
+        """Re-read obsidian_output_path from config file, falling back to memory."""
+        import yaml
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                return (yaml.safe_load(f) or {}).get("obsidian_output_path", "").strip()
+        except Exception:
+            return self.config.get("obsidian_output_path", "").strip()
 
     def _quit_app(self) -> None:
         reply = QMessageBox.question(
@@ -499,3 +550,19 @@ class MainWindow(QMainWindow):
 
         with open(self.config_path, "w", encoding="utf-8") as f:
             f.write(content)
+
+        # Also persist to data/user_config.yaml (survives rebuilds)
+        import yaml as _yaml
+        from .. import get_data_dir
+        user_path = os.path.join(get_data_dir(), "user_config.yaml")
+        user_config = {}
+        if os.path.exists(user_path):
+            try:
+                with open(user_path, "r", encoding="utf-8") as f:
+                    user_config = _yaml.safe_load(f) or {}
+            except Exception:
+                pass
+        user_config["theme"] = self.current_theme
+        os.makedirs(os.path.dirname(user_path), exist_ok=True)
+        with open(user_path, "w", encoding="utf-8") as f:
+            _yaml.safe_dump(user_config, f, allow_unicode=True)

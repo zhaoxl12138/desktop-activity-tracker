@@ -206,6 +206,23 @@ class SettingsPage(QWidget):
 
         QMessageBox.information(self, "成功", "设置已保存，采样间隔和空闲阈值已实时生效。")
 
+        # Also persist user settings to data dir (survives rebuilds)
+        self._save_user_config()
+
+    def _save_user_config(self):
+        """Persist user-facing settings to data/user_config.yaml."""
+        from daylens import get_data_dir
+        data_dir = get_data_dir()
+        os.makedirs(data_dir, exist_ok=True)
+        user_path = os.path.join(data_dir, "user_config.yaml")
+        user_config = {}
+        for key in ("obsidian_output_path", "theme", "db_path"):
+            val = self.config.get(key, "")
+            if val:
+                user_config[key] = val
+        with open(user_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(user_config, f, allow_unicode=True)
+
     def _browse_dir(self, edit):
         d = QFileDialog.getExistingDirectory(self, "选择目录")
         if d:

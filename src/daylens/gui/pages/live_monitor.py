@@ -191,7 +191,8 @@ class LiveMonitorPage(QWidget):
         dur = sample.get("duration_seconds", 0) or 0
         eff = sample.get("effective_seconds", 0) or 0
         sidle = sample.get("session_idle_seconds", 0) or 0
-        idle_s = sample.get("idle_seconds", 0) or 0
+        persistent_idle = sample.get("persistent_idle", 0) or 0
+        audio_playing = sample.get("audio_playing", False)
         category_color = get_category_color(cat_key)
 
         self.lbl_process.setText(proc)
@@ -213,7 +214,10 @@ class LiveMonitorPage(QWidget):
         self.lbl_duration.setText(fmt_seconds(dur))
         self.lbl_effective.setText(fmt_seconds(eff))
         self.lbl_session_idle.setText(fmt_seconds(sidle))
-        self.lbl_idle.setText(f"{idle_s:.0f}s")
+        if cat_key in ("video", "gaming"):
+            self.lbl_idle.setText(f"{persistent_idle:.0f}s 🔊={'Y' if audio_playing else 'N'}")
+        else:
+            self.lbl_idle.setText(f"{persistent_idle:.0f}s")
 
         if sample.get("is_ignored"):
             self.lbl_status.setText("不计入统计")
@@ -246,7 +250,7 @@ class LiveMonitorPage(QWidget):
                 """
             )
         else:
-            self.lbl_status.setText(f"挂机 {idle_s:.0f}s")
+            self.lbl_status.setText(f"挂机 {persistent_idle:.0f}s")
             self.lbl_status.setStyleSheet(
                 f"""
                 QLabel {{
