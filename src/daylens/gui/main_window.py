@@ -189,7 +189,7 @@ class MainWindow(QMainWindow):
         )
         status_layout.addWidget(self.sidebar_record_status)
 
-        self.sidebar_version = QLabel("v1.5.2")
+        self.sidebar_version = QLabel("v1.5.3")
         self.sidebar_version.setStyleSheet(
             f"font-size: 12px; color: {ui_style.COLORS['text_muted']};"
         )

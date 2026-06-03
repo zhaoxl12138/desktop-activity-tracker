@@ -19,19 +19,21 @@ DayLens 是一款 Windows 桌面时间追踪工具，通过 1 秒级精度采集
 
 | 页面 | 功能 |
 |------|------|
-| **今日概览** | 5 指标卡片 + 环形时间分布 + 专注时间轴条 + 今日时间线 + 小时趋势图 + Top 5 应用 |
+| **今日概览** | 4 胶囊指标 + 环形时间分布 (含活跃/挂机状态栏) + 专注时间轴条 + 今日时间线 (20行可滚动) + 小时趋势图 + Top 5 应用 |
 | **实时监控** | 当前窗口信息 (进程/标题/分类/活跃状态) + 最近 50 条记录表 |
 | **软件统计** | 按软件维度统计有效时长与占比，支持 CSV/Markdown 导出 |
 | **分类统计** | 按类别维度展示时长分布 (进度条 + 百分比) |
 | **日报/周报** | 生成 Markdown 日报 (含时间线表格)，可选同步到 Obsidian vault |
 | **目标管理** | 管理分类规则: 新增/编辑/删除进程名、标题关键字、计时策略 |
-| **设置中心** | 采样间隔、空闲阈值、数据库/报告/Obsidian 路径配置 |
+| **设置中心** | 采样间隔、空闲阈值、数据库/报告/Obsidian 路径配置、开机自启 |
 
 ## 系统托盘
 
-- 关闭窗口 -> 最小化到托盘 (不退出)
-- 右键菜单: 打开主界面 / 暂停记录 / 生成日报 / 设置 / 退出
-- 悬停提示: 今日使用摘要
+- 关闭窗口 / 点击 X → 最小化到托盘 (不退出)
+- 左键单击 / 双击 → 打开主界面
+- 右键菜单: 打开主界面 / 暂停记录 / 退出程序
+- 悬停提示: 今日有效时长 + 办公/娱乐时长 + 记录状态
+- 托盘弹窗: 点击外部区域自动关闭
 
 ## 架构
 
@@ -80,7 +82,7 @@ src/daylens/
 | GUI | PySide6 (Qt 6) |
 | 数据库 | SQLite 3 (WAL mode) |
 | 窗口检测 | Win32 API (GetWindowText, GetWindowThreadProcessId) |
-| 空闲检测 | Win32 API (GetLastInputInfo) |
+| 空闲检测 | Win32 API (GetLastInputInfo) + 光标/键盘/窗口三重校验 |
 | 音频检测 | Windows Core Audio API (pycaw + comtypes) |
 | 打包 | PyInstaller onedir (单目录应用, 避免单文件父子双进程) |
 
@@ -88,7 +90,7 @@ src/daylens/
 
 ```bash
 # 安装依赖
-pip install PySide6 pyyaml pycaw comtypes
+pip install PySide6 pyyaml pycaw comtypes pynput
 
 # 启动 GUI
 python -m daylens
@@ -146,6 +148,7 @@ python -m PyInstaller -y DayLens.spec
 
 | 版本 | 日期 | 更新 |
 |------|------|------|
+| v1.5.3 | 2026-06-03 | **UI 重构**: 胶囊式顶部指标栏 (4 x 固定宽度) + 新配色方案 (绿/橙/蓝/灰)；侧边栏品牌移至顶部栏+状态卡片；窗口 chrome 修复 (显式 flags，仅最小化+关闭，DWMWA 深色标题栏)；托盘弹窗 Qt.Popup 修复 (点击外部关闭)；音频播放期间空闲计时器重置修复；时间线扩展至 20 行可滚动；时间分布卡片添加活跃/挂机状态栏 |
 | v1.5.2 | 2026-06-02 | **关键修复**: get_app_root() 简化 (修复 frozen 模式路径解析 → 彻底解决数据库丢失)；软件识别优化 (Claude Code/爱奇艺/WindowsTerminal wrapper)；图标系统修复 + DayLens 图标深色主题可辨识；时间分布卡片 UI 重设计 (加粗环形图 + 进度条图例) |
 | v1.5.1 | 2026-06-02 | **关键修复**: 空闲检测重写 (连续使用误判为挂机的 P0 bug)；时间线 Session 聚合；趋势图 float 精度 + 24 小时固定点；X 轴标签 QPainter 渲染；窗口几何自适应 |
 | v1.5.0 | 2026-06-02 | 项目重命名 DayLens；时间线秒级显示；重复会话去重 + UNIQUE 索引防护；INSERT OR REPLACE；config 持久化修复 |
