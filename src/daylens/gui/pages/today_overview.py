@@ -22,10 +22,10 @@ from ... import database, get_app_root, timeline
 from ...database import count_consecutive_days, query_today_sessions
 from .. import style as ui_style
 from ..widgets.dashboard_widgets import (
+    ActiveRatioRingWidget,
     DistributionLegend,
     DonutChartWidget,
     FocusTimelineBarWidget,
-    MetricCard,
     TimelineWidget,
     TopAppListWidget,
     TrendChartWidget,
@@ -43,50 +43,28 @@ class TodayOverviewPage(QWidget):
         self._icon_cache: dict[str, QIcon | None] = {}
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(16, 12, 16, 14)
-        root.setSpacing(10)
+        root.setContentsMargins(18, 18, 18, 18)
+        root.setSpacing(14)
 
-        metrics_grid = QGridLayout()
-        metrics_grid.setHorizontalSpacing(10)
-        metrics_grid.setVerticalSpacing(0)
-        root.addLayout(metrics_grid)
-        for column, (key, title, icon, color) in enumerate(
-            [
-                ("total", "总使用时长", "T", ui_style.COLORS["primary"]),
-                ("work", "办公时长", "W", ui_style.COLORS["coding_green"]),
-                ("ent", "娱乐时长", "E", ui_style.COLORS["video_orange"]),
-                ("social", "社交通讯时长", "S", ui_style.COLORS["social_purple"]),
-                ("tools", "系统工具", "U", ui_style.COLORS["tools_grey"]),
-            ]
-        ):
-            card = MetricCard(title, icon, color)
-            self.metric_cards[key] = card
-            metrics_grid.addWidget(card, 0, column)
+        content_grid = QGridLayout()
+        content_grid.setHorizontalSpacing(14)
+        content_grid.setVerticalSpacing(14)
+        root.addLayout(content_grid, 1)
 
-        middle_grid = QGridLayout()
-        middle_grid.setHorizontalSpacing(10)
-        middle_grid.setVerticalSpacing(8)
-        root.addLayout(middle_grid)
-        middle_grid.addWidget(self._build_distribution_card(), 0, 0, 1, 5)
-        middle_grid.addWidget(self._build_time_stats_card(), 0, 5, 1, 3)
-        middle_grid.addWidget(self._build_focus_card(), 0, 8, 1, 3)
-
-        bottom_grid = QGridLayout()
-        bottom_grid.setHorizontalSpacing(10)
-        bottom_grid.setVerticalSpacing(10)
-        root.addLayout(bottom_grid, 1)
-        bottom_grid.addWidget(self._build_focus_timeline_card(), 0, 0, 2, 7)
+        content_grid.addWidget(self._build_distribution_card(), 0, 0, 1, 7)
+        content_grid.addWidget(self._build_time_stats_card(), 0, 7, 1, 5)
+        content_grid.addWidget(self._build_focus_timeline_card(), 1, 0, 2, 7)
         self.trend_card = TrendChartWidget()
-        bottom_grid.addWidget(self.trend_card, 0, 7, 1, 4)
+        content_grid.addWidget(self.trend_card, 1, 7, 1, 5)
         self.top_app_card = TopAppListWidget()
-        bottom_grid.addWidget(self.top_app_card, 1, 7, 1, 4)
+        content_grid.addWidget(self.top_app_card, 2, 7, 1, 5)
 
-        bottom_grid.setRowStretch(0, 1)
-        bottom_grid.setRowStretch(1, 1)
-        for column in range(11):
-            stretch = 2 if column < 5 else 1
-            middle_grid.setColumnStretch(column, stretch)
-            bottom_grid.setColumnStretch(column, stretch)
+        content_grid.setRowStretch(0, 3)
+        content_grid.setRowStretch(1, 3)
+        content_grid.setRowStretch(2, 2)
+        content_grid.setRowStretch(2, 3)
+        for column in range(12):
+            content_grid.setColumnStretch(column, 1)
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
@@ -123,13 +101,13 @@ class TodayOverviewPage(QWidget):
         card = QFrame()
         card.setObjectName("dashboardCard")
         card.setStyleSheet(ui_style.get_dashboard_card_style())
-        card.setFixedHeight(284)
+        card.setMinimumHeight(288)
 
         layout = QVBoxLayout(card)
         layout.setContentsMargins(16, 14, 16, 12)
         layout.setSpacing(8)
 
-        title = QLabel("时间分布")
+        title = QLabel("📊 时间分布")
         title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {ui_style.COLORS['text']};")
         layout.addWidget(title)
 
@@ -170,47 +148,52 @@ class TodayOverviewPage(QWidget):
         status_row.addWidget(self.idle_status_label)
         status_row.addStretch()
         layout.addLayout(status_row)
-
-        # Auto-summary
-        self.summary_label = QLabel("")
-        self.summary_label.setStyleSheet(
-            f"font-size: 13px; color: {ui_style.COLORS['text_secondary']};"
-        )
-        layout.addWidget(self.summary_label)
         return card
 
     def _build_time_stats_card(self) -> QWidget:
         card = QFrame()
         card.setObjectName("dashboardCard")
         card.setStyleSheet(ui_style.get_dashboard_card_style())
-        card.setFixedHeight(220)
+        card.setFixedHeight(288)
 
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(14, 12, 14, 12)
-        layout.setSpacing(9)
+        layout = QHBoxLayout(card)
+        layout.setContentsMargins(22, 18, 22, 18)
+        layout.setSpacing(18)
 
-        title = QLabel("时间统计")
+        left = QVBoxLayout()
+        left.setSpacing(13)
+
+        title = QLabel("⏱ 时间统计")
         title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {ui_style.COLORS['text']};")
-        layout.addWidget(title)
+        left.addWidget(title)
 
-        for key, label_text in [
-            ("total", "总时长"),
-            ("active", "活跃时长"),
-            ("idle", "挂机时长"),
-            ("ratio", "活跃时间占比"),
+        for key, label_text, icon_text in [
+            ("total", "总时长", "⚡"),
+            ("active", "活跃时长", "▶"),
+            ("idle", "挂机时长", "⏸"),
+            ("ratio", "活跃时间占比", "📊"),
         ]:
             row = QHBoxLayout()
+            row.setSpacing(10)
+            icon = QLabel(icon_text)
+            icon.setFixedWidth(18)
+            icon.setStyleSheet(f"font-size: 16px; color: {ui_style.COLORS['text_secondary']};")
             name_label = QLabel(label_text)
-            name_label.setStyleSheet(f"font-size: 14px; color: {ui_style.COLORS['text_secondary']};")
+            name_label.setStyleSheet(f"font-size: 14px; color: {ui_style.COLORS['text']};")
             value_label = QLabel("--")
-            value_label.setStyleSheet(f"font-size: 14px; color: {ui_style.COLORS['text']}; font-weight: 700;")
+            value_label.setStyleSheet(f"font-size: 16px; color: {ui_style.COLORS['text']}; font-weight: 800;")
+            row.addWidget(icon)
             row.addWidget(name_label)
             row.addStretch()
             row.addWidget(value_label)
-            layout.addLayout(row)
+            left.addLayout(row)
             self.time_stats_labels[key] = value_label
 
-        layout.addStretch()
+        left.addStretch()
+        layout.addLayout(left, 1)
+
+        self.time_stats_ratio_ring = ActiveRatioRingWidget()
+        layout.addWidget(self.time_stats_ratio_ring, 0, Qt.AlignCenter)
         return card
 
     def _build_focus_card(self) -> QWidget:
@@ -246,14 +229,13 @@ class TodayOverviewPage(QWidget):
         card = QFrame()
         card.setObjectName("dashboardCard")
         card.setStyleSheet(ui_style.get_dashboard_card_style())
-        card.setMinimumHeight(300)
 
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(10)
+        layout.setContentsMargins(18, 12, 18, 10)
+        layout.setSpacing(6)
 
         title = QLabel("今日专注时间轴")
-        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {ui_style.COLORS['text']};")
+        title.setStyleSheet(f"font-size: 16px; font-weight: 800; color: {ui_style.COLORS['text']};")
         layout.addWidget(title)
 
         self.focus_axis = FocusTimelineBarWidget()
@@ -262,7 +244,7 @@ class TodayOverviewPage(QWidget):
         tick_row = QHBoxLayout()
         for index, text in enumerate(["00:00", "04:00", "08:00", "12:00", "16:00", "20:00", "24:00"]):
             label = QLabel(text)
-            label.setStyleSheet(f"font-size: 11px; color: {ui_style.COLORS['text_muted']};")
+            label.setStyleSheet(f"font-size: 10px; color: {ui_style.COLORS['text_muted']};")
             tick_row.addWidget(label)
             if index < 6:
                 tick_row.addStretch()
@@ -270,23 +252,30 @@ class TodayOverviewPage(QWidget):
 
         legend_row = QHBoxLayout()
         for name, color in [
-            ("办公", ui_style.COLORS["coding_green"]),
-            ("视频娱乐", ui_style.COLORS["video_orange"]),
-            ("社交通讯", ui_style.COLORS["social_purple"]),
-            ("其他", ui_style.COLORS["ai_blue"]),
-            ("离开/空闲", ui_style.COLORS["idle_gray"]),
+            ("💻 办公", ui_style.COLORS["coding_green"]),
+            ("🎬 视频娱乐", ui_style.COLORS["video_orange"]),
+            ("💬 社交通讯", ui_style.COLORS["social_purple"]),
+            ("📦 其他", ui_style.COLORS["tools_grey"]),
+            ("💤 离开/空闲", ui_style.COLORS["idle_gray"]),
         ]:
             dot = QLabel("●")
-            dot.setStyleSheet(f"font-size: 12px; color: {color};")
+            dot.setStyleSheet(f"font-size: 11px; color: {color};")
             text_label = QLabel(name)
-            text_label.setStyleSheet(f"font-size: 12px; color: {ui_style.COLORS['text_secondary']};")
+            text_label.setStyleSheet(f"font-size: 11px; color: {ui_style.COLORS['text_secondary']};")
             legend_row.addWidget(dot)
             legend_row.addWidget(text_label)
-            legend_row.addSpacing(10)
+            legend_row.addSpacing(8)
         legend_row.addStretch()
         layout.addLayout(legend_row)
 
-        self.timeline_widget = TimelineWidget(max_rows=12)
+        self.focus_hint = QLabel("今日暂未识别到连续专注时段。")
+        self.focus_hint.setStyleSheet(f"font-size: 11px; color: {ui_style.COLORS['text_secondary']};")
+        layout.addWidget(self.focus_hint)
+
+        self.consecutive_label = QLabel("")
+        self.consecutive_label.setVisible(False)
+
+        self.timeline_widget = TimelineWidget(max_rows=20)
         layout.addWidget(self.timeline_widget, 1)
         return card
 
@@ -299,26 +288,15 @@ class TodayOverviewPage(QWidget):
         total_seconds = effective + idle_seconds
 
         work_seconds, social_seconds, entertainment_seconds, tools_seconds = self._category_stats(stats)
-        other_seconds = max(effective - work_seconds - social_seconds - entertainment_seconds - tools_seconds, 0)
-        history = self._load_metric_history(8)
-        self._update_metrics(
-            total_seconds,
-            work_seconds,
-            entertainment_seconds,
-            social_seconds,
-            tools_seconds,
-            history,
-        )
-
+        other_seconds = max(effective - work_seconds - social_seconds - entertainment_seconds, 0)
         # Donut chart: active time only — idle shown separately below
         distribution = [
-            ("办公", work_seconds, ui_style.COLORS["coding_green"]),
-            ("视频娱乐", entertainment_seconds, ui_style.COLORS["video_orange"]),
-            ("社交通讯", social_seconds, ui_style.COLORS["social_purple"]),
-            ("系统工具", tools_seconds, ui_style.COLORS["tools_grey"]),
+            ("💻 办公", work_seconds, ui_style.COLORS["coding_green"]),
+            ("🎬 视频娱乐", entertainment_seconds, ui_style.COLORS["video_orange"]),
+            ("💬 社交通讯", social_seconds, ui_style.COLORS["social_purple"]),
         ]
         if other_seconds > 0:
-            distribution.append(("其他", other_seconds, ui_style.COLORS["ai_blue"]))
+            distribution.append(("📦 其他", other_seconds, ui_style.COLORS["ai_blue"]))
 
         self.donut_widget.set_data(effective, distribution)
         self.legend_widget.set_items(distribution, effective)
@@ -327,21 +305,11 @@ class TodayOverviewPage(QWidget):
         idle_text = _compact_duration(idle_seconds)
         self.active_status_label.setText(f"活跃占比 {active_ratio}%")
         self.idle_status_label.setText(f"挂机 {idle_text}")
-        # Auto-summary: find category with highest percentage
-        max_name = ""
-        max_pct = 0
-        for name, seconds, _ in distribution:
-            pct = int(round(seconds / max(1, effective) * 100))
-            if pct > max_pct:
-                max_pct = pct
-                max_name = name
-        self.summary_label.setText(
-            f"{max_name}时间占比最高（{max_pct}%）" if max_name and max_pct > 0 else ""
-        )
         self.time_stats_labels["total"].setText(_compact_duration(total_seconds))
         self.time_stats_labels["active"].setText(_compact_duration(effective))
         self.time_stats_labels["idle"].setText(_compact_duration(idle_seconds))
         self.time_stats_labels["ratio"].setText(f"{active_ratio}%")
+        self.time_stats_ratio_ring.set_ratio(active_ratio)
 
         sessions = query_today_sessions(self.db_path, today)
         self.timeline_widget.set_sessions(sessions, self.display_name_mapping)

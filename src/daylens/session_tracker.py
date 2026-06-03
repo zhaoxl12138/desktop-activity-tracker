@@ -337,7 +337,8 @@ class SessionTracker:
             and self._audio_detector is not None
             and self._audio_detector.is_any_playing()
         ):
-            # Audio peaks detected → always effective
+            # Audio peaks detected → always effective, reset idle timer
+            self._persistent_idle = 0.0
             self._current.effective_seconds += self.sample_interval
             return
 

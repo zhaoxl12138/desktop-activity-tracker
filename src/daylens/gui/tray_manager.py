@@ -64,7 +64,7 @@ class TrayManager:
 
     def _show_tray_popup(self) -> None:
         popup = QWidget()
-        popup.setWindowFlags(Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        popup.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
         popup.setStyleSheet(
             """
             QWidget {
@@ -146,7 +146,10 @@ class TrayManager:
 
     def _open_window(self) -> None:
         if self.main_window:
-            self.main_window.show()
+            if self.main_window.isMinimized():
+                self.main_window.showNormal()
+            else:
+                self.main_window.show()
             self.main_window.raise_()
             self.main_window.activateWindow()
 

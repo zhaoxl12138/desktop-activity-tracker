@@ -1,5 +1,6 @@
 """Settings page - general configuration and data maintenance."""
 
+import os
 import yaml
 from datetime import datetime
 
@@ -113,6 +114,26 @@ class SettingsPage(QWidget):
 
         layout.addWidget(g1)
 
+        # ── Startup ──
+        g_startup = QGroupBox("开机自启")
+        g_startup.setStyleSheet(build_group_style())
+        gsl = QVBoxLayout(g_startup)
+        gsl.setContentsMargins(16, 20, 16, 16)
+        gsl.setSpacing(8)
+
+        startup_hint = QLabel("启用后 DayLens 将随系统自动启动并最小化到托盘。")
+        startup_hint.setStyleSheet(f"font-size: 12px; color: {ui_style.COLORS['text_muted']};")
+        gsl.addWidget(startup_hint)
+
+        self.chk_startup = QCheckBox("开机自启")
+        self.chk_startup.setChecked(self.config.get("startup_enabled", False))
+        self.chk_startup.setStyleSheet(
+            f"font-size: 14px; font-weight: 700; color: {ui_style.COLORS['text']};"
+            f" QCheckBox::indicator {{ width: 18px; height: 18px; }}"
+        )
+        gsl.addWidget(self.chk_startup)
+        layout.addWidget(g_startup)
+
         # ── Path settings ──
         g2 = QGroupBox("路径设置")
         g2.setStyleSheet(build_group_style())
@@ -191,7 +212,9 @@ class SettingsPage(QWidget):
         self.config["sample_interval_seconds"] = sample_interval
         self.config["idle_threshold_seconds"] = idle_threshold
         self.config["db_path"] = self.edit_db.text().strip()
+        self.config["startup_enabled"] = self.chk_startup.isChecked()
         self.config["obsidian_output_path"] = self.edit_obsidian.text().strip()
+        self._toggle_startup(self.config["startup_enabled"])
 
         tracker = self.config.setdefault("tracker", {})
         tracker["sample_interval_seconds"] = sample_interval
@@ -222,6 +245,47 @@ class SettingsPage(QWidget):
                 user_config[key] = val
         with open(user_path, "w", encoding="utf-8") as f:
             yaml.safe_dump(user_config, f, allow_unicode=True)
+
+    @staticmethod
+    def _get_startup_link_path() -> str:
+        startup_dir = os.path.expandvars(
+            r"%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"
+        )
+        return os.path.join(startup_dir, "DayLens.lnk")
+
+    @staticmethod
+    def _get_exe_path() -> str:
+        import sys
+        # PyInstaller: sys.executable points to the bundled exe
+        if getattr(sys, "frozen", False):
+            return sys.executable
+        # Running from source — we can't create a working shortcut,
+        # but write the exe path we'd expect after packaging
+        from daylens import get_app_root
+        return os.path.join(get_app_root(), "DayLens.exe")
+
+    def _toggle_startup(self, enable: bool) -> None:
+        link_path = self._get_startup_link_path()
+        if enable:
+            exe_path = self._get_exe_path()
+            if not os.path.isfile(exe_path):
+                return
+            try:
+                import win32com.client
+                shell = win32com.client.Dispatch("WScript.Shell")
+                shortcut = shell.CreateShortcut(link_path)
+                shortcut.TargetPath = exe_path
+                shortcut.WorkingDirectory = os.path.dirname(exe_path)
+                shortcut.Description = "DayLens - 个人数字行为分析系统"
+                shortcut.WindowStyle = 7  # minimized
+                shortcut.Save()
+            except Exception:
+                pass
+        else:
+            try:
+                os.remove(link_path)
+            except OSError:
+                pass
 
     def _browse_dir(self, edit):
         d = QFileDialog.getExistingDirectory(self, "选择目录")

@@ -188,6 +188,49 @@ class DonutChartWidget(QWidget):
                          Qt.AlignCenter, fmt_seconds(self._total_seconds))
 
 
+class ActiveRatioRingWidget(QWidget):
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._ratio = 0
+        self.setMinimumSize(170, 170)
+
+    def set_ratio(self, ratio: int) -> None:
+        self._ratio = max(0, min(100, int(ratio or 0)))
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        side = min(self.width(), self.height()) - 22
+        rect = QRectF((self.width() - side) / 2, (self.height() - side) / 2, side, side)
+        ring_width = 12
+
+        base_pen = QPen(QColor(COLORS["panel_bg_alt"]), ring_width)
+        base_pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(base_pen)
+        painter.drawArc(rect, 0, 360 * 16)
+
+        value_pen = QPen(QColor(COLORS["success_green"]), ring_width)
+        value_pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(value_pen)
+        painter.drawArc(rect, 90 * 16, -int(360 * 16 * self._ratio / 100))
+
+        font = painter.font()
+        font.setPixelSize(34)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QColor(COLORS["text"]))
+        painter.drawText(QRectF(rect.left(), rect.center().y() - 30, rect.width(), 42), Qt.AlignCenter, f"{self._ratio}%")
+
+        font.setPixelSize(13)
+        font.setBold(False)
+        painter.setFont(font)
+        painter.setPen(QColor(COLORS["text_secondary"]))
+        painter.drawText(QRectF(rect.left(), rect.center().y() + 12, rect.width(), 24), Qt.AlignCenter, "活跃时间占比")
+
+
 class FocusTimelineBarWidget(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -555,7 +598,7 @@ class _TrendCanvas(QWidget):
                 fill_path.lineTo(pt)
             fill_path.lineTo(chart_rect.right(), chart_rect.bottom())
             fill_path.closeSubpath()
-            fill_color = QColor(COLORS["primary"])
+            fill_color = QColor(COLORS["success_green"])
             fill_color.setAlpha(25)
             painter.setBrush(fill_color)
             painter.setPen(Qt.NoPen)
@@ -566,12 +609,12 @@ class _TrendCanvas(QWidget):
         line_path.moveTo(chart_points[0])
         for pt in chart_points[1:]:
             line_path.lineTo(pt)
-        painter.setPen(QPen(QColor(COLORS["primary"]), 2))
+        painter.setPen(QPen(QColor(COLORS["success_green"]), 2))
         painter.setBrush(Qt.NoBrush)
         painter.drawPath(line_path)
 
         # Dots
-        dot_color = QColor(COLORS["primary"])
+        dot_color = QColor(COLORS["success_green"])
         dot_color.setAlpha(220)
         painter.setPen(Qt.NoPen)
         painter.setBrush(dot_color)
@@ -712,15 +755,15 @@ class DistributionLegend(QWidget):
             row_layout.setContentsMargins(0, 0, 0, 0)
             row_layout.setSpacing(8)
 
-            dot = QLabel("●")
-            dot.setFixedWidth(16)
-            dot.setStyleSheet(f"color: {color}; font-size: 13px;")
-            row_layout.addWidget(dot)
+            icon = QLabel("●")
+            icon.setFixedWidth(16)
+            icon.setStyleSheet(f"color: {color}; font-size: 14px; font-weight: 700;")
+            row_layout.addWidget(icon)
 
             name_label = QLabel(name)
-            name_label.setFixedWidth(64)
+            name_label.setMinimumWidth(72)
             name_label.setStyleSheet(
-                f"font-size: 14px; font-weight: 600; color: {COLORS['text']};"
+                f"font-size: 14px; font-weight: 700; color: {COLORS['text']};"
             )
             row_layout.addWidget(name_label)
 

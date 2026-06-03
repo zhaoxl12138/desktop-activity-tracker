@@ -4,22 +4,22 @@ from __future__ import annotations
 
 
 DARK_COLORS = {
-    "bg": "#071326",
-    "panel_bg": "#0B1A33",
-    "panel_bg_alt": "#0E203D",
-    "card_bg": "#10213D",
-    "card_bg_alt": "#13284A",
-    "sidebar_bg": "#061226",
-    "sidebar_hover": "#122A52",
+    "bg": "#020D1D",
+    "panel_bg": "#06172B",
+    "panel_bg_alt": "#0B203B",
+    "card_bg": "#06182C",
+    "card_bg_alt": "#09213A",
+    "sidebar_bg": "#031020",
+    "sidebar_hover": "#102642",
     "sidebar_active": "#1D5DFF",
     "primary": "#2F80FF",
     "primary_hover": "#5AA2FF",
     "accent_cyan": "#19D3FF",
-    "coding_green": "#28D17C",
-    "video_orange": "#FF9F1A",
-    "social_purple": "#8B5CF6",
+    "coding_green": "#22C55E",
+    "video_orange": "#F97316",
+    "social_purple": "#3B82F6",
     "idle_gray": "#8FA1BC",
-    "ai_blue": "#3B82F6",
+    "ai_blue": "#94A3B8",
     "reading_blue": "#38BDF8",
     "creative_pink": "#EC4899",
     "tools_grey": "#94A3B8",
@@ -32,8 +32,8 @@ DARK_COLORS = {
     "text_muted": "#7F8EA8",
     "text_inverse": "#FFFFFF",
     "brand": "#4DA8FF",
-    "border": "#223B63",
-    "border_light": "#2C4772",
+    "border": "#17304F",
+    "border_light": "#254465",
     "success_bg": "#0F2A23",
     "warning_bg": "#332510",
     "danger_bg": "#321827",
@@ -52,14 +52,14 @@ LIGHT_COLORS = {
     "primary": "#2F80FF",
     "primary_hover": "#5AA2FF",
     "accent_cyan": "#19D3FF",
-    "coding_green": "#1FBF72",
-    "video_orange": "#F59E0B",
-    "social_purple": "#8B5CF6",
+    "coding_green": "#22C55E",
+    "video_orange": "#F97316",
+    "social_purple": "#3B82F6",
     "idle_gray": "#94A3B8",
-    "ai_blue": "#3B82F6",
-    "reading_blue": "#38BDF8",
+    "ai_blue": "#94A3B8",
+    "reading_blue": "#0EA5E9",
     "creative_pink": "#EC4899",
-    "tools_grey": "#64748B",
+    "tools_grey": "#94A3B8",
     "gaming_red": "#EF4444",
     "danger_red": "#DC2626",
     "warning_yellow": "#D97706",
@@ -103,7 +103,7 @@ def refresh_category_colors() -> None:
             "browser_general": COLORS["tools_grey"],
             "browser_other": COLORS["tools_grey"],
             "idle": COLORS["idle_gray"],
-            "other": "#64748B",
+            "other": COLORS["tools_grey"],
         }
     )
 
@@ -203,7 +203,7 @@ def get_top_bar_style() -> str:
     return f"""
 QFrame#topBar {{
     background: {COLORS['bg']};
-    border-bottom: 1px solid {COLORS['border']};
+    border-bottom: 1px solid rgba(37, 68, 101, 0.38);
 }}
 """
 
@@ -280,7 +280,7 @@ QFrame#dashboardCard {{
     background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
         stop:0 {COLORS['card_bg_alt']}, stop:1 {COLORS['card_bg']});
     border: 1px solid {COLORS['border']};
-    border-radius: 18px;
+    border-radius: 14px;
 }}
 """
 

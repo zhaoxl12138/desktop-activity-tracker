@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from datetime import datetime
 
 from PySide6.QtCore import QSize, Qt, QTimer
@@ -71,6 +72,8 @@ DISPLAY_NAME_MAPPING = {
 
 
 class MainWindow(QMainWindow):
+    FIXED_SIZE = QSize(1600, 960)
+
     def __init__(self, app_root, config, db_path, config_path, reports_dir, worker):
         super().__init__()
         self.app_root = app_root
@@ -80,19 +83,23 @@ class MainWindow(QMainWindow):
         self.reports_dir = reports_dir
         self.worker = worker
         self._theme_rebuilding = False
+        self._last_sample: dict | None = None
         self.current_theme = ui_style.apply_theme(self.config.get("theme", "dark"))
 
         self.setWindowTitle("DayLens")
         self.setStyleSheet(ui_style.get_global_style() + ui_style.get_input_style())
-        self.resize(1440, 960)
-        self.setMinimumSize(1280, 860)
+        self.setFixedSize(self.FIXED_SIZE)
+        self.setWindowFlags(
+            Qt.Window
+            | Qt.WindowMinimizeButtonHint
+            | Qt.WindowCloseButtonHint
+        )
         self._build_ui()
+        self._apply_window_chrome_theme()
         self._apply_initial_geometry()
 
         self.worker.sample_updated.connect(self._on_sample)
         self.nav_list.setCurrentRow(0)
-
-        self._last_sample: dict | None = None
 
         self.refresh_timer = QTimer(self)
         self.refresh_timer.timeout.connect(self._update_top_bar)
@@ -113,50 +120,17 @@ class MainWindow(QMainWindow):
         content_layout.addWidget(self._build_sidebar())
         content_layout.addWidget(self._build_pages(), 1)
         root_layout.addLayout(content_layout, 1)
-
-        root_layout.addWidget(self._build_bottom_bar())
         current_row = next((index for index, (_, key, _) in enumerate(NAV_ITEMS) if key == current_key), 0)
         self.nav_list.setCurrentRow(current_row)
 
     def _build_sidebar(self) -> QWidget:
         frame = QFrame()
-        frame.setFixedWidth(236)
+        frame.setFixedWidth(254)
         frame.setStyleSheet(f"background: {ui_style.COLORS['sidebar_bg']};")
 
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(0, 20, 0, 14)
+        layout.setContentsMargins(16, 18, 16, 14)
         layout.setSpacing(0)
-
-        brand_row = QHBoxLayout()
-        brand_row.setContentsMargins(20, 12, 20, 8)
-        brand_row.setSpacing(12)
-
-        icon_label = QLabel()
-        icon_label.setFixedSize(34, 34)
-        icon_path = os.path.join(self.app_root, "assets", "icon.ico")
-        if os.path.exists(icon_path):
-            pixmap = QPixmap(icon_path).scaled(34, 34, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            icon_label.setPixmap(pixmap)
-        brand_row.addWidget(icon_label)
-
-        brand = QLabel("DayLens")
-        brand.setStyleSheet(
-            f"font-size: 20px; font-weight: 800; color: {ui_style.COLORS['brand']};"
-        )
-        brand_row.addWidget(brand)
-        brand_row.addStretch()
-        layout.addLayout(brand_row)
-
-        tagline = QLabel("Focus · Analyze · Improve")
-        tagline.setStyleSheet(
-            f"font-size: 11px; color: {ui_style.COLORS['text_muted']}; padding: 0 20px 14px 66px;"
-        )
-        layout.addWidget(tagline)
-
-        divider = QFrame()
-        divider.setFixedHeight(1)
-        divider.setStyleSheet("background: #29416F; margin: 0 14px;")
-        layout.addWidget(divider)
 
         self.nav_list = QListWidget()
         self.nav_list.setStyleSheet(ui_style.get_sidebar_style())
@@ -168,18 +142,12 @@ class MainWindow(QMainWindow):
         for title, key, hint in NAV_ITEMS:
             item = QListWidgetItem(title)
             item.setData(Qt.UserRole, {"key": key, "title": title, "hint": hint})
-            item.setSizeHint(QSize(0, 44))
+            item.setSizeHint(QSize(0, 52))
             self.nav_list.addItem(item)
-        nav_height = 14 * 2 + len(NAV_ITEMS) * 44 + max(0, len(NAV_ITEMS) - 1) * 2 + 14
+        nav_height = 14 * 2 + len(NAV_ITEMS) * 52 + max(0, len(NAV_ITEMS) - 1) * 2 + 14
         self.nav_list.setFixedHeight(nav_height)
         self.nav_list.currentRowChanged.connect(self._on_nav_changed)
         layout.addWidget(self.nav_list, 1)
-
-        other_title = QLabel("其他")
-        other_title.setStyleSheet(
-            f"font-size: 12px; color: {ui_style.COLORS['text_muted']}; padding: 10px 18px 4px 18px; font-weight: 700;"
-        )
-        layout.addWidget(other_title)
 
         self.chk_dark_mode = QCheckBox("深色模式")
         self.chk_dark_mode.setChecked(ui_style.is_dark_theme())
@@ -188,7 +156,7 @@ class MainWindow(QMainWindow):
             QCheckBox {{
                 color: {ui_style.COLORS['text_secondary']};
                 font-size: 14px;
-                padding: 4px 18px 8px 18px;
+                padding: 10px 2px 18px 2px;
             }}
             QCheckBox::indicator {{
                 width: 34px;
@@ -208,17 +176,32 @@ class MainWindow(QMainWindow):
 
         layout.addStretch()
 
-        self.sidebar_version = QLabel("v1.5.2")
-        self.sidebar_version.setStyleSheet(
-            f"font-size: 10px; color: {ui_style.COLORS['text_muted']}; padding: 4px 16px;"
-        )
-        layout.addWidget(self.sidebar_version)
+        status_card = QFrame()
+        status_card.setObjectName("dashboardCard")
+        status_card.setStyleSheet(ui_style.get_dashboard_card_style())
+        status_layout = QVBoxLayout(status_card)
+        status_layout.setContentsMargins(16, 14, 16, 14)
+        status_layout.setSpacing(8)
 
         self.sidebar_record_status = QLabel("● 记录中")
         self.sidebar_record_status.setStyleSheet(
-            f"font-size: 12px; color: {ui_style.COLORS['success_green']}; font-weight: 700; padding: 2px 16px 8px 16px;"
+            f"font-size: 14px; color: {ui_style.COLORS['success_green']}; font-weight: 800;"
         )
-        layout.addWidget(self.sidebar_record_status)
+        status_layout.addWidget(self.sidebar_record_status)
+
+        self.sidebar_version = QLabel("v1.5.2")
+        self.sidebar_version.setStyleSheet(
+            f"font-size: 12px; color: {ui_style.COLORS['text_muted']};"
+        )
+        status_layout.addWidget(self.sidebar_version)
+
+        self.sidebar_sample_time = QLabel(f"最近采样 {datetime.now().strftime('%H:%M:%S')}")
+        self.sidebar_sample_time.setStyleSheet(
+            f"font-size: 11px; color: {ui_style.COLORS['text_muted']};"
+        )
+        status_layout.addWidget(self.sidebar_sample_time)
+        layout.addWidget(status_card)
+        layout.addSpacing(14)
 
         self.sidebar_quit_btn = QPushButton("退出程序")
         self.sidebar_quit_btn.setStyleSheet(ui_style.get_button_danger_style())
@@ -255,21 +238,39 @@ class MainWindow(QMainWindow):
         bar = QFrame()
         bar.setObjectName("topBar")
         bar.setStyleSheet(ui_style.get_top_bar_style())
-        bar.setFixedHeight(84)
+        bar.setFixedHeight(168)
 
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(20, 8, 20, 8)
-        layout.setSpacing(12)
+        layout.setContentsMargins(34, 24, 34, 20)
+        layout.setSpacing(24)
 
         title_wrap = QVBoxLayout()
-        title_wrap.setSpacing(4)
+        title_wrap.setSpacing(8)
+
+        brand_row = QHBoxLayout()
+        brand_row.setSpacing(10)
+        icon_label = QLabel()
+        icon_label.setFixedSize(34, 34)
+        icon_path = os.path.join(self.app_root, "assets", "icon.ico")
+        if os.path.exists(icon_path):
+            pixmap = QPixmap(icon_path).scaled(34, 34, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            icon_label.setPixmap(pixmap)
+        brand_row.addWidget(icon_label)
+
+        brand = QLabel("DayLens")
+        brand.setStyleSheet(
+            f"font-size: 22px; font-weight: 900; color: {ui_style.COLORS['text']};"
+        )
+        brand_row.addWidget(brand)
+        brand_row.addStretch()
+        title_wrap.addLayout(brand_row)
 
         top_line = QHBoxLayout()
         top_line.setSpacing(12)
 
         self.lbl_page_title = QLabel("今日概览")
         self.lbl_page_title.setStyleSheet(
-            f"font-size: 32px; font-weight: 800; color: {ui_style.COLORS['text']};"
+            f"font-size: 34px; font-weight: 900; color: {ui_style.COLORS['text']};"
         )
         top_line.addWidget(self.lbl_page_title)
 
@@ -288,17 +289,12 @@ class MainWindow(QMainWindow):
         title_wrap.addWidget(self.lbl_page_hint)
         layout.addLayout(title_wrap)
 
-        layout.addStretch()
-
         self.capsule_values: dict[str, QLabel] = {}
-        for emoji, label, key in [
-            ("⚡", "今日活跃", "total"),
-            ("💼", "办公", "work"),
-            ("🎮", "娱乐", "ent"),
-        ]:
-            capsule, value_label = self._make_capsule(emoji, label)
-            layout.addWidget(capsule)
-            self.capsule_values[key] = value_label
+        self.capsule_labels: dict[str, QLabel] = {}
+        self.capsule_icons: dict[str, QLabel] = {}
+        layout.addStretch()
+        layout.addWidget(self._build_summary_capsules())
+        layout.addStretch()
 
         self.btn_pause = QPushButton("暂停记录")
         self.btn_pause.setStyleSheet(ui_style.get_button_secondary_style())
@@ -313,41 +309,79 @@ class MainWindow(QMainWindow):
         self._update_top_bar()
         return bar
 
-    def _make_capsule(self, emoji: str, label_text: str) -> tuple[QFrame, QLabel]:
-        """Create a capsule-style pill widget like Linear / Raycast / Arc Browser."""
+    def _build_summary_capsules(self) -> QFrame:
         capsule = QFrame()
         capsule.setStyleSheet(
             f"""
             QFrame {{
                 background: {ui_style.COLORS['panel_bg']};
-                border: 1px solid {ui_style.COLORS['border_light']};
-                border-radius: 16px;
+                border: 1px solid {ui_style.COLORS['border']};
+                border-radius: 18px;
+            }}
+            """
+        )
+        layout = QHBoxLayout(capsule)
+        layout.setContentsMargins(20, 12, 20, 12)
+        layout.setSpacing(20)
+
+        for index, (emoji, label, key) in enumerate(
+            [
+                ("⚡", "今日活跃", "total"),
+                ("💼", "办公", "work"),
+                ("🎬", "视频娱乐", "ent"),
+                ("💬", "社交通讯", "social"),
+            ]
+        ):
+            item, value_label, icon_label, text_label = self._make_capsule(emoji, label)
+            item.setFixedWidth(170)
+            layout.addWidget(item)
+            self.capsule_values[key] = value_label
+            self.capsule_icons[key] = icon_label
+            self.capsule_labels[key] = text_label
+            if index < 3:
+                line = QFrame()
+                line.setFixedWidth(1)
+                line.setStyleSheet(f"background: {ui_style.COLORS['border']};")
+                layout.addWidget(line)
+        return capsule
+
+    def _make_capsule(self, emoji: str, label_text: str) -> tuple[QFrame, QLabel, QLabel, QLabel]:
+        """Create a capsule-style pill widget like Linear / Raycast / Arc Browser."""
+        capsule = QFrame()
+        capsule.setStyleSheet(
+            f"""
+            QFrame {{
+                background: transparent;
+                border: none;
             }}
             """
         )
         h = QHBoxLayout(capsule)
-        h.setContentsMargins(10, 6, 12, 6)
-        h.setSpacing(5)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(10)
 
         emoji_lbl = QLabel(emoji)
-        emoji_lbl.setStyleSheet("font-size: 13px; background: transparent;")
+        emoji_lbl.setStyleSheet("font-size: 24px; background: transparent;")
         h.addWidget(emoji_lbl)
 
+        text_wrap = QVBoxLayout()
+        text_wrap.setSpacing(2)
         text_lbl = QLabel(label_text)
         text_lbl.setStyleSheet(
-            f"font-size: 12px; color: {ui_style.COLORS['text_secondary']};"
-            " font-weight: 600; background: transparent;"
+            f"font-size: 12px; color: {ui_style.COLORS['text']};"
+            " font-weight: 700; background: transparent;"
         )
-        h.addWidget(text_lbl)
+        text_wrap.addWidget(text_lbl)
 
         value_lbl = QLabel("--")
         value_lbl.setStyleSheet(
-            f"font-size: 13px; color: {ui_style.COLORS['text']};"
-            " font-weight: 700; background: transparent;"
+            f"font-size: 23px; color: {ui_style.COLORS['text']};"
+            " font-weight: 900; background: transparent;"
         )
-        h.addWidget(value_lbl)
+        text_wrap.addWidget(value_lbl)
+        h.addLayout(text_wrap)
 
-        return capsule, value_lbl
+        return capsule, value_lbl, emoji_lbl, text_lbl
 
     def _build_bottom_bar(self) -> QWidget:
         bar = QFrame()
@@ -383,15 +417,46 @@ class MainWindow(QMainWindow):
         if available is None:
             return
 
-        target_width = min(self.width(), max(self.minimumWidth(), available.width() - 80))
-        target_height = min(self.height(), max(self.minimumHeight(), available.height() - 80))
-        target_width = min(target_width, available.width())
-        target_height = min(target_height, available.height())
-
-        self.resize(target_width, target_height)
         frame = self.frameGeometry()
         frame.moveCenter(available.center())
         self.move(frame.topLeft())
+
+    def _apply_window_chrome_theme(self) -> None:
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            hwnd = int(self.winId())
+            is_dark = ui_style.is_dark_theme()
+            value = ctypes.c_int(1 if is_dark else 0)
+            for attribute in (20, 19):
+                result = ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    wintypes.HWND(hwnd),
+                    wintypes.DWORD(attribute),
+                    ctypes.byref(value),
+                    ctypes.sizeof(value),
+                )
+                if result == 0:
+                    break
+            if is_dark:
+                caption_color = ctypes.c_int(0x001D0D02)
+                text_color = ctypes.c_int(0x00FFFFFF)
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    wintypes.HWND(hwnd),
+                    wintypes.DWORD(35),
+                    ctypes.byref(caption_color),
+                    ctypes.sizeof(caption_color),
+                )
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    wintypes.HWND(hwnd),
+                    wintypes.DWORD(36),
+                    ctypes.byref(text_color),
+                    ctypes.sizeof(text_color),
+                )
+        except Exception:
+            return
 
     def _today_text(self) -> str:
         weekdays = "一二三四五六日"
@@ -422,7 +487,7 @@ class MainWindow(QMainWindow):
         if self.stack.currentWidget() is self.pages.get("live"):
             self.pages["live"].on_sample_updated(sample)
         self.pages["today"].on_sample_updated(sample)
-        self.lbl_time.setText(f"最近采样：{datetime.now().strftime('%H:%M:%S')}")
+        self.sidebar_sample_time.setText(f"最近采样 {datetime.now().strftime('%H:%M:%S')}")
 
     def _toggle_pause(self) -> None:
         if self.worker.is_paused():
@@ -438,16 +503,9 @@ class MainWindow(QMainWindow):
             text = "已暂停"
             color = ui_style.COLORS["warning_yellow"]
 
-        self.lbl_status.setText(text)
-        self.lbl_status.setStyleSheet(
-            f"font-size: 12px; color: {color}; font-weight: 700;"
-        )
-        self._status_dot.setStyleSheet(
-            f"font-size: 12px; color: {color}; font-weight: 700;"
-        )
         self.sidebar_record_status.setText(f"● {text}")
         self.sidebar_record_status.setStyleSheet(
-            f"font-size: 12px; color: {color}; font-weight: 700; padding: 2px 16px 8px 16px;"
+            f"font-size: 14px; color: {color}; font-weight: 800;"
         )
 
     def _update_top_bar(self) -> None:
@@ -467,9 +525,15 @@ class MainWindow(QMainWindow):
             for item in stats.get("by_category", [])
             if item.get("category_key") in {"video", "gaming"}
         )
+        social_seconds = sum(
+            item.get("effective_seconds", 0) or 0
+            for item in stats.get("by_category", [])
+            if item.get("category_key") == "social"
+        )
         self.capsule_values["total"].setText(fmt_seconds(effective))
         self.capsule_values["work"].setText(fmt_seconds(work_seconds))
         self.capsule_values["ent"].setText(fmt_seconds(video_seconds))
+        self.capsule_values["social"].setText(fmt_seconds(social_seconds))
 
     def _quick_report(self) -> None:
         from .. import exporter
@@ -526,6 +590,7 @@ class MainWindow(QMainWindow):
         current_key = NAV_ITEMS[self.nav_list.currentRow()][1] if self.nav_list.currentRow() >= 0 else "today"
         self.setStyleSheet(ui_style.get_global_style() + ui_style.get_input_style())
         self._build_ui(current_key)
+        self._apply_window_chrome_theme()
         self._update_top_bar()
         if self.worker.is_paused():
             self._toggle_pause()
