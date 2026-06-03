@@ -201,6 +201,19 @@ class SettingsPage(QWidget):
         with open(self.config_path, "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
 
+        # Merge user_config overrides (same logic as main.load_config)
+        from daylens import get_data_dir
+        user_path = os.path.join(get_data_dir(), "user_config.yaml")
+        if os.path.exists(user_path):
+            try:
+                with open(user_path, "r", encoding="utf-8") as f:
+                    user_config = yaml.safe_load(f) or {}
+                for key in ("obsidian_output_path", "theme", "db_path"):
+                    if key in user_config and user_config[key]:
+                        self.config[key] = user_config[key]
+            except Exception:
+                pass
+
     def _save_all(self):
         sample_interval = self.spin_interval.value()
         idle_threshold = self.spin_idle.value()
