@@ -489,11 +489,11 @@ class TodayOverviewPage(QWidget):
         seven_day_stats = database.query_date_range_stats(self.db_path, seven_days)
         thirty_day_stats = database.query_date_range_stats(self.db_path, thirty_days)
         seven_day_series = [
-            int(round((item.get("effective_seconds", 0) or 0) / 60.0))
+            round((item.get("effective_seconds", 0) or 0) / 3600.0, 1)
             for item in seven_day_stats.get("daily", [])
         ]
         thirty_day_series = [
-            int(round((item.get("effective_seconds", 0) or 0) / 60.0))
+            round((item.get("effective_seconds", 0) or 0) / 3600.0, 1)
             for item in thirty_day_stats.get("daily", [])
         ]
         return today_series, seven_day_series, thirty_day_series

@@ -461,7 +461,7 @@ class TrendChartWidget(QFrame):
         self.setStyleSheet(ui_style.get_dashboard_card_style())
         self.setFixedHeight(250)
         self._mode = "today"
-        self._series: dict[str, list[int]] = {"today": [], "7d": [], "30d": []}
+        self._series: dict[str, list] = {"today": [], "7d": [], "30d": []}
         self._labels: dict[str, list[str]] = {"today": [], "7d": [], "30d": []}
 
         root = QVBoxLayout(self)
@@ -469,9 +469,9 @@ class TrendChartWidget(QFrame):
         root.setSpacing(2)
 
         header = QHBoxLayout()
-        title = QLabel("时间趋势（分钟）")
-        title.setStyleSheet(f"font-size: 15px; font-weight: 800; color: {COLORS['text']};")
-        header.addWidget(title)
+        self._title_label = QLabel("时间趋势（分钟）")
+        self._title_label.setStyleSheet(f"font-size: 15px; font-weight: 800; color: {COLORS['text']};")
+        header.addWidget(self._title_label)
         header.addStretch()
 
         self.group = QButtonGroup(self)
@@ -509,9 +509,11 @@ class TrendChartWidget(QFrame):
     def set_mode(self, mode: str) -> None:
         if mode in self._series:
             self._mode = mode
-            self.canvas.set_series(self._series[mode], self._labels.get(mode, []))
+            self.canvas.set_series(self._series[mode], self._labels.get(mode, []), mode)
+            unit = "分钟" if mode == "today" else "小时"
+            self._title_label.setText(f"时间趋势（{unit}）")
 
-    def set_data(self, today: list[int], seven_days: list[int], thirty_days: list[int]) -> None:
+    def set_data(self, today: list, seven_days: list, thirty_days: list) -> None:
         self._series["today"] = today
         self._series["7d"] = seven_days
         self._series["30d"] = thirty_days
@@ -530,18 +532,20 @@ class TrendChartWidget(QFrame):
             markers.append(f"{d.month}/{d.day}" if i % 3 == 0 else "")
         self._labels["30d"] = markers
 
-        self.canvas.set_series(self._series[self._mode], self._labels.get(self._mode, []))
+        self.canvas.set_series(self._series[self._mode], self._labels.get(self._mode, []), self._mode)
 
 
 class _TrendCanvas(QWidget):
     def __init__(self):
         super().__init__()
-        self._points: list[int] = []
+        self._points: list[float] = []
         self._labels: list[str] = []
+        self._mode = "today"
 
-    def set_series(self, points: list[int], labels: list[str] | None = None) -> None:
-        self._points = [max(0, int(point)) for point in points]
+    def set_series(self, points: list, labels: list[str] | None = None, mode: str = "today") -> None:
+        self._points = [max(0.0, float(point)) for point in points]
         self._labels = labels or []
+        self._mode = mode
         self.update()
 
     def paintEvent(self, event) -> None:  # noqa: N802
@@ -549,7 +553,7 @@ class _TrendCanvas(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         r = self.rect()
-        chart_rect = r.adjusted(38, 6, -14, -30)
+        chart_rect = r.adjusted(42, 6, -14, -30)
 
         if not self._points:
             self._draw_empty(painter, r, "暂无趋势数据")
@@ -564,7 +568,16 @@ class _TrendCanvas(QWidget):
             return
 
         max_value = max(self._points)
-        y_max = max(10, int(max_value * 1.25) + 1)
+        y_max = max_value * 1.25
+        if y_max < 1:
+            y_max = 1.0
+        # Round up to a nice ceiling
+        if self._mode == "today":
+            y_max = max(10, int(y_max) + 1)
+        else:
+            y_max = round(y_max + 0.5, 1)
+            if y_max < 1.0:
+                y_max = 1.0
 
         # Grid lines
         painter.setPen(QPen(QColor(COLORS["border"]), 1, Qt.DashLine))
@@ -577,10 +590,15 @@ class _TrendCanvas(QWidget):
         font = painter.font()
         font.setPixelSize(10)
         painter.setFont(font)
+        is_hours = self._mode != "today"
         for i in range(5):
             y = int(chart_rect.top() + i * chart_rect.height() / 4.0)
-            val = int(y_max * (4 - i) / 4)
-            painter.drawText(QRectF(0, y - 7, 30, 14), Qt.AlignRight | Qt.AlignVCenter, str(val))
+            val = y_max * (4 - i) / 4
+            if is_hours:
+                label = f"{val:.1f}h"
+            else:
+                label = str(int(val))
+            painter.drawText(QRectF(0, y - 7, 34, 14), Qt.AlignRight | Qt.AlignVCenter, label)
 
         # Compute chart points
         step = chart_rect.width() / max(len(self._points) - 1, 1)
@@ -624,7 +642,7 @@ class _TrendCanvas(QWidget):
         # X-axis labels
         if self._labels and len(self._labels) == len(self._points):
             xfont = painter.font()
-            xfont.setPixelSize(10)
+            xfont.setPixelSize(9)
             painter.setFont(xfont)
             painter.setPen(QColor(COLORS["text_secondary"]))
             step = chart_rect.width() / max(len(self._points) - 1, 1)
