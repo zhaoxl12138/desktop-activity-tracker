@@ -4,7 +4,7 @@
 
 ## 下载
 
-从 [Releases](https://github.com/your-repo/daylens/releases) 下载 `DayLens_vX.X.X.zip`，解压后双击 `DayLens.exe` 即可运行。首次启动自动扫描本机已安装软件并加载分类。
+从 [Releases](https://github.com/zhaoxl12138/desktop-activity-tracker/releases) 下载 `DayLens_vX.X.X.zip`，解压后双击 `DayLens.exe` 即可运行。首次启动自动扫描本机已安装软件并加载分类。
 
 系统要求：Windows 10/11，无需安装任何依赖。
 
