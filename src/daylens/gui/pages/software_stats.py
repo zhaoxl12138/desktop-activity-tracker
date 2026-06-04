@@ -17,10 +17,11 @@ from ..style import COLORS, get_category_color
 
 
 class SoftwareStatsPage(QWidget):
-    def __init__(self, db_path, reports_dir):
+    def __init__(self, db_path, reports_dir, display_name_mapping=None):
         super().__init__()
         self.db_path = db_path
         self.reports_dir = reports_dir
+        self.display_name_mapping = display_name_mapping or {}
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 24)
@@ -108,7 +109,8 @@ class SoftwareStatsPage(QWidget):
             self.table.setRowCount(len(details))
             for i, app in enumerate(details):
                 pname = app.get("process_name", "")
-                self.table.setItem(i, 0, QTableWidgetItem(pname))
+                dname = self.display_name_mapping.get(pname, pname)
+                self.table.setItem(i, 0, QTableWidgetItem(dname))
                 title = app.get("window_title", "") or "-"
                 self.table.setItem(i, 1, QTableWidgetItem(title[:60]))
                 cat_name = ""

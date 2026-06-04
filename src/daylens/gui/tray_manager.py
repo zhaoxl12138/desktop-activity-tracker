@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import database, get_app_root
+from .. import database, get_app_root, get_data_dir
 from ..utils import fmt_seconds
 
 
@@ -165,7 +165,7 @@ class TrayManager:
     def _auto_generate_report(self) -> None:
         """Silent auto-generation every 5 minutes; overwrites today's report."""
         today = datetime.now().strftime("%Y-%m-%d")
-        reports_dir = os.path.join(get_app_root(), "reports", "daily")
+        reports_dir = os.path.join(get_data_dir(), "reports", "daily")
         os.makedirs(reports_dir, exist_ok=True)
         from .. import exporter as exporter
 
@@ -180,7 +180,7 @@ class TrayManager:
 
     def _generate_report(self) -> None:
         today = datetime.now().strftime("%Y-%m-%d")
-        reports_dir = os.path.join(get_app_root(), "reports", "daily")
+        reports_dir = os.path.join(get_data_dir(), "reports", "daily")
         os.makedirs(reports_dir, exist_ok=True)
         from .. import exporter as exporter
 
@@ -195,7 +195,7 @@ class TrayManager:
             self.tray.showMessage("DayLens", f"生成失败: {exc}")
 
     def _open_reports(self) -> None:
-        reports_dir = os.path.join(get_app_root(), "reports")
+        reports_dir = os.path.join(get_data_dir(), "reports")
         os.makedirs(reports_dir, exist_ok=True)
         os.startfile(reports_dir)
 

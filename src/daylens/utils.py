@@ -223,3 +223,39 @@ def generate_default_config(path):
         f.write(category_yaml)
 
     return path
+
+
+# ── Persistent user config (survives PyInstaller rebuilds) ──────────
+
+def load_user_config() -> dict:
+    """Load user_config.yaml overrides from data dir. Returns empty dict on failure."""
+    import os
+    import yaml
+    from . import get_data_dir
+    user_path = os.path.join(get_data_dir(), "user_config.yaml")
+    if not os.path.exists(user_path):
+        return {}
+    try:
+        with open(user_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    except Exception:
+        return {}
+
+
+def save_user_config(overrides: dict) -> None:
+    """Merge overrides into user_config.yaml in the data directory."""
+    import os
+    import yaml
+    from . import get_data_dir
+    user_path = os.path.join(get_data_dir(), "user_config.yaml")
+    existing = {}
+    if os.path.exists(user_path):
+        try:
+            with open(user_path, "r", encoding="utf-8") as f:
+                existing = yaml.safe_load(f) or {}
+        except Exception:
+            pass
+    existing.update(overrides)
+    os.makedirs(os.path.dirname(user_path), exist_ok=True)
+    with open(user_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(existing, f, allow_unicode=True, default_flow_style=False, sort_keys=False)

@@ -66,16 +66,14 @@ def load_config(config_path):
         config = yaml.safe_load(f)
 
     # Merge persistent user overrides (survives rebuilds)
-    user_config_path = _user_config_path()
-    if os.path.exists(user_config_path):
-        try:
-            with open(user_config_path, "r", encoding="utf-8") as f:
-                user_config = yaml.safe_load(f) or {}
-            for key in ("obsidian_output_path", "theme", "db_path"):
-                if key in user_config and user_config[key]:
-                    config[key] = user_config[key]
-        except Exception:
-            pass
+    if __package__ is None or __package__ == '':
+        from daylens.utils import load_user_config
+    else:
+        from .utils import load_user_config
+    user_config = load_user_config()
+    for key in ("obsidian_output_path", "theme", "db_path"):
+        if key in user_config and user_config[key]:
+            config[key] = user_config[key]
 
     return config
 
@@ -106,12 +104,7 @@ def _auto_scan_and_save_rules(config, db_path):
         print(f"[INFO] 首次运行，已自动分类 {sum(len(r['process_names']) for r in rules.values())} 个应用")
 
 
-def _user_config_path():
-    from daylens import get_data_dir
-    return os.path.join(get_data_dir(), "user_config.yaml")
-
-
-# ── Commands ────────────────────────────────────────────────────────
+# ── Commands────────────────────────────────────────────────────────
 
 def cmd_start(config, config_path):
     tracker_cfg = config.get("tracker", {})
@@ -305,9 +298,10 @@ def cmd_monthly(config, args):
 def _ensure_single_instance():
     """Use a Windows named mutex to prevent multiple instances.
 
-    Returns (is_first, mutex_handle). Caller must keep mutex_handle alive
-    for the lifetime of the process.
+    Returns (is_first, mutex_handle). The mutex is held for the process
+    lifetime and auto-released on exit via atexit.
     """
+    import atexit
     import ctypes
     from ctypes import wintypes
 
@@ -324,6 +318,7 @@ def _ensure_single_instance():
             "程序已在运行中，请查看系统托盘图标。",
             "DayLens", 0x40)
         return False, None
+    atexit.register(kernel32.CloseHandle, handle)
     return True, handle
 
 
@@ -360,20 +355,27 @@ def cmd_gui():
 
     # Ensure DB is initialized
     database.init_db(db_path)
+    database.init_shared_read_conn(db_path)
 
     # Merge settings + custom rules from database (survive rebuilds)
     database.merge_db_settings(config, db_path)
     database.merge_custom_rules(config, db_path)
 
-    # First-run: auto-scan installed apps and populate custom rules silently
-    existing_rules = database.load_custom_rules(db_path)
-    if not existing_rules:
-        _auto_scan_and_save_rules(config, db_path)
-        database.merge_custom_rules(config, db_path)
-
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setFont(QFont("Microsoft YaHei", 10))
+
+    # First-run: show setup wizard to scan installed apps
+    settings = database.load_settings(db_path) or {}
+    if settings.get("wizard_completed") != "true":
+        existing_rules = database.load_custom_rules(db_path)
+        if not existing_rules:
+            _auto_scan_and_save_rules(config, db_path)
+            database.merge_custom_rules(config, db_path)
+        from daylens.gui.wizard import SetupWizard
+        wizard = SetupWizard(config_path, db_path)
+        wizard.exec()
+        database.merge_custom_rules(config, db_path)
 
     # Start background recording thread
     worker = RecordingWorker(config_path, db_path, config)
@@ -393,6 +395,7 @@ def cmd_gui():
     # Clean shutdown
     worker.stop()
     worker.wait(5000)
+    database.close_shared_read_conn()
     sys.exit(exit_code)
 
 

@@ -41,35 +41,35 @@ class _CategoryCard(QFrame):
         dot.setStyleSheet(f"background: {color}; border-radius: 5px;")
         self._main_layout.addWidget(dot)
 
-        name_lbl = QLabel(cat_name)
-        name_lbl.setFont(QFont("Microsoft YaHei", 10, QFont.Bold))
-        name_lbl.setStyleSheet(f"color: {COLORS['text']};")
-        name_lbl.setFixedWidth(90)
-        self._main_layout.addWidget(name_lbl)
+        self._name_lbl = QLabel(cat_name)
+        self._name_lbl.setFont(QFont("Microsoft YaHei", 10, QFont.Bold))
+        self._name_lbl.setStyleSheet(f"color: {COLORS['text']};")
+        self._name_lbl.setFixedWidth(90)
+        self._main_layout.addWidget(self._name_lbl)
 
         pct = int(secs / total_eff * 100) if total_eff > 0 else 0
-        bar = QProgressBar()
-        bar.setRange(0, 100)
-        bar.setValue(pct)
-        bar.setTextVisible(False)
-        bar.setFixedHeight(16)
-        bar.setStyleSheet(f"""
+        self._bar = QProgressBar()
+        self._bar.setRange(0, 100)
+        self._bar.setValue(pct)
+        self._bar.setTextVisible(False)
+        self._bar.setFixedHeight(16)
+        self._bar.setStyleSheet(f"""
             QProgressBar {{ background: {COLORS['panel_bg']}; border: none; border-radius: 8px; }}
             QProgressBar::chunk {{ background: {color}; border-radius: 8px; }}
         """)
-        self._main_layout.addWidget(bar, 1)
+        self._main_layout.addWidget(self._bar, 1)
 
-        time_lbl = QLabel(fmt_seconds(secs))
-        time_lbl.setStyleSheet(f"font-size: 13px; color: {COLORS['text']}; font-weight: 600;")
-        time_lbl.setFixedWidth(80)
-        time_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self._main_layout.addWidget(time_lbl)
+        self._time_lbl = QLabel(fmt_seconds(secs))
+        self._time_lbl.setStyleSheet(f"font-size: 13px; color: {COLORS['text']}; font-weight: 600;")
+        self._time_lbl.setFixedWidth(80)
+        self._time_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._main_layout.addWidget(self._time_lbl)
 
-        pct_lbl = QLabel(f"{pct}%")
-        pct_lbl.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
-        pct_lbl.setFixedWidth(36)
-        pct_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self._main_layout.addWidget(pct_lbl)
+        self._pct_lbl = QLabel(f"{pct}%")
+        self._pct_lbl.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
+        self._pct_lbl.setFixedWidth(36)
+        self._pct_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._main_layout.addWidget(self._pct_lbl)
 
         # Expand arrow indicator
         self._arrow = QLabel("▶")
@@ -90,6 +90,13 @@ class _CategoryCard(QFrame):
         if event.button() == Qt.LeftButton:
             self.clicked.emit(self._key)
         super().mousePressEvent(event)
+
+    def update_values(self, secs, total_eff):
+        """Update progress bar and labels in-place without recreating widgets."""
+        pct = int(secs / total_eff * 100) if total_eff > 0 else 0
+        self._bar.setValue(pct)
+        self._time_lbl.setText(fmt_seconds(secs))
+        self._pct_lbl.setText(f"{pct}%")
 
     def set_expanded(self, expanded, detail_data=None):
         self._expanded = expanded
@@ -208,15 +215,6 @@ class CategoryStatsPage(QWidget):
         self.refresh()
 
     def refresh(self):
-        # Remember expanded key before clearing
-        expanded_key = self._expanded_key
-
-        while self.cards_container.count():
-            item = self.cards_container.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        self._cards.clear()
-        self._expanded_key = None
         self.error_lbl.hide()
 
         today = datetime.now().strftime("%Y-%m-%d")
@@ -230,6 +228,7 @@ class CategoryStatsPage(QWidget):
             )
 
             if not categories:
+                self._clear_all_cards()
                 no_data = QLabel("暂无数据")
                 no_data.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 14px;")
                 no_data.setAlignment(Qt.AlignCenter)
@@ -237,37 +236,49 @@ class CategoryStatsPage(QWidget):
                 self.cards_container.addStretch()
                 return
 
-            # Re-populate cards
+            new_keys = {cat.get("category_key", "other") for cat in categories}
+            existing_keys = set(self._cards.keys())
+
+            # Remove cards that no longer exist
+            for key in existing_keys - new_keys:
+                card = self._cards.pop(key, None)
+                if card:
+                    card.deleteLater()
+
+            # Update existing or create new cards
             for cat in reversed(categories):
                 key = cat.get("category_key", "other")
                 name = cat.get("category_name", "其他")
                 secs = cat.get("effective_seconds", 0) or 0
-                color = CATEGORY_COLOR_MAP.get(key, COLORS['idle_gray'])
 
-                card = _CategoryCard(key, name, secs, total_eff, color)
-                card.clicked.connect(self._on_card_clicked)
-                self._cards[key] = card
+                if key in self._cards:
+                    self._cards[key].update_values(secs, total_eff)
+                else:
+                    color = CATEGORY_COLOR_MAP.get(key, COLORS['idle_gray'])
+                    card = _CategoryCard(key, name, secs, total_eff, color)
+                    card.clicked.connect(self._on_card_clicked)
+                    self._cards[key] = card
 
-                # Insert card above stretch
-                # Build a wrapper to hold card + detail panel
-                wrapper = QWidget()
-                wrapper.setStyleSheet("background: transparent;")
-                wl = QVBoxLayout(wrapper)
-                wl.setContentsMargins(0, 0, 0, 0)
-                wl.setSpacing(0)
-                wl.addWidget(card)
-                wl.addWidget(card._detail)
-                self.cards_container.insertWidget(0, wrapper)
-
-                # Restore expanded state after refresh
-                if key == expanded_key:
-                    self._expand_card(key)
-
-            self.cards_container.addStretch()
+                    wrapper = QWidget()
+                    wrapper.setStyleSheet("background: transparent;")
+                    wl = QVBoxLayout(wrapper)
+                    wl.setContentsMargins(0, 0, 0, 0)
+                    wl.setSpacing(0)
+                    wl.addWidget(card)
+                    wl.addWidget(card._detail)
+                    self.cards_container.insertWidget(0, wrapper)
         except Exception as e:
             import traceback
             self.error_lbl.setText(f"加载失败: {e}\n{traceback.format_exc()}")
             self.error_lbl.show()
+
+    def _clear_all_cards(self):
+        while self.cards_container.count():
+            item = self.cards_container.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._cards.clear()
+        self._expanded_key = None
 
     def _on_card_clicked(self, cat_key):
         if self._expanded_key == cat_key:

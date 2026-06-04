@@ -8,6 +8,57 @@ from . import get_app_root
 
 _WAL_CHECKPOINT_INTERVAL = 100  # commits between WAL checkpoints
 
+# Shared read connection for UI thread — avoids open/close on every tick
+_shared_read_conn = None
+_shared_read_db_path = None
+
+
+def init_shared_read_conn(db_path):
+    global _shared_read_conn, _shared_read_db_path
+    if _shared_read_conn is not None and _shared_read_db_path != db_path:
+        _shared_read_conn.close()
+        _shared_read_conn = None
+    if _shared_read_conn is None:
+        _shared_read_conn = sqlite3.connect(db_path)
+        _shared_read_conn.row_factory = sqlite3.Row
+        _shared_read_conn.execute("PRAGMA journal_mode=WAL")
+        _shared_read_db_path = db_path
+
+
+def close_shared_read_conn():
+    global _shared_read_conn, _shared_read_db_path
+    if _shared_read_conn:
+        _shared_read_conn.close()
+        _shared_read_conn = None
+        _shared_read_db_path = None
+
+
+class _read_conn_ctx:
+    """Context manager: yields shared conn if available else a new one (auto-closed)."""
+    def __init__(self, db_path):
+        self.db_path = db_path
+        self.conn = None
+        self._own = False
+
+    def __enter__(self):
+        if _shared_read_conn is not None and _shared_read_db_path == self.db_path:
+            self.conn = _shared_read_conn
+        else:
+            self.conn = sqlite3.connect(self.db_path)
+            self.conn.row_factory = sqlite3.Row
+            self._own = True
+        return self.conn
+
+    def __exit__(self, *args):
+        if self._own:
+            self.conn.close()
+        return False
+
+
+# Shorthand alias
+def read_conn(db_path):
+    return _read_conn_ctx(db_path)
+
 
 class _TrackedConnection(sqlite3.Connection):
     """SQLite connection subclass that can keep lightweight runtime state."""
@@ -248,6 +299,7 @@ _SETTING_KEYS = [
     "sample_interval_seconds", "idle_threshold_seconds",
     "flush_interval_seconds", "min_session_seconds",
     "obsidian_output_path", "theme", "startup_enabled",
+    "wizard_completed",
 ]
 
 
@@ -383,55 +435,52 @@ def query_date(db_path, date_str):
 
 def _query_date_stats_from_logs(db_path, date_str):
     """Old per-sample stats query (fallback for pre-v1.1 data)."""
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+    with read_conn(db_path) as conn:
+        totals = conn.execute("""
+            SELECT
+                COUNT(*) as total_samples,
+                SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds,
+                SUM(CASE WHEN is_effective = 0 THEN duration_seconds ELSE 0 END) as idle_seconds,
+                SUM(duration_seconds) as total_seconds
+            FROM activity_logs WHERE date = ?
+        """, (date_str,)).fetchone()
 
-    totals = conn.execute("""
-        SELECT
-            COUNT(*) as total_samples,
-            SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds,
-            SUM(CASE WHEN is_effective = 0 THEN duration_seconds ELSE 0 END) as idle_seconds,
-            SUM(duration_seconds) as total_seconds
-        FROM activity_logs WHERE date = ?
-    """, (date_str,)).fetchone()
+        by_category = conn.execute("""
+            SELECT
+                category_key,
+                category_name,
+                SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds,
+                SUM(CASE WHEN is_effective = 0 THEN duration_seconds ELSE 0 END) as idle_seconds,
+                SUM(duration_seconds) as total_seconds
+            FROM activity_logs WHERE date = ?
+            GROUP BY category_key, category_name
+            ORDER BY effective_seconds DESC
+        """, (date_str,)).fetchall()
 
-    by_category = conn.execute("""
-        SELECT
-            category_key,
-            category_name,
-            SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds,
-            SUM(CASE WHEN is_effective = 0 THEN duration_seconds ELSE 0 END) as idle_seconds,
-            SUM(duration_seconds) as total_seconds
-        FROM activity_logs WHERE date = ?
-        GROUP BY category_key, category_name
-        ORDER BY effective_seconds DESC
-    """, (date_str,)).fetchall()
+        by_app = conn.execute("""
+            SELECT
+                process_name,
+                window_title,
+                category_key,
+                category_name,
+                SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds,
+                COUNT(*) as samples
+            FROM activity_logs WHERE date = ? AND is_effective = 1
+            GROUP BY process_name, category_key
+            ORDER BY effective_seconds DESC
+        """, (date_str,)).fetchall()
 
-    by_app = conn.execute("""
-        SELECT
-            process_name,
-            window_title,
-            category_key,
-            category_name,
-            SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds,
-            COUNT(*) as samples
-        FROM activity_logs WHERE date = ? AND is_effective = 1
-        GROUP BY process_name, category_key
-        ORDER BY effective_seconds DESC
-    """, (date_str,)).fetchall()
+        by_app_detail = conn.execute("""
+            SELECT
+                process_name,
+                window_title,
+                SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds
+            FROM activity_logs WHERE date = ? AND is_effective = 1
+            GROUP BY process_name, window_title
+            ORDER BY effective_seconds DESC
+            LIMIT 50
+        """, (date_str,)).fetchall()
 
-    by_app_detail = conn.execute("""
-        SELECT
-            process_name,
-            window_title,
-            SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds
-        FROM activity_logs WHERE date = ? AND is_effective = 1
-        GROUP BY process_name, window_title
-        ORDER BY effective_seconds DESC
-        LIMIT 50
-    """, (date_str,)).fetchall()
-
-    conn.close()
     return {
         "totals": dict(totals),
         "by_category": [dict(r) for r in by_category],
@@ -446,55 +495,52 @@ def _query_date_stats_from_logs(db_path, date_str):
 
 def _query_date_stats_from_sessions(db_path, date_str):
     """Aggregated stats from activity_sessions table."""
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+    with read_conn(db_path) as conn:
+        totals = conn.execute("""
+            SELECT
+                COUNT(*) as total_samples,
+                SUM(effective_seconds) as effective_seconds,
+                SUM(idle_seconds) as idle_seconds,
+                SUM(duration_seconds) as total_seconds
+            FROM activity_sessions WHERE date = ?
+        """, (date_str,)).fetchone()
 
-    totals = conn.execute("""
-        SELECT
-            COUNT(*) as total_samples,
-            SUM(effective_seconds) as effective_seconds,
-            SUM(idle_seconds) as idle_seconds,
-            SUM(duration_seconds) as total_seconds
-        FROM activity_sessions WHERE date = ?
-    """, (date_str,)).fetchone()
+        by_category = conn.execute("""
+            SELECT
+                category_key,
+                category_name,
+                SUM(effective_seconds) as effective_seconds,
+                SUM(idle_seconds) as idle_seconds,
+                SUM(duration_seconds) as total_seconds
+            FROM activity_sessions WHERE date = ?
+            GROUP BY category_key, category_name
+            ORDER BY effective_seconds DESC
+        """, (date_str,)).fetchall()
 
-    by_category = conn.execute("""
-        SELECT
-            category_key,
-            category_name,
-            SUM(effective_seconds) as effective_seconds,
-            SUM(idle_seconds) as idle_seconds,
-            SUM(duration_seconds) as total_seconds
-        FROM activity_sessions WHERE date = ?
-        GROUP BY category_key, category_name
-        ORDER BY effective_seconds DESC
-    """, (date_str,)).fetchall()
+        by_app = conn.execute("""
+            SELECT
+                process_name,
+                normalized_title as window_title,
+                category_key,
+                category_name,
+                SUM(effective_seconds) as effective_seconds,
+                COUNT(*) as samples
+            FROM activity_sessions WHERE date = ? AND effective_seconds > 0
+            GROUP BY process_name, category_key
+            ORDER BY effective_seconds DESC
+        """, (date_str,)).fetchall()
 
-    by_app = conn.execute("""
-        SELECT
-            process_name,
-            normalized_title as window_title,
-            category_key,
-            category_name,
-            SUM(effective_seconds) as effective_seconds,
-            COUNT(*) as samples
-        FROM activity_sessions WHERE date = ? AND effective_seconds > 0
-        GROUP BY process_name, category_key
-        ORDER BY effective_seconds DESC
-    """, (date_str,)).fetchall()
+        by_app_detail = conn.execute("""
+            SELECT
+                process_name,
+                normalized_title as window_title,
+                SUM(effective_seconds) as effective_seconds
+            FROM activity_sessions WHERE date = ? AND effective_seconds > 0
+            GROUP BY process_name, normalized_title
+            ORDER BY effective_seconds DESC
+            LIMIT 50
+        """, (date_str,)).fetchall()
 
-    by_app_detail = conn.execute("""
-        SELECT
-            process_name,
-            normalized_title as window_title,
-            SUM(effective_seconds) as effective_seconds
-        FROM activity_sessions WHERE date = ? AND effective_seconds > 0
-        GROUP BY process_name, normalized_title
-        ORDER BY effective_seconds DESC
-        LIMIT 50
-    """, (date_str,)).fetchall()
-
-    conn.close()
     return {
         "totals": dict(totals),
         "by_category": [dict(r) for r in by_category],
@@ -509,13 +555,11 @@ def query_date_stats(db_path, date_str):
     Prefers activity_sessions table; falls back to old activity_logs if
     no session data exists.
     """
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    row = conn.execute(
-        "SELECT COUNT(*) as cnt FROM activity_sessions WHERE date = ?",
-        (date_str,)
-    ).fetchone()
-    conn.close()
+    with read_conn(db_path) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) as cnt FROM activity_sessions WHERE date = ?",
+            (date_str,)
+        ).fetchone()
 
     if row and row["cnt"] > 0:
         return _query_date_stats_from_sessions(db_path, date_str)
@@ -524,24 +568,20 @@ def query_date_stats(db_path, date_str):
 
 def query_session_entertainment_trend(db_path, days=3):
     """Return entertainment seconds for the last N days from activity_sessions."""
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-
     today = datetime.now().date()
     dates = [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
     dates.reverse()
 
-    placeholders = ",".join("?" * len(dates))
-    rows = conn.execute(f"""
-        SELECT date,
-               SUM(effective_seconds) as entertainment_seconds
-        FROM activity_sessions
-        WHERE date IN ({placeholders}) AND category_key = 'video'
-        GROUP BY date
-        ORDER BY date
-    """, dates).fetchall()
-
-    conn.close()
+    with read_conn(db_path) as conn:
+        placeholders = ",".join("?" * len(dates))
+        rows = conn.execute(f"""
+            SELECT date,
+                   SUM(effective_seconds) as entertainment_seconds
+            FROM activity_sessions
+            WHERE date IN ({placeholders}) AND category_key = 'video'
+            GROUP BY date
+            ORDER BY date
+        """, dates).fetchall()
 
     result_map = {r["date"]: r["entertainment_seconds"] or 0 for r in rows}
     return [{"date": d, "entertainment_seconds": result_map.get(d, 0)} for d in dates]
@@ -552,31 +592,27 @@ def query_entertainment_trend(db_path, days=3):
 
     Prefers activity_sessions if data exists, falls back to old logs.
     """
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    row = conn.execute("SELECT COUNT(*) as cnt FROM activity_sessions").fetchone()
-    conn.close()
+    with read_conn(db_path) as conn:
+        row = conn.execute("SELECT COUNT(*) as cnt FROM activity_sessions").fetchone()
 
     if row and row["cnt"] > 0:
         return query_session_entertainment_trend(db_path, days)
 
     # Fallback to old logs
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
     today = datetime.now().date()
     dates = [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
     dates.reverse()
 
-    placeholders = ",".join("?" * len(dates))
-    rows = conn.execute(f"""
-        SELECT date,
-               SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as entertainment_seconds
-        FROM activity_logs
-        WHERE date IN ({placeholders}) AND category_key = 'video'
-        GROUP BY date
-        ORDER BY date
-    """, dates).fetchall()
-    conn.close()
+    with read_conn(db_path) as conn:
+        placeholders = ",".join("?" * len(dates))
+        rows = conn.execute(f"""
+            SELECT date,
+                   SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as entertainment_seconds
+            FROM activity_logs
+            WHERE date IN ({placeholders}) AND category_key = 'video'
+            GROUP BY date
+            ORDER BY date
+        """, dates).fetchall()
 
     result_map = {r["date"]: r["entertainment_seconds"] or 0 for r in rows}
     return [{"date": d, "entertainment_seconds": result_map.get(d, 0)} for d in dates]
@@ -584,57 +620,50 @@ def query_entertainment_trend(db_path, days=3):
 
 def query_session_count(db_path, date_str):
     """Return the number of sessions for a given date (used as switch count)."""
-    conn = sqlite3.connect(db_path)
-    row = conn.execute(
-        "SELECT COUNT(*) as cnt FROM activity_sessions WHERE date = ?",
-        (date_str,)
-    ).fetchone()
-    conn.close()
+    with read_conn(db_path) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) as cnt FROM activity_sessions WHERE date = ?",
+            (date_str,)
+        ).fetchone()
     return row[0] if row else 0
 
 
 def query_today_sessions(db_path, date_str):
     """Return all activity_sessions for a date, ordered by start_time."""
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute(
-        """SELECT session_id, start_time, end_time, process_name,
-                  normalized_title, category_key, category_name,
-                  duration_seconds, effective_seconds, idle_seconds
-           FROM activity_sessions
-           WHERE date = ?
-           ORDER BY start_time""",
-        (date_str,)
-    ).fetchall()
-    conn.close()
+    with read_conn(db_path) as conn:
+        rows = conn.execute(
+            """SELECT session_id, start_time, end_time, process_name,
+                      normalized_title, category_key, category_name,
+                      duration_seconds, effective_seconds, idle_seconds
+               FROM activity_sessions
+               WHERE date = ?
+               ORDER BY start_time""",
+            (date_str,)
+        ).fetchall()
     return [dict(r) for r in rows]
 
 
 def query_category_detail(db_path, date_str, category_key, limit=5):
     """Return top N (process_name, normalized_title) by effective_seconds for a category."""
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute("""
-        SELECT process_name, normalized_title as window_title,
-               SUM(effective_seconds) as effective_seconds
-        FROM activity_sessions
-        WHERE date = ? AND category_key = ? AND effective_seconds > 0
-        GROUP BY process_name, normalized_title
-        ORDER BY effective_seconds DESC
-        LIMIT ?
-    """, (date_str, category_key, limit)).fetchall()
-    conn.close()
+    with read_conn(db_path) as conn:
+        rows = conn.execute("""
+            SELECT process_name, normalized_title as window_title,
+                   SUM(effective_seconds) as effective_seconds
+            FROM activity_sessions
+            WHERE date = ? AND category_key = ? AND effective_seconds > 0
+            GROUP BY process_name, normalized_title
+            ORDER BY effective_seconds DESC
+            LIMIT ?
+        """, (date_str, category_key, limit)).fetchall()
     return [dict(r) for r in rows]
 
 
 def count_consecutive_days(db_path):
     """Return consecutive days (including today) with activity data."""
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute(
-        "SELECT DISTINCT date FROM activity_sessions ORDER BY date DESC"
-    ).fetchall()
-    conn.close()
+    with read_conn(db_path) as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT date FROM activity_sessions ORDER BY date DESC"
+        ).fetchall()
 
     if not rows:
         return 0
@@ -664,10 +693,8 @@ def query_date_range_stats(db_path, dates):
     if not dates:
         return {"dates": [], "daily": [], "by_category": [], "by_app": [], "totals": {}}
 
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    row = conn.execute("SELECT COUNT(*) as cnt FROM activity_sessions").fetchone()
-    conn.close()
+    with read_conn(db_path) as conn:
+        row = conn.execute("SELECT COUNT(*) as cnt FROM activity_sessions").fetchone()
 
     if row and row["cnt"] > 0:
         return _query_date_range_from_sessions(db_path, dates)
@@ -676,54 +703,51 @@ def query_date_range_stats(db_path, dates):
 
 def _query_date_range_from_sessions(db_path, dates):
     """Per-day + aggregated stats from activity_sessions."""
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    placeholders = ",".join("?" * len(dates))
+    with read_conn(db_path) as conn:
+        placeholders = ",".join("?" * len(dates))
 
-    daily_rows = conn.execute(f"""
-        SELECT date,
-               SUM(effective_seconds) as effective_seconds,
-               SUM(idle_seconds) as idle_seconds,
-               SUM(duration_seconds) as total_seconds
-        FROM activity_sessions
-        WHERE date IN ({placeholders})
-        GROUP BY date
-        ORDER BY date
-    """, dates).fetchall()
+        daily_rows = conn.execute(f"""
+            SELECT date,
+                   SUM(effective_seconds) as effective_seconds,
+                   SUM(idle_seconds) as idle_seconds,
+                   SUM(duration_seconds) as total_seconds
+            FROM activity_sessions
+            WHERE date IN ({placeholders})
+            GROUP BY date
+            ORDER BY date
+        """, dates).fetchall()
 
-    work_video_rows = conn.execute(f"""
-        SELECT date,
-               SUM(CASE WHEN category_key IN ('ai_tools','coding','reading','creative') THEN effective_seconds ELSE 0 END) as work_seconds,
-               SUM(CASE WHEN category_key IN ('video','gaming') THEN effective_seconds ELSE 0 END) as video_seconds
-        FROM activity_sessions
-        WHERE date IN ({placeholders})
-        GROUP BY date
-        ORDER BY date
-    """, dates).fetchall()
+        work_video_rows = conn.execute(f"""
+            SELECT date,
+                   SUM(CASE WHEN category_key IN ('ai_tools','coding','reading','creative') THEN effective_seconds ELSE 0 END) as work_seconds,
+                   SUM(CASE WHEN category_key IN ('video','gaming') THEN effective_seconds ELSE 0 END) as video_seconds
+            FROM activity_sessions
+            WHERE date IN ({placeholders})
+            GROUP BY date
+            ORDER BY date
+        """, dates).fetchall()
 
-    cat_rows = conn.execute(f"""
-        SELECT category_key, category_name,
-               SUM(effective_seconds) as effective_seconds,
-               SUM(idle_seconds) as idle_seconds,
-               SUM(duration_seconds) as total_seconds
-        FROM activity_sessions
-        WHERE date IN ({placeholders})
-        GROUP BY category_key, category_name
-        ORDER BY effective_seconds DESC
-    """, dates).fetchall()
+        cat_rows = conn.execute(f"""
+            SELECT category_key, category_name,
+                   SUM(effective_seconds) as effective_seconds,
+                   SUM(idle_seconds) as idle_seconds,
+                   SUM(duration_seconds) as total_seconds
+            FROM activity_sessions
+            WHERE date IN ({placeholders})
+            GROUP BY category_key, category_name
+            ORDER BY effective_seconds DESC
+        """, dates).fetchall()
 
-    app_rows = conn.execute(f"""
-        SELECT process_name, category_key,
-               SUM(effective_seconds) as effective_seconds,
-               COUNT(*) as samples
-        FROM activity_sessions
-        WHERE date IN ({placeholders}) AND effective_seconds > 0
-        GROUP BY process_name
-        ORDER BY effective_seconds DESC
-        LIMIT 20
-    """, dates).fetchall()
-
-    conn.close()
+        app_rows = conn.execute(f"""
+            SELECT process_name, category_key,
+                   SUM(effective_seconds) as effective_seconds,
+                   COUNT(*) as samples
+            FROM activity_sessions
+            WHERE date IN ({placeholders}) AND effective_seconds > 0
+            GROUP BY process_name
+            ORDER BY effective_seconds DESC
+            LIMIT 20
+        """, dates).fetchall()
 
     daily_map = {r["date"]: dict(r) for r in daily_rows}
     wv_map = {r["date"]: dict(r) for r in work_video_rows}
@@ -759,123 +783,57 @@ def _query_date_range_from_sessions(db_path, dates):
             "video_seconds": totals_video,
         },
     }
-
-
-# ── Poetry ──────────────────────────────────────────────────────────
-
-def insert_poetry_line(db_path: str, author: str, content: str,
-                       origin: str = "", category: str = "") -> bool:
-    """Insert a poetry line (INSERT OR IGNORE). Returns True if inserted."""
-    conn = sqlite3.connect(db_path)
-    try:
-        before = conn.total_changes
-        conn.execute(
-            "INSERT OR IGNORE INTO poetry_lines (author, content, origin, category) "
-            "VALUES (?, ?, ?, ?)",
-            (author, content, origin, category),
-        )
-        conn.commit()
-        return conn.total_changes > before
-    finally:
-        conn.close()
-
-
-def get_random_poetry(db_path: str) -> dict | None:
-    """Return two consecutive lines from the same poem.
-
-    Returns dict {author, content, origin, category} where content is two lines
-    joined by newline, or None if no poem with >= 2 lines exists.
-    """
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    try:
-        target = conn.execute(
-            "SELECT origin, author, category FROM poetry_lines "
-            "GROUP BY origin HAVING COUNT(*) >= 2 "
-            "ORDER BY RANDOM() LIMIT 1"
-        ).fetchone()
-        if not target:
-            return None
-        rows = conn.execute(
-            "SELECT content FROM poetry_lines "
-            "WHERE origin = ? AND author = ? "
-            "ORDER BY id LIMIT 2",
-            (target["origin"], target["author"]),
-        ).fetchall()
-        if len(rows) < 2:
-            return None
-        return {
-            "author": target["author"],
-            "content": rows[0]["content"] + "\n" + rows[1]["content"],
-            "origin": target["origin"],
-            "category": target["category"],
-        }
-    finally:
-        conn.close()
-
-
-def get_poetry_count(db_path: str) -> int:
-    """Return total number of poetry lines stored."""
-    conn = sqlite3.connect(db_path)
-    try:
-        row = conn.execute("SELECT COUNT(*) FROM poetry_lines").fetchone()
-        return row[0] if row else 0
-    finally:
-        conn.close()
 
 
 def _query_date_range_from_logs(db_path, dates):
     """Old per-sample range query (fallback for pre-v1.1 data)."""
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    placeholders = ",".join("?" * len(dates))
+    with read_conn(db_path) as conn:
+        placeholders = ",".join("?" * len(dates))
 
-    daily_rows = conn.execute(f"""
-        SELECT date,
-               SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds,
-               SUM(CASE WHEN is_effective = 0 THEN duration_seconds ELSE 0 END) as idle_seconds,
-               SUM(duration_seconds) as total_seconds
-        FROM activity_logs
-        WHERE date IN ({placeholders})
-        GROUP BY date
-        ORDER BY date
-    """, dates).fetchall()
+        daily_rows = conn.execute(f"""
+            SELECT date,
+                   SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds,
+                   SUM(CASE WHEN is_effective = 0 THEN duration_seconds ELSE 0 END) as idle_seconds,
+                   SUM(duration_seconds) as total_seconds
+            FROM activity_logs
+            WHERE date IN ({placeholders})
+            GROUP BY date
+            ORDER BY date
+        """, dates).fetchall()
 
-    work_video_rows = conn.execute(f"""
-        SELECT date,
-               SUM(CASE WHEN category_key IN ('ai_tools','coding','reading') AND is_effective
-                   THEN duration_seconds ELSE 0 END) as work_seconds,
-               SUM(CASE WHEN category_key = 'video' AND is_effective
-                   THEN duration_seconds ELSE 0 END) as video_seconds
-        FROM activity_logs
-        WHERE date IN ({placeholders})
-        GROUP BY date
-        ORDER BY date
-    """, dates).fetchall()
+        work_video_rows = conn.execute(f"""
+            SELECT date,
+                   SUM(CASE WHEN category_key IN ('ai_tools','coding','reading') AND is_effective
+                       THEN duration_seconds ELSE 0 END) as work_seconds,
+                   SUM(CASE WHEN category_key = 'video' AND is_effective
+                       THEN duration_seconds ELSE 0 END) as video_seconds
+            FROM activity_logs
+            WHERE date IN ({placeholders})
+            GROUP BY date
+            ORDER BY date
+        """, dates).fetchall()
 
-    cat_rows = conn.execute(f"""
-        SELECT category_key, category_name,
-               SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds,
-               SUM(CASE WHEN is_effective = 0 THEN duration_seconds ELSE 0 END) as idle_seconds,
-               SUM(duration_seconds) as total_seconds
-        FROM activity_logs
-        WHERE date IN ({placeholders})
-        GROUP BY category_key, category_name
-        ORDER BY effective_seconds DESC
-    """, dates).fetchall()
+        cat_rows = conn.execute(f"""
+            SELECT category_key, category_name,
+                   SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds,
+                   SUM(CASE WHEN is_effective = 0 THEN duration_seconds ELSE 0 END) as idle_seconds,
+                   SUM(duration_seconds) as total_seconds
+            FROM activity_logs
+            WHERE date IN ({placeholders})
+            GROUP BY category_key, category_name
+            ORDER BY effective_seconds DESC
+        """, dates).fetchall()
 
-    app_rows = conn.execute(f"""
-        SELECT process_name, category_key,
-               SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds,
-               COUNT(*) as samples
-        FROM activity_logs
-        WHERE date IN ({placeholders}) AND is_effective = 1
-        GROUP BY process_name
-        ORDER BY effective_seconds DESC
-        LIMIT 20
-    """, dates).fetchall()
-
-    conn.close()
+        app_rows = conn.execute(f"""
+            SELECT process_name, category_key,
+                   SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds,
+                   COUNT(*) as samples
+            FROM activity_logs
+            WHERE date IN ({placeholders}) AND is_effective = 1
+            GROUP BY process_name
+            ORDER BY effective_seconds DESC
+            LIMIT 20
+        """, dates).fetchall()
 
     daily_map = {r["date"]: dict(r) for r in daily_rows}
     wv_map = {r["date"]: dict(r) for r in work_video_rows}
@@ -938,9 +896,7 @@ def get_random_poetry(db_path: str) -> dict | None:
     Returns dict {author, content, origin, category} where content is two lines
     joined by newline, or None if no poem with >= 2 lines exists.
     """
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    try:
+    with read_conn(db_path) as conn:
         target = conn.execute(
             "SELECT origin, author, category FROM poetry_lines "
             "GROUP BY origin HAVING COUNT(*) >= 2 "
@@ -962,15 +918,10 @@ def get_random_poetry(db_path: str) -> dict | None:
             "origin": target["origin"],
             "category": target["category"],
         }
-    finally:
-        conn.close()
 
 
 def get_poetry_count(db_path: str) -> int:
     """Return total number of poetry lines stored."""
-    conn = sqlite3.connect(db_path)
-    try:
+    with read_conn(db_path) as conn:
         row = conn.execute("SELECT COUNT(*) FROM poetry_lines").fetchone()
         return row[0] if row else 0
-    finally:
-        conn.close()

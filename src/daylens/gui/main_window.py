@@ -97,6 +97,7 @@ class MainWindow(QMainWindow):
             | Qt.WindowMinimizeButtonHint
             | Qt.WindowCloseButtonHint
         )
+        self._init_pages()
         self._build_ui()
         self._apply_window_chrome_theme()
         self._apply_initial_geometry()
@@ -108,21 +109,45 @@ class MainWindow(QMainWindow):
         self.refresh_timer.timeout.connect(self._update_top_bar)
         self.refresh_timer.start(5000)
 
+    def _init_pages(self) -> None:
+        """Create page widgets once. Reused across theme toggles."""
+        self.stack = QStackedWidget()
+        display_name_mapping = {**DISPLAY_NAME_MAPPING, **self.config.get("display_name_mapping", {})}
+        self.pages = {
+            "today": TodayOverviewPage(self.db_path, display_name_mapping),
+            "live": LiveMonitorPage(),
+            "software": SoftwareStatsPage(self.db_path, self.reports_dir, display_name_mapping),
+            "category": CategoryStatsPage(self.db_path),
+            "reports": ReportsPage(
+                self.db_path, self.reports_dir,
+                self.config.get("obsidian_output_path", "").strip(),
+            ),
+            "rules": RuleConfigPage(self.config_path, self.db_path, self.worker),
+            "settings": SettingsPage(self.config_path, self.db_path, self.reports_dir, self.worker),
+        }
+        for _, key, _ in NAV_ITEMS:
+            self.stack.addWidget(self.pages[key])
+
     def _build_ui(self, current_key: str = "today") -> None:
         central = QWidget()
         self.setCentralWidget(central)
 
-        root_layout = QVBoxLayout(central)
-        root_layout.setContentsMargins(0, 0, 0, 0)
-        root_layout.setSpacing(0)
-        root_layout.addWidget(self._build_top_bar())
+        self.root_layout = QVBoxLayout(central)
+        self.root_layout.setContentsMargins(0, 0, 0, 0)
+        self.root_layout.setSpacing(0)
 
-        content_layout = QHBoxLayout()
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(0)
-        content_layout.addWidget(self._build_sidebar())
-        content_layout.addWidget(self._build_pages(), 1)
-        root_layout.addLayout(content_layout, 1)
+        self._top_bar = self._build_top_bar()
+        self.root_layout.addWidget(self._top_bar)
+
+        self._content_layout = QHBoxLayout()
+        self._content_layout.setContentsMargins(0, 0, 0, 0)
+        self._content_layout.setSpacing(0)
+
+        self._sidebar = self._build_sidebar()
+        self._content_layout.addWidget(self._sidebar)
+        self._content_layout.addWidget(self.stack, 1)
+        self.root_layout.addLayout(self._content_layout, 1)
+
         current_row = next((index for index, (_, key, _) in enumerate(NAV_ITEMS) if key == current_key), 0)
         self.nav_list.setCurrentRow(current_row)
 
@@ -211,31 +236,6 @@ class MainWindow(QMainWindow):
         self.sidebar_quit_btn.clicked.connect(self._quit_app)
         layout.addWidget(self.sidebar_quit_btn)
         return frame
-
-    def _build_pages(self) -> QWidget:
-        self.stack = QStackedWidget()
-        display_name_mapping = {**DISPLAY_NAME_MAPPING, **self.config.get("display_name_mapping", {})}
-        self.pages = {
-            "today": TodayOverviewPage(self.db_path, display_name_mapping),
-            "live": LiveMonitorPage(),
-            "software": SoftwareStatsPage(self.db_path, self.reports_dir),
-            "category": CategoryStatsPage(self.db_path),
-            "reports": ReportsPage(
-                self.db_path,
-                self.reports_dir,
-                self.config.get("obsidian_output_path", "").strip(),
-            ),
-            "rules": RuleConfigPage(self.config_path, self.db_path, self.worker),
-            "settings": SettingsPage(
-                self.config_path,
-                self.db_path,
-                self.reports_dir,
-                self.worker,
-            ),
-        }
-        for _, key, _ in NAV_ITEMS:
-            self.stack.addWidget(self.pages[key])
-        return self.stack
 
     def _build_top_bar(self) -> QWidget:
         bar = QFrame()
@@ -617,9 +617,48 @@ class MainWindow(QMainWindow):
         self.current_theme = ui_style.apply_theme("dark" if checked else "light")
         self.config["theme"] = self.current_theme
         self._persist_theme_preference()
-        current_key = NAV_ITEMS[self.nav_list.currentRow()][1] if self.nav_list.currentRow() >= 0 else "today"
         self.setStyleSheet(ui_style.get_global_style() + ui_style.get_input_style())
-        self._build_ui(current_key)
+
+        # Rebuild shell widgets in-place without touching pages
+        old_top = self._top_bar
+        self._top_bar = self._build_top_bar()
+        self.root_layout.removeWidget(old_top)
+        self.root_layout.insertWidget(0, self._top_bar)
+        old_top.hide()
+        old_top.deleteLater()
+
+        old_sidebar = self._sidebar
+        self._sidebar = self._build_sidebar()
+        self._content_layout.removeWidget(old_sidebar)
+        self._content_layout.insertWidget(0, self._sidebar)
+        old_sidebar.hide()
+        old_sidebar.deleteLater()
+
+        # Recreate pages with new theme colors in-place on existing stack
+        current_row = self.nav_list.currentRow()
+        current_key = NAV_ITEMS[current_row][1] if current_row >= 0 else "today"
+        while self.stack.count():
+            w = self.stack.widget(0)
+            self.stack.removeWidget(w)
+            w.deleteLater()
+        display_name_mapping = {**DISPLAY_NAME_MAPPING, **self.config.get("display_name_mapping", {})}
+        self.pages = {
+            "today": TodayOverviewPage(self.db_path, display_name_mapping),
+            "live": LiveMonitorPage(),
+            "software": SoftwareStatsPage(self.db_path, self.reports_dir, display_name_mapping),
+            "category": CategoryStatsPage(self.db_path),
+            "reports": ReportsPage(
+                self.db_path, self.reports_dir,
+                self.config.get("obsidian_output_path", "").strip(),
+            ),
+            "rules": RuleConfigPage(self.config_path, self.db_path, self.worker),
+            "settings": SettingsPage(self.config_path, self.db_path, self.reports_dir, self.worker),
+        }
+        for _, key, _ in NAV_ITEMS:
+            self.stack.addWidget(self.pages[key])
+        self.nav_list.setCurrentRow(current_row)
+        self._on_nav_changed(current_row)
+
         self._apply_window_chrome_theme()
         self._update_top_bar()
         if self.worker.is_paused():
@@ -646,18 +685,6 @@ class MainWindow(QMainWindow):
         with open(self.config_path, "w", encoding="utf-8") as f:
             f.write(content)
 
-        # Also persist to data/user_config.yaml (survives rebuilds)
-        import yaml as _yaml
-        from .. import get_data_dir
-        user_path = os.path.join(get_data_dir(), "user_config.yaml")
-        user_config = {}
-        if os.path.exists(user_path):
-            try:
-                with open(user_path, "r", encoding="utf-8") as f:
-                    user_config = _yaml.safe_load(f) or {}
-            except Exception:
-                pass
-        user_config["theme"] = self.current_theme
-        os.makedirs(os.path.dirname(user_path), exist_ok=True)
-        with open(user_path, "w", encoding="utf-8") as f:
-            _yaml.safe_dump(user_config, f, allow_unicode=True)
+        # Also persist to data/user_config.yaml
+        from ..utils import save_user_config
+        save_user_config({"theme": self.current_theme})

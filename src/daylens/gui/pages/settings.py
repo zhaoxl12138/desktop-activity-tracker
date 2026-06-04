@@ -201,18 +201,12 @@ class SettingsPage(QWidget):
         with open(self.config_path, "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
 
-        # Merge user_config overrides (legacy, for db_path which can't be in DB)
-        from daylens import get_data_dir
-        user_path = os.path.join(get_data_dir(), "user_config.yaml")
-        if os.path.exists(user_path):
-            try:
-                with open(user_path, "r", encoding="utf-8") as f:
-                    user_config = yaml.safe_load(f) or {}
-                for key in ("obsidian_output_path", "theme", "db_path"):
-                    if key in user_config and user_config[key]:
-                        self.config[key] = user_config[key]
-            except Exception:
-                pass
+        # Merge user_config overrides
+        from daylens.utils import load_user_config
+        user_config = load_user_config()
+        for key in ("obsidian_output_path", "theme", "db_path"):
+            if key in user_config and user_config[key]:
+                self.config[key] = user_config[key]
 
         # Override from database (primary persistence, survives rebuilds)
         try:
@@ -259,14 +253,12 @@ class SettingsPage(QWidget):
 
         # Also persist to user_config.yaml in data dir (survives rebuilds)
         try:
-            from daylens import get_data_dir
-            user_path = os.path.join(get_data_dir(), "user_config.yaml")
-            user_overrides = {}
-            for key in ("obsidian_output_path", "theme", "db_path"):
-                if key in self.config and self.config[key]:
-                    user_overrides[key] = self.config[key]
-            with open(user_path, "w", encoding="utf-8") as f:
-                yaml.safe_dump(user_overrides, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            from daylens.utils import save_user_config
+            save_user_config({
+                k: self.config[k]
+                for k in ("obsidian_output_path", "theme", "db_path")
+                if k in self.config and self.config[k]
+            })
         except Exception:
             pass
 
