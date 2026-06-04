@@ -20,10 +20,12 @@ def _get_wsh_shell():
     return _WSH_SHELL
 
 
-def _resolve_lnk_target(lnk_path: str) -> str | None:
+def _resolve_lnk_target(lnk_path: str, shell=None) -> str | None:
     """Extract the target executable path from a Windows .lnk shortcut."""
     try:
-        shortcut = _get_wsh_shell().CreateShortcut(lnk_path)
+        if shell is None:
+            shell = _get_wsh_shell()
+        shortcut = shell.CreateShortcut(lnk_path)
         target = shortcut.TargetPath
         if target and os.path.isfile(target):
             return target
@@ -77,19 +79,28 @@ def _scan_start_menu() -> dict[str, str | None]:
         os.path.expandvars(r"%PROGRAMDATA%\Microsoft\Windows\Start Menu\Programs"),
     ]
 
+    try:
+        shell = _get_wsh_shell()
+    except Exception:
+        shell = None
+
     for base in start_menu_dirs:
         if not os.path.isdir(base):
             continue
         for root, _dirs, files in os.walk(base):
+            # Limit depth: only go 3 levels deep from Programs folder
+            depth = root[len(base):].count(os.sep)
+            if depth > 3:
+                _dirs.clear()
+                continue
             for fname in files:
                 if not fname.lower().endswith(".lnk"):
                     continue
                 lnk_path = os.path.join(root, fname)
-                target = _resolve_lnk_target(lnk_path)
+                target = _resolve_lnk_target(lnk_path, shell)
                 if target and _is_valid_exe_name(target):
                     name = os.path.basename(target).lower()
                     install_dir = os.path.dirname(target)
-                    # Keep the first (most specific) install dir
                     if name not in apps:
                         apps[name] = install_dir
     return apps

@@ -506,17 +506,39 @@ class TrendChartWidget(QFrame):
         self.canvas = _TrendCanvas()
         root.addWidget(self.canvas, 1)
 
+        cmp_color = COLORS["text_muted"]
+        self._cmp_legend = QLabel(
+            f"<span>── 今日</span>  "
+            f"<span style='color:{cmp_color}'>- - 昨日</span>"
+        )
+        self._cmp_legend.setStyleSheet(
+            f"font-size: 10px; color: {COLORS['text_secondary']}; padding-left: 4px;"
+        )
+        self._cmp_legend.setVisible(False)
+        root.addWidget(self._cmp_legend)
+
     def set_mode(self, mode: str) -> None:
         if mode in self._series:
             self._mode = mode
-            self.canvas.set_series(self._series[mode], self._labels.get(mode, []), mode)
+            self._apply_series()
             unit = "分钟" if mode == "today" else "小时"
             self._title_label.setText(f"时间趋势（{unit}）")
+            self._cmp_legend.setVisible(mode == "today" and bool(self._yesterday_today))
 
-    def set_data(self, today: list, seven_days: list, thirty_days: list) -> None:
+    def _apply_series(self) -> None:
+        compare = self._yesterday_today if self._mode == "today" else []
+        self.canvas.set_series(
+            self._series[self._mode],
+            self._labels.get(self._mode, []),
+            self._mode,
+            compare,
+        )
+
+    def set_data(self, today: list, yesterday_today: list, seven_days: list, thirty_days: list) -> None:
         self._series["today"] = today
         self._series["7d"] = seven_days
         self._series["30d"] = thirty_days
+        self._yesterday_today = yesterday_today or []
 
         self._labels["today"] = ["0h", "", "2h", "", "4h", "", "6h", "", "8h", "", "10h", "", "12h", "", "14h", "", "16h", "", "18h", "", "20h", "", "22h", ""]
 
@@ -532,7 +554,7 @@ class TrendChartWidget(QFrame):
             markers.append(f"{d.month}/{d.day}" if i % 3 == 0 else "")
         self._labels["30d"] = markers
 
-        self.canvas.set_series(self._series[self._mode], self._labels.get(self._mode, []), self._mode)
+        self._apply_series()
 
 
 class _TrendCanvas(QWidget):
@@ -541,11 +563,13 @@ class _TrendCanvas(QWidget):
         self._points: list[float] = []
         self._labels: list[str] = []
         self._mode = "today"
+        self._compare_points: list[float] = []
 
-    def set_series(self, points: list, labels: list[str] | None = None, mode: str = "today") -> None:
+    def set_series(self, points: list, labels: list[str] | None = None, mode: str = "today", compare_points: list | None = None) -> None:
         self._points = [max(0.0, float(point)) for point in points]
         self._labels = labels or []
         self._mode = mode
+        self._compare_points = [max(0.0, float(p)) for p in (compare_points or [])]
         self.update()
 
     def paintEvent(self, event) -> None:  # noqa: N802
@@ -630,6 +654,23 @@ class _TrendCanvas(QWidget):
         painter.setPen(QPen(QColor(COLORS["success_green"]), 2))
         painter.setBrush(Qt.NoBrush)
         painter.drawPath(line_path)
+
+        # Yesterday comparison line (today mode only, dashed)
+        if self._mode == "today" and self._compare_points and len(self._compare_points) == len(self._points):
+            cmp_points = []
+            for index, value in enumerate(self._compare_points):
+                x = chart_rect.left() + index * step
+                y = chart_rect.bottom() - (value / y_max) * chart_rect.height()
+                cmp_points.append(QPointF(x, y))
+            cmp_path = QPainterPath()
+            cmp_path.moveTo(cmp_points[0])
+            for pt in cmp_points[1:]:
+                cmp_path.lineTo(pt)
+            cmp_pen = QPen(QColor(COLORS["text_muted"]), 1.5, Qt.DashLine)
+            cmp_pen.setDashPattern([6, 4])
+            painter.setPen(cmp_pen)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPath(cmp_path)
 
         # Dots
         dot_color = QColor(COLORS["success_green"])

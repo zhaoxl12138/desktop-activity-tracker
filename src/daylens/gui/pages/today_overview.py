@@ -154,11 +154,14 @@ class TodayOverviewPage(QWidget):
         card = QFrame()
         card.setObjectName("dashboardCard")
         card.setStyleSheet(ui_style.get_dashboard_card_style())
-        card.setFixedHeight(288)
+        card.setMinimumHeight(288)
 
-        layout = QHBoxLayout(card)
-        layout.setContentsMargins(22, 18, 22, 18)
-        layout.setSpacing(18)
+        outer = QVBoxLayout(card)
+        outer.setContentsMargins(22, 18, 22, 12)
+        outer.setSpacing(4)
+
+        top_row = QHBoxLayout()
+        top_row.setSpacing(18)
 
         left = QVBoxLayout()
         left.setSpacing(13)
@@ -190,10 +193,52 @@ class TodayOverviewPage(QWidget):
             self.time_stats_labels[key] = value_label
 
         left.addStretch()
-        layout.addLayout(left, 1)
+        top_row.addLayout(left, 1)
 
         self.time_stats_ratio_ring = ActiveRatioRingWidget()
-        layout.addWidget(self.time_stats_ratio_ring, 0, Qt.AlignCenter)
+        top_row.addWidget(self.time_stats_ratio_ring, 0, Qt.AlignCenter)
+
+        outer.addLayout(top_row, 1)
+
+        # Day-over-day comparison — bottom of card
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet(f"color: {ui_style.COLORS['border']};")
+        outer.addWidget(sep)
+
+        cmp_row = QHBoxLayout()
+        cmp_row.setSpacing(8)
+        cmp_title = QLabel("较昨日")
+        cmp_title.setStyleSheet(
+            f"font-size: 15px; color: {ui_style.COLORS['text_secondary']}; font-weight: 700;"
+        )
+        cmp_row.addWidget(cmp_title)
+
+        self._day_cmp_labels = {}
+        for key, icon, label_text in [
+            ("work", "💻", "办公"),
+            ("entertainment", "🎬", "娱乐"),
+            ("social", "💬", "社交"),
+        ]:
+            icon_label = QLabel(icon)
+            icon_label.setStyleSheet("font-size: 15px;")
+            cmp_row.addWidget(icon_label)
+
+            name_label = QLabel(label_text)
+            name_label.setStyleSheet(
+                f"font-size: 14px; color: {ui_style.COLORS['text_secondary']};"
+            )
+            cmp_row.addWidget(name_label)
+
+            value_label = QLabel("--")
+            value_label.setStyleSheet(
+                f"font-size: 15px; color: {ui_style.COLORS['text']}; font-weight: 700;"
+            )
+            cmp_row.addWidget(value_label)
+            self._day_cmp_labels[key] = value_label
+
+        cmp_row.addStretch()
+        outer.addLayout(cmp_row)
         return card
 
     def _build_focus_card(self) -> QWidget:
@@ -275,7 +320,7 @@ class TodayOverviewPage(QWidget):
         self.consecutive_label = QLabel("")
         self.consecutive_label.setVisible(False)
 
-        self.timeline_widget = TimelineWidget(max_rows=20)
+        self.timeline_widget = TimelineWidget()
         layout.addWidget(self.timeline_widget, 1)
         return card
 
@@ -311,10 +356,44 @@ class TodayOverviewPage(QWidget):
         self.time_stats_labels["ratio"].setText(f"{active_ratio}%")
         self.time_stats_ratio_ring.set_ratio(active_ratio)
 
+        # Day-over-day category comparison
+        yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        yesterday_stats = database.query_date_stats(self.db_path, yesterday_str)
+        yesterday_work, yesterday_social, yesterday_ent, _ = self._category_stats(yesterday_stats)
+
+        for key, today_val, yesterday_val in [
+            ("work", work_seconds, yesterday_work),
+            ("entertainment", entertainment_seconds, yesterday_ent),
+            ("social", social_seconds, yesterday_social),
+        ]:
+            delta = today_val - yesterday_val
+            label = self._day_cmp_labels[key]
+            if today_val == 0 and yesterday_val == 0:
+                label.setText("--")
+                label.setStyleSheet(
+                    f"font-size: 15px; color: {ui_style.COLORS['text_muted']};"
+                )
+            elif abs(delta) < 60:
+                label.setText("→ 持平")
+                label.setStyleSheet(
+                    f"font-size: 15px; color: {ui_style.COLORS['text_muted']}; font-weight: 700;"
+                )
+            elif delta > 0:
+                label.setText(f"↑ +{_compact_duration(delta)}")
+                label.setStyleSheet(
+                    f"font-size: 15px; color: {ui_style.COLORS['success_green']}; font-weight: 700;"
+                )
+            else:
+                label.setText(f"↓ {_compact_duration(abs(delta))}")
+                label.setStyleSheet(
+                    f"font-size: 15px; color: {ui_style.COLORS['danger_red']}; font-weight: 700;"
+                )
+
+
         sessions = query_today_sessions(self.db_path, today)
         self.timeline_widget.set_sessions(sessions, self.display_name_mapping)
         self.focus_axis.set_minutes(self._build_focus_axis(sessions))
-        self.trend_card.set_data(*self._build_trend_data(sessions))
+        self.trend_card.set_data(*self._build_trend_data(sessions))  # today, yesterday, 7d, 30d
         self._update_focus_summary(today)
         self._update_top_apps(stats)
 
@@ -459,8 +538,30 @@ class TodayOverviewPage(QWidget):
                 colors[minute] = color
         return colors
 
-    def _build_trend_data(self, sessions: list[dict]) -> tuple[list[int], list[int], list[int]]:
-        # ── Today: aggregate effective minutes per hour (float → round at end)
+    def _build_trend_data(self, sessions: list[dict]) -> tuple[list[int], list[int], list[int], list[int]]:
+        today_series = self._build_hourly_series(sessions)
+
+        yesterday_str = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+        yesterday_sessions = database.query_today_sessions(self.db_path, yesterday_str)
+        yesterday_series = self._build_hourly_series(yesterday_sessions)
+
+        # ── 7d / 30d: daily aggregation from DB
+        today_date = date.today()
+        seven_days = [(today_date - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(6, -1, -1)]
+        thirty_days = [(today_date - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(29, -1, -1)]
+        seven_day_stats = database.query_date_range_stats(self.db_path, seven_days)
+        thirty_day_stats = database.query_date_range_stats(self.db_path, thirty_days)
+        seven_day_series = [
+            round((item.get("effective_seconds", 0) or 0) / 3600.0, 1)
+            for item in seven_day_stats.get("daily", [])
+        ]
+        thirty_day_series = [
+            round((item.get("effective_seconds", 0) or 0) / 3600.0, 1)
+            for item in thirty_day_stats.get("daily", [])
+        ]
+        return today_series, yesterday_series, seven_day_series, thirty_day_series
+
+    def _build_hourly_series(self, sessions: list[dict]) -> list[int]:
         hour_minutes = [0.0] * 24
         for session in sessions:
             start_dt = self._parse_dt(session.get("start_time", ""))
@@ -480,23 +581,7 @@ class TodayOverviewPage(QWidget):
                 seg_span = (seg_end - curr).total_seconds()
                 hour_minutes[hour] += (eff_sec / 60.0) * (seg_span / total_span)
                 curr = seg_end
-        today_series = [int(round(v)) for v in hour_minutes]
-
-        # ── 7d / 30d: daily aggregation from DB
-        today_date = date.today()
-        seven_days = [(today_date - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(6, -1, -1)]
-        thirty_days = [(today_date - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(29, -1, -1)]
-        seven_day_stats = database.query_date_range_stats(self.db_path, seven_days)
-        thirty_day_stats = database.query_date_range_stats(self.db_path, thirty_days)
-        seven_day_series = [
-            round((item.get("effective_seconds", 0) or 0) / 3600.0, 1)
-            for item in seven_day_stats.get("daily", [])
-        ]
-        thirty_day_series = [
-            round((item.get("effective_seconds", 0) or 0) / 3600.0, 1)
-            for item in thirty_day_stats.get("daily", [])
-        ]
-        return today_series, seven_day_series, thirty_day_series
+        return [int(round(v)) for v in hour_minutes]
 
     def _to_minute(self, timestamp: str) -> int:
         try:

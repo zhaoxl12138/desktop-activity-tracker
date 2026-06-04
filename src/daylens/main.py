@@ -80,6 +80,32 @@ def load_config(config_path):
     return config
 
 
+def _auto_scan_and_save_rules(config, db_path):
+    """Silently scan installed apps and save custom rules on first run."""
+    try:
+        from daylens.app_scanner import _scan_registry_uninstall, classify_scanned_apps
+        apps = _scan_registry_uninstall()
+        classified = classify_scanned_apps(apps)
+    except Exception:
+        return
+
+    factory_cats = config.get("categories", {})
+    rules = {}
+    for cat_key, pnames in classified.items():
+        cat = factory_cats.get(cat_key, {})
+        rules[cat_key] = {
+            "display_name": cat.get("display_name", cat_key),
+            "active_rule": cat.get("active_rule", "interactive_required"),
+            "process_names": sorted(pnames),
+            "title_keywords": [],
+        }
+
+    if rules:
+        from daylens import database
+        database.save_custom_rules(db_path, rules)
+        print(f"[INFO] 首次运行，已自动分类 {sum(len(r['process_names']) for r in rules.values())} 个应用")
+
+
 def _user_config_path():
     from daylens import get_data_dir
     return os.path.join(get_data_dir(), "user_config.yaml")
@@ -338,6 +364,12 @@ def cmd_gui():
     # Merge settings + custom rules from database (survive rebuilds)
     database.merge_db_settings(config, db_path)
     database.merge_custom_rules(config, db_path)
+
+    # First-run: auto-scan installed apps and populate custom rules silently
+    existing_rules = database.load_custom_rules(db_path)
+    if not existing_rules:
+        _auto_scan_and_save_rules(config, db_path)
+        database.merge_custom_rules(config, db_path)
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
