@@ -462,6 +462,23 @@ def query_today_sessions(db_path, date_str):
     return [dict(r) for r in rows]
 
 
+def query_category_detail(db_path, date_str, category_key, limit=5):
+    """Return top N (process_name, normalized_title) by effective_seconds for a category."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("""
+        SELECT process_name, normalized_title as window_title,
+               SUM(effective_seconds) as effective_seconds
+        FROM activity_sessions
+        WHERE date = ? AND category_key = ? AND effective_seconds > 0
+        GROUP BY process_name, normalized_title
+        ORDER BY effective_seconds DESC
+        LIMIT ?
+    """, (date_str, category_key, limit)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 def count_consecutive_days(db_path):
     """Return consecutive days (including today) with activity data."""
     conn = sqlite3.connect(db_path)
