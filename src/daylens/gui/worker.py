@@ -34,7 +34,7 @@ class RecordingWorker(QThread):
             config.get("flush_interval_seconds", 5))
 
     def run(self):
-        clf = classifier.Classifier(self.config_path)
+        clf = classifier.Classifier(self.config_path, self.db_path)
         conn = database.init_db(self.db_path)
 
         def on_session_end(session):
@@ -148,12 +148,12 @@ class RecordingWorker(QThread):
                 config.get("min_session_seconds", 2))
             self._tracker.sample_interval = self.sample_interval
             self._tracker.flush_interval = self.flush_interval
-            self._tracker.classifier = classifier.Classifier(self.config_path)
+            self._tracker.classifier = classifier.Classifier(self.config_path, self.db_path)
 
     def reload_classifier(self):
         """Reload classification rules from config — pick up rule edits without restart."""
         if hasattr(self, '_tracker') and self._tracker is not None:
-            self._tracker.classifier = classifier.Classifier(self.config_path)
+            self._tracker.classifier = classifier.Classifier(self.config_path, self.db_path)
 
     def pause(self):
         self._paused = True

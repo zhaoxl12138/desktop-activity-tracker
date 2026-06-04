@@ -70,6 +70,14 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS custom_rules (
+    category_key TEXT PRIMARY KEY,
+    display_name TEXT,
+    active_rule TEXT,
+    process_names TEXT,
+    title_keywords TEXT
+);
 """
 
 
@@ -291,6 +299,64 @@ def merge_db_settings(config, db_path):
                 config[key] = val.lower() in ("true", "1", "yes")
             else:
                 config[key] = val
+
+
+# ── Custom rule persistence (user overrides on factory rules) ─────────
+
+def load_custom_rules(db_path):
+    """Return dict of {category_key: {display_name, active_rule, process_names[], title_keywords[]}}."""
+    if not os.path.exists(db_path):
+        return {}
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("SELECT * FROM custom_rules").fetchall()
+    conn.close()
+    result = {}
+    for r in rows:
+        result[r["category_key"]] = {
+            "display_name": r["display_name"],
+            "active_rule": r["active_rule"],
+            "process_names": [p for p in (r["process_names"] or "").split("\n") if p],
+            "title_keywords": [k for k in (r["title_keywords"] or "").split("\n") if k],
+        }
+    return result
+
+
+def save_custom_rules(db_path, rules_dict):
+    """Persist custom rule overrides. Each value is a dict with display_name, active_rule, process_names[], title_keywords[]. Pass empty dict to clear all."""
+    conn = sqlite3.connect(db_path)
+    # Remove all existing
+    conn.execute("DELETE FROM custom_rules")
+    for key, rule in rules_dict.items():
+        conn.execute(
+            "INSERT INTO custom_rules (category_key, display_name, active_rule, process_names, title_keywords) VALUES (?, ?, ?, ?, ?)",
+            (key, rule.get("display_name", ""),
+             rule.get("active_rule", "interactive_required"),
+             "\n".join(rule.get("process_names", [])),
+             "\n".join(rule.get("title_keywords", []))),
+        )
+    conn.commit()
+    conn.close()
+
+
+def merge_custom_rules(config, db_path):
+    """Merge custom rules from DB into config['categories']. Overrides matching keys, adds new ones."""
+    custom = load_custom_rules(db_path)
+    if not custom:
+        return
+
+    categories = config.setdefault("categories", {})
+    for key, rule in custom.items():
+        # Build the match dict in the same format as config.yaml
+        cat_entry = {
+            "display_name": rule["display_name"],
+            "active_rule": rule["active_rule"],
+            "match": {
+                "process_names": rule["process_names"],
+                "title_keywords": rule["title_keywords"],
+            },
+        }
+        categories[key] = cat_entry
 
 
 # ── Deprecated raw log queries (for backward compat) ──

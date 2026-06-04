@@ -100,7 +100,7 @@ def cmd_start(config, config_path):
 
     db_path = database.get_db_path(config)
 
-    clf = Classifier(config_path)
+    clf = Classifier(config_path, db_path)
     conn = database.init_db(db_path)
 
     def on_session_end(session):
@@ -335,8 +335,9 @@ def cmd_gui():
     # Ensure DB is initialized
     database.init_db(db_path)
 
-    # Merge settings from database (survives rebuilds)
+    # Merge settings + custom rules from database (survive rebuilds)
     database.merge_db_settings(config, db_path)
+    database.merge_custom_rules(config, db_path)
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)

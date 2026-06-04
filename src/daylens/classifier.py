@@ -7,12 +7,19 @@ from . import get_app_root
 
 
 class Classifier:
-    def __init__(self, config_path=None):
+    def __init__(self, config_path=None, db_path=None):
         if config_path is None:
             config_path = os.path.join(get_app_root(), "config", "config.yaml")
         with open(config_path, "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
         self.categories = self.config.get("categories", {})
+
+        # Merge custom rules from database (user overrides)
+        if db_path and os.path.exists(db_path):
+            from . import database
+            database.merge_custom_rules(self.config, db_path)
+            self.categories = self.config.get("categories", {})
+
         self.idle_threshold = self.config.get("idle_threshold_seconds", 60)
 
     def classify(self, process_name, window_title):

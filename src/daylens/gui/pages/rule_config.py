@@ -1,4 +1,4 @@
-"""Rule config page - edit software classification rules."""
+"""Rule config page - edit software classification rules, persisted to DB."""
 
 import yaml
 
@@ -10,6 +10,9 @@ from PySide6.QtCore import Qt
 
 from .. import style as ui_style
 from ..style import COLORS
+
+# Factory categories that cannot be deleted
+_FACTORY_KEYS = {"other", "browser_general"}
 
 def build_list_style() -> str:
     return f"""
@@ -38,11 +41,20 @@ def build_list_style() -> str:
 
 
 class RuleConfigPage(QWidget):
-    def __init__(self, config_path, worker=None):
+    def __init__(self, config_path, db_path, worker=None):
         super().__init__()
         self.config_path = config_path
+        self.db_path = db_path
         self.worker = worker
-        self._load_config()
+
+        # Load factory rules from config.yaml (read-only template)
+        with open(self.config_path, "r", encoding="utf-8") as f:
+            self._factory_config = yaml.safe_load(f)
+        self._factory_categories = dict(self._factory_config.get("categories", {}))
+
+        # Build working set: factory base + DB overrides
+        self.categories = dict(self._factory_categories)
+        self._load_db_overrides()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 24)
@@ -51,6 +63,10 @@ class RuleConfigPage(QWidget):
         lbl = QLabel("规则配置")
         lbl.setStyleSheet(ui_style.get_section_title())
         layout.addWidget(lbl)
+
+        hint = QLabel("修改后立即生效，规则保存在数据库中，编译不丢失。")
+        hint.setStyleSheet(f"font-size: 12px; color: {ui_style.COLORS['text_muted']};")
+        layout.addWidget(hint)
 
         splitter = QSplitter(Qt.Horizontal)
 
@@ -179,17 +195,47 @@ class RuleConfigPage(QWidget):
 
         self._populate_list()
 
-    def _load_config(self):
-        with open(self.config_path, "r", encoding="utf-8") as f:
-            self.config = yaml.safe_load(f)
+    def _serialize_categories_for_db(self):
+        """Convert categories to the flat dict format for DB storage."""
+        result = {}
+        for key, cat in self.categories.items():
+            match = cat.get("match", {})
+            result[key] = {
+                "display_name": cat.get("display_name", ""),
+                "active_rule": cat.get("active_rule", "interactive_required"),
+                "process_names": match.get("process_names", []),
+                "title_keywords": match.get("title_keywords", []),
+            }
+        return result
 
-    def _save_config(self):
-        with open(self.config_path, "w", encoding="utf-8") as f:
-            yaml.dump(self.config, f, allow_unicode=True, default_flow_style=False)
+    def _load_db_overrides(self):
+        """Merge custom rules from DB on top of factory categories."""
+        try:
+            from ... import database
+            custom = database.load_custom_rules(self.db_path)
+            for key, rule in custom.items():
+                self.categories[key] = {
+                    "display_name": rule["display_name"],
+                    "active_rule": rule["active_rule"],
+                    "match": {
+                        "process_names": rule["process_names"],
+                        "title_keywords": rule["title_keywords"],
+                    },
+                }
+        except Exception:
+            pass
+
+    def _save_to_db(self):
+        """Persist ALL current categories to DB. On load, factory + DB merge = current state."""
+        try:
+            from ... import database
+            database.save_custom_rules(self.db_path, self._serialize_categories_for_db())
+        except Exception:
+            pass
 
     def _populate_list(self):
         self.cat_list.clear()
-        for key, cat in self.config["categories"].items():
+        for key, cat in self.categories.items():
             item = QListWidgetItem(f"{cat['display_name']} ({key})")
             item.setData(Qt.UserRole, key)
             self.cat_list.addItem(item)
@@ -198,7 +244,7 @@ class RuleConfigPage(QWidget):
         if row < 0:
             return
         key = self.cat_list.item(row).data(Qt.UserRole)
-        cat = self.config["categories"][key]
+        cat = self.categories[key]
         self.edit_name.setText(cat.get("display_name", ""))
         proc_list = cat.get("match", {}).get("process_names", [])
         self.edit_processes.setPlainText("\n".join(proc_list))
@@ -212,25 +258,30 @@ class RuleConfigPage(QWidget):
         if row < 0:
             return
         key = self.cat_list.item(row).data(Qt.UserRole)
-        cat = self.config["categories"][key]
+        cat = self.categories[key]
         cat["display_name"] = self.edit_name.text().strip()
+        cat.setdefault("match", {})
         cat["match"]["process_names"] = [p.strip() for p in self.edit_processes.toPlainText().split("\n") if p.strip()]
         cat["match"]["title_keywords"] = [k.strip() for k in self.edit_keywords.toPlainText().split("\n") if k.strip()]
         cat["active_rule"] = "interactive_required" if self.edit_rule.currentIndex() == 0 else "passive_allowed"
-        self._save_config()
+
+        self._save_to_db()
         self._populate_list()
         if self.worker:
             self.worker.reload_classifier()
-        QMessageBox.information(self, "成功", f"分类 '{cat['display_name']}' 已保存（已实时生效）")
+        QMessageBox.information(self, "成功", f"分类 '{cat['display_name']}' 已保存到数据库（已实时生效）")
 
     def _add_category(self):
-        new_key = f"custom_{len(self.config['categories'])}"
-        self.config["categories"][new_key] = {
+        new_key = f"custom_{len(self.categories)}"
+        # Ensure unique key
+        while new_key in self.categories:
+            new_key = f"custom_{len(self.categories) + 1}"
+        self.categories[new_key] = {
             "display_name": "新分类",
             "active_rule": "interactive_required",
-            "match": {"process_names": [], "title_keywords": []}
+            "match": {"process_names": [], "title_keywords": []},
         }
-        self._save_config()
+        self._save_to_db()
         self._populate_list()
         if self.worker:
             self.worker.reload_classifier()
@@ -241,14 +292,16 @@ class RuleConfigPage(QWidget):
         if row < 0:
             return
         key = self.cat_list.item(row).data(Qt.UserRole)
-        if key in ("other",):
-            QMessageBox.warning(self, "不可删除", "默认分类不可删除。")
+        if key in _FACTORY_KEYS:
+            QMessageBox.warning(self, "不可删除", "系统保留分类不可删除。")
             return
-        reply = QMessageBox.question(self, "确认删除", f"确定删除分类 '{key}' 吗？",
-                                     QMessageBox.Yes | QMessageBox.No)
+        reply = QMessageBox.question(
+            self, "确认删除", f"确定删除分类 '{self.categories[key]['display_name']}' 吗？",
+            QMessageBox.Yes | QMessageBox.No,
+        )
         if reply == QMessageBox.Yes:
-            del self.config["categories"][key]
-            self._save_config()
+            del self.categories[key]
+            self._save_to_db()
             if self.worker:
                 self.worker.reload_classifier()
             self._populate_list()

@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget,
     QTableWidgetItem, QHeaderView, QPushButton, QFileDialog, QFrame
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QBrush
 
 from ... import database
@@ -94,6 +94,10 @@ class SoftwareStatsPage(QWidget):
         layout.addWidget(self.table, 1)
 
         self.refresh()
+
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.refresh)
+        self.timer.start(30000)
 
     def refresh(self):
         today = datetime.now().strftime("%Y-%m-%d")

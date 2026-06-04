@@ -21,10 +21,15 @@ def get_app_root():
 def get_data_dir():
     """Return the persistent user-data directory (survives rebuilds).
 
-    Frozen: data/ alongside the .exe release folder (project root).
-    Normal Python: data/ under project root.
+    Frozen onedir: exe is in dist/DayLens/, _internal/ alongside → project root is 2 levels up.
+    Frozen onefile: exe is at project root, no _internal/ → data/ alongside exe.
+    Normal Python: data/ under project root (3 levels up from this file).
     """
     if getattr(sys, 'frozen', False):
-        # _MEIPASS = release/_internal/ → release/ = parent → project root = grandparent
-        return os.path.join(os.path.dirname(os.path.dirname(sys._MEIPASS)), "data")
+        exe_dir = os.path.dirname(sys.executable)
+        if os.path.isdir(os.path.join(exe_dir, "_internal")):
+            # onedir: dist/DayLens/ → project root = grandparent
+            return os.path.join(os.path.dirname(os.path.dirname(exe_dir)), "data")
+        # onefile: data/ alongside exe
+        return os.path.join(exe_dir, "data")
     return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")

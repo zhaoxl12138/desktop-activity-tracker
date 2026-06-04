@@ -222,7 +222,7 @@ class MainWindow(QMainWindow):
                 self.reports_dir,
                 self.config.get("obsidian_output_path", "").strip(),
             ),
-            "rules": RuleConfigPage(self.config_path, self.worker),
+            "rules": RuleConfigPage(self.config_path, self.db_path, self.worker),
             "settings": SettingsPage(
                 self.config_path,
                 self.db_path,
