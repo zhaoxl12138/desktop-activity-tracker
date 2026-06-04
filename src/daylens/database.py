@@ -78,6 +78,15 @@ CREATE TABLE IF NOT EXISTS custom_rules (
     process_names TEXT,
     title_keywords TEXT
 );
+
+CREATE TABLE IF NOT EXISTS poetry_lines (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    author TEXT NOT NULL,
+    content TEXT NOT NULL UNIQUE,
+    origin TEXT,
+    category TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_poetry_author ON poetry_lines(author);
 """
 
 
@@ -752,6 +761,69 @@ def _query_date_range_from_sessions(db_path, dates):
     }
 
 
+# ── Poetry ──────────────────────────────────────────────────────────
+
+def insert_poetry_line(db_path: str, author: str, content: str,
+                       origin: str = "", category: str = "") -> bool:
+    """Insert a poetry line (INSERT OR IGNORE). Returns True if inserted."""
+    conn = sqlite3.connect(db_path)
+    try:
+        before = conn.total_changes
+        conn.execute(
+            "INSERT OR IGNORE INTO poetry_lines (author, content, origin, category) "
+            "VALUES (?, ?, ?, ?)",
+            (author, content, origin, category),
+        )
+        conn.commit()
+        return conn.total_changes > before
+    finally:
+        conn.close()
+
+
+def get_random_poetry(db_path: str) -> dict | None:
+    """Return two consecutive lines from the same poem.
+
+    Returns dict {author, content, origin, category} where content is two lines
+    joined by newline, or None if no poem with >= 2 lines exists.
+    """
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        target = conn.execute(
+            "SELECT origin, author, category FROM poetry_lines "
+            "GROUP BY origin HAVING COUNT(*) >= 2 "
+            "ORDER BY RANDOM() LIMIT 1"
+        ).fetchone()
+        if not target:
+            return None
+        rows = conn.execute(
+            "SELECT content FROM poetry_lines "
+            "WHERE origin = ? AND author = ? "
+            "ORDER BY id LIMIT 2",
+            (target["origin"], target["author"]),
+        ).fetchall()
+        if len(rows) < 2:
+            return None
+        return {
+            "author": target["author"],
+            "content": rows[0]["content"] + "\n" + rows[1]["content"],
+            "origin": target["origin"],
+            "category": target["category"],
+        }
+    finally:
+        conn.close()
+
+
+def get_poetry_count(db_path: str) -> int:
+    """Return total number of poetry lines stored."""
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute("SELECT COUNT(*) FROM poetry_lines").fetchone()
+        return row[0] if row else 0
+    finally:
+        conn.close()
+
+
 def _query_date_range_from_logs(db_path, dates):
     """Old per-sample range query (fallback for pre-v1.1 data)."""
     conn = sqlite3.connect(db_path)
@@ -839,3 +911,66 @@ def _query_date_range_from_logs(db_path, dates):
             "video_seconds": totals_video,
         },
     }
+
+
+# ── Poetry ──────────────────────────────────────────────────────────
+
+def insert_poetry_line(db_path: str, author: str, content: str,
+                       origin: str = "", category: str = "") -> bool:
+    """Insert a poetry line (INSERT OR IGNORE). Returns True if inserted."""
+    conn = sqlite3.connect(db_path)
+    try:
+        before = conn.total_changes
+        conn.execute(
+            "INSERT OR IGNORE INTO poetry_lines (author, content, origin, category) "
+            "VALUES (?, ?, ?, ?)",
+            (author, content, origin, category),
+        )
+        conn.commit()
+        return conn.total_changes > before
+    finally:
+        conn.close()
+
+
+def get_random_poetry(db_path: str) -> dict | None:
+    """Return two consecutive lines from the same poem.
+
+    Returns dict {author, content, origin, category} where content is two lines
+    joined by newline, or None if no poem with >= 2 lines exists.
+    """
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        target = conn.execute(
+            "SELECT origin, author, category FROM poetry_lines "
+            "GROUP BY origin HAVING COUNT(*) >= 2 "
+            "ORDER BY RANDOM() LIMIT 1"
+        ).fetchone()
+        if not target:
+            return None
+        rows = conn.execute(
+            "SELECT content FROM poetry_lines "
+            "WHERE origin = ? AND author = ? "
+            "ORDER BY id LIMIT 2",
+            (target["origin"], target["author"]),
+        ).fetchall()
+        if len(rows) < 2:
+            return None
+        return {
+            "author": target["author"],
+            "content": rows[0]["content"] + "\n" + rows[1]["content"],
+            "origin": target["origin"],
+            "category": target["category"],
+        }
+    finally:
+        conn.close()
+
+
+def get_poetry_count(db_path: str) -> int:
+    """Return total number of poetry lines stored."""
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute("SELECT COUNT(*) FROM poetry_lines").fetchone()
+        return row[0] if row else 0
+    finally:
+        conn.close()

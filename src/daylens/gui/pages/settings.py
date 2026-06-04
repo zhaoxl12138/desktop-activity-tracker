@@ -235,6 +235,7 @@ class SettingsPage(QWidget):
         self.config["db_path"] = self.edit_db.text().strip()
         self.config["startup_enabled"] = self.chk_startup.isChecked()
         self.config["obsidian_output_path"] = self.edit_obsidian.text().strip()
+        self.config["theme"] = self.config.get("theme", "dark")
         self._toggle_startup(self.config["startup_enabled"])
 
         tracker = self.config.setdefault("tracker", {})
@@ -248,15 +249,28 @@ class SettingsPage(QWidget):
         if self.worker:
             self.worker.update_settings(self.config)
 
-        QMessageBox.information(self, "成功", "设置已保存，采样间隔和空闲阈值已实时生效。")
-
-        # Persist to database (survives rebuilds)
+        # Persist to database (primary persistence, survives rebuilds)
         try:
             from ... import database
             db_path = self.config.get("db_path", self.db_path)
             database.save_settings(db_path, self.config)
         except Exception:
             pass
+
+        # Also persist to user_config.yaml in data dir (survives rebuilds)
+        try:
+            from daylens import get_data_dir
+            user_path = os.path.join(get_data_dir(), "user_config.yaml")
+            user_overrides = {}
+            for key in ("obsidian_output_path", "theme", "db_path"):
+                if key in self.config and self.config[key]:
+                    user_overrides[key] = self.config[key]
+            with open(user_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(user_overrides, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        except Exception:
+            pass
+
+        QMessageBox.information(self, "成功", "设置已保存，采样间隔和空闲阈值已实时生效。")
 
     @staticmethod
     def _get_startup_link_path() -> str:

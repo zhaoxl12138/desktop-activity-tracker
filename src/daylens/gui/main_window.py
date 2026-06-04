@@ -84,6 +84,9 @@ class MainWindow(QMainWindow):
         self.worker = worker
         self._theme_rebuilding = False
         self._last_sample: dict | None = None
+        self._current_nav_key: str | None = None
+        self._last_poetry_refresh = 0.0
+        self._poetry_interval = 1800  # 30 minutes between auto-refresh
         self.current_theme = ui_style.apply_theme(self.config.get("theme", "dark"))
 
         self.setWindowTitle("DayLens")
@@ -475,7 +478,11 @@ class MainWindow(QMainWindow):
             if nav_key == key:
                 self.stack.setCurrentIndex(index)
                 self.lbl_page_title.setText(title)
-                self.lbl_page_hint.setText(hint)
+                self._current_nav_key = key
+                if key == "today":
+                    self._set_random_poetry(force=True)
+                else:
+                    self.lbl_page_hint.setText(hint)
                 if self._last_sample is not None:
                     if key == "live":
                         self.pages["live"].on_sample_updated(self._last_sample)
@@ -534,6 +541,34 @@ class MainWindow(QMainWindow):
         self.capsule_values["work"].setText(fmt_seconds(work_seconds))
         self.capsule_values["ent"].setText(fmt_seconds(video_seconds))
         self.capsule_values["social"].setText(fmt_seconds(social_seconds))
+        if self._current_nav_key == "today":
+            self._set_random_poetry(force=False)
+
+    def _set_random_poetry(self, force: bool = False) -> None:
+        """Set lbl_page_hint to two random poetry lines from the database.
+
+        Args:
+            force: If True, refresh immediately. If False, only refresh if
+                   _poetry_interval seconds have passed since last refresh.
+        """
+        if not force:
+            now = __import__("time").time()
+            if now - self._last_poetry_refresh < self._poetry_interval:
+                return
+            self._last_poetry_refresh = now
+        try:
+            row = database.get_random_poetry(self.db_path)
+            if row:
+                self.lbl_page_hint.setText(f"「{row['content']}」—— {row['author']}")
+                return
+        except Exception:
+            pass
+        # Fallback: find the original hint from NAV_ITEMS
+        for _title, nav_key, hint in NAV_ITEMS:
+            if nav_key == self._current_nav_key:
+                self.lbl_page_hint.setText(hint)
+                return
+        self.lbl_page_hint.setText("聚焦今天的使用结构、效率与提醒")
 
     def _quick_report(self) -> None:
         from .. import exporter
@@ -554,13 +589,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "生成失败", str(exc))
 
     def _live_obsidian_path(self) -> str:
-        """Re-read obsidian_output_path from config file, falling back to memory."""
-        import yaml
-        try:
-            with open(self.config_path, "r", encoding="utf-8") as f:
-                return (yaml.safe_load(f) or {}).get("obsidian_output_path", "").strip()
-        except Exception:
-            return self.config.get("obsidian_output_path", "").strip()
+        """Return obsidian_output_path from in-memory config (merged with DB on startup)."""
+        return self.config.get("obsidian_output_path", "").strip()
 
     def _quit_app(self) -> None:
         reply = QMessageBox.question(

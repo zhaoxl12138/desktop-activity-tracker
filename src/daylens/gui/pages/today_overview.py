@@ -200,12 +200,6 @@ class TodayOverviewPage(QWidget):
 
         outer.addLayout(top_row, 1)
 
-        # Day-over-day comparison — bottom of card
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet(f"color: {ui_style.COLORS['border']};")
-        outer.addWidget(sep)
-
         cmp_row = QHBoxLayout()
         cmp_row.setSpacing(8)
         cmp_title = QLabel("较昨日")
