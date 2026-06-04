@@ -65,6 +65,11 @@ CREATE INDEX IF NOT EXISTS idx_activity_category ON activity_logs(category_key);
 CREATE INDEX IF NOT EXISTS idx_sessions_date ON activity_sessions(date);
 CREATE INDEX IF NOT EXISTS idx_sessions_category ON activity_sessions(category_key);
 CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON activity_sessions(session_id);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 
@@ -218,6 +223,74 @@ def _maybe_checkpoint(conn):
     conn._commit_count = getattr(conn, '_commit_count', 0) + 1
     if conn._commit_count % _WAL_CHECKPOINT_INTERVAL == 0:
         _wal_checkpoint(conn)
+
+
+# ── Settings persistence (survives rebuilds) ──────────────────────────
+
+_SETTING_KEYS = [
+    "sample_interval_seconds", "idle_threshold_seconds",
+    "flush_interval_seconds", "min_session_seconds",
+    "obsidian_output_path", "theme", "startup_enabled",
+]
+
+
+def load_settings(db_path):
+    """Return a dict of all persisted settings, or None if none exist."""
+    if not os.path.exists(db_path):
+        return None
+    conn = sqlite3.connect(db_path)
+    rows = conn.execute("SELECT key, value FROM settings").fetchall()
+    conn.close()
+    if not rows:
+        return None
+    return {k: v for k, v in rows if k}
+
+
+def save_settings(db_path, settings_dict):
+    """Persist a batch of settings key/value pairs."""
+    conn = sqlite3.connect(db_path)
+    for key in _SETTING_KEYS:
+        if key in settings_dict:
+            val = settings_dict[key]
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                (key, str(val) if val is not None else ""),
+            )
+    conn.commit()
+    conn.close()
+
+
+def merge_db_settings(config, db_path):
+    """Load settings from db and override config values. Seed DB on first run."""
+    db_settings = load_settings(db_path)
+    if db_settings is None:
+        # First run: seed DB from current config
+        seed = {k: config.get(k, "") for k in _SETTING_KEYS}
+        # Also grab from tracker sub-dict
+        tracker = config.get("tracker", {})
+        for k in ("sample_interval_seconds", "idle_threshold_seconds",
+                  "flush_interval_seconds", "min_session_seconds"):
+            if k in tracker:
+                seed[k] = tracker[k]
+        save_settings(db_path, seed)
+        return
+
+    # Merge DB overrides into config
+    for key in _SETTING_KEYS:
+        if key in db_settings and db_settings[key]:
+            val = db_settings[key]
+            if key in ("sample_interval_seconds", "idle_threshold_seconds",
+                       "flush_interval_seconds", "min_session_seconds"):
+                try:
+                    config[key] = int(val)
+                except ValueError:
+                    pass
+                # Also update tracker sub-dict
+                config.setdefault("tracker", {})[key] = config[key]
+            elif key == "startup_enabled":
+                config[key] = val.lower() in ("true", "1", "yes")
+            else:
+                config[key] = val
 
 
 # ── Deprecated raw log queries (for backward compat) ──

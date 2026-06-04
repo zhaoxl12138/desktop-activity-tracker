@@ -201,7 +201,7 @@ class SettingsPage(QWidget):
         with open(self.config_path, "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
 
-        # Merge user_config overrides (same logic as main.load_config)
+        # Merge user_config overrides (legacy, for db_path which can't be in DB)
         from daylens import get_data_dir
         user_path = os.path.join(get_data_dir(), "user_config.yaml")
         if os.path.exists(user_path):
@@ -213,6 +213,14 @@ class SettingsPage(QWidget):
                         self.config[key] = user_config[key]
             except Exception:
                 pass
+
+        # Override from database (primary persistence, survives rebuilds)
+        try:
+            from ... import database
+            db_path = self.config.get("db_path", self.db_path)
+            database.merge_db_settings(self.config, db_path)
+        except Exception:
+            pass
 
     def _save_all(self):
         sample_interval = self.spin_interval.value()
@@ -242,22 +250,13 @@ class SettingsPage(QWidget):
 
         QMessageBox.information(self, "成功", "设置已保存，采样间隔和空闲阈值已实时生效。")
 
-        # Also persist user settings to data dir (survives rebuilds)
-        self._save_user_config()
-
-    def _save_user_config(self):
-        """Persist user-facing settings to data/user_config.yaml."""
-        from daylens import get_data_dir
-        data_dir = get_data_dir()
-        os.makedirs(data_dir, exist_ok=True)
-        user_path = os.path.join(data_dir, "user_config.yaml")
-        user_config = {}
-        for key in ("obsidian_output_path", "theme", "db_path"):
-            val = self.config.get(key, "")
-            if val:
-                user_config[key] = val
-        with open(user_path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(user_config, f, allow_unicode=True)
+        # Persist to database (survives rebuilds)
+        try:
+            from ... import database
+            db_path = self.config.get("db_path", self.db_path)
+            database.save_settings(db_path, self.config)
+        except Exception:
+            pass
 
     @staticmethod
     def _get_startup_link_path() -> str:

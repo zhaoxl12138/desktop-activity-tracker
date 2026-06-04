@@ -54,7 +54,8 @@ def resolve_config_path():
 
 
 def resolve_reports_dir():
-    return os.path.join(get_app_root(), REPORTS_DIRNAME)
+    from daylens import get_data_dir
+    return os.path.join(get_data_dir(), REPORTS_DIRNAME)
 
 
 def load_config(config_path):
@@ -333,6 +334,9 @@ def cmd_gui():
 
     # Ensure DB is initialized
     database.init_db(db_path)
+
+    # Merge settings from database (survives rebuilds)
+    database.merge_db_settings(config, db_path)
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
