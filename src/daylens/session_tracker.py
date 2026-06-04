@@ -158,6 +158,7 @@ class SessionTracker:
         self._last_hwnd: int | None = None
         self._last_kb_state: bytes | None = None
         self._activity_from_hook: bool = False  # set by pynput listener
+        self._idle_corrected: bool = False  # back-correct threshold window once per idle period
 
     # ── Public API ──────────────────────────────────────────────────
 
@@ -180,6 +181,7 @@ class SessionTracker:
         interrupts idle without waiting for the next polling tick.
         """
         self._persistent_idle = 0.0
+        self._idle_corrected = False
         self._last_cursor_pos = None
         self._last_kb_state = None
         self._last_hwnd = None
@@ -325,6 +327,7 @@ class SessionTracker:
 
         if self._activity_from_hook or cursor_moved or kb_changed or window_changed:
             self._persistent_idle = 0.0
+            self._idle_corrected = False
             self._activity_from_hook = False
         else:
             self._persistent_idle += self.sample_interval
@@ -339,12 +342,22 @@ class SessionTracker:
         ):
             # Audio peaks detected → always effective, reset idle timer
             self._persistent_idle = 0.0
+            self._idle_corrected = False
             self._current.effective_seconds += self.sample_interval
             return
 
         if self._persistent_idle <= self.idle_threshold:
             self._current.effective_seconds += self.sample_interval
         else:
+            if not self._idle_corrected:
+                # First idle tick: the threshold window (idle_threshold seconds)
+                # was counted as effective while pending confirmation.
+                # Move it from effective → idle so the last app doesn't get
+                # credit for time the user was already away.
+                correction = min(self.idle_threshold, self._current.effective_seconds)
+                self._current.effective_seconds -= correction
+                self._current.idle_seconds += correction
+                self._idle_corrected = True
             self._current.idle_seconds += self.sample_interval
 
     def _emit_session(self):
