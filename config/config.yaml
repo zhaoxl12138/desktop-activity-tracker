@@ -21,10 +21,8 @@ categories:
     active_rule: interactive_required
     match:
       process_names:
-      - chrome.exe
       - claude.exe
       - Doubao.exe
-      - msedge.exe
       title_keywords:
       - ChatGPT
       - Claude
@@ -282,10 +280,8 @@ categories:
     active_rule: interactive_required
     match:
       process_names:
-      - chrome.exe
       - ksolaunch.exe
       - ksomisc.exe
-      - msedge.exe
       - Obsidian.exe
       - wordpad.exe
       - Zotero.exe
@@ -308,8 +304,6 @@ categories:
     active_rule: passive_allowed
     match:
       process_names:
-      - chrome.exe
-      - msedge.exe
       - PotPlayer.exe
       - PotPlayerMini64.exe
       - QQLive.exe
@@ -337,7 +331,15 @@ categories:
     match:
       process_names:
       - JianyingPro.exe
-      title_keywords: []
+      title_keywords:
+      - Adobe
+      - Canva
+      - Figma
+      - 创客贴
+      - 可画
+      - 稿定设计
+      - 美图秀秀
+      - 醒图
   # ── 社交通讯 ──
   social:
     display_name: 社交通讯
@@ -352,7 +354,12 @@ categories:
       - weixin.exe
       - WeMail.exe
       - WXWork.exe
-      title_keywords: []
+      title_keywords:
+      - Discord
+      - Telegram
+      - 小红书
+      - 微博
+      - 百度贴吧
   # ── 系统工具 ──
   tools:
     display_name: 系统工具
@@ -407,7 +414,13 @@ categories:
       process_names:
       - Steam.exe
       - WeGame.exe
-      title_keywords: []
+      title_keywords:
+      - Steam
+      - 原神
+      - 崩坏
+      - 绝区零
+      - 王者荣耀
+      - 云游戏
   # ── 浏览器兜底 ──
   browser_general:
     display_name: 浏览器其他
