@@ -7,29 +7,33 @@ import sys
 def get_app_root():
     """Return the application root directory.
 
-    Frozen: use sys._MEIPASS (PyInstaller's runtime extraction directory).
-    For onedir builds this is the _internal/ folder alongside the .exe,
-    which contains config/, assets/, and Python runtime.
+    Frozen build:
+    - If an ancestor of the executable contains config/config.yaml, treat that
+      ancestor as the project root.
+    - Otherwise fall back to the executable directory.
 
     Normal Python: project root (parent of this package).
     """
     if getattr(sys, 'frozen', False):
-        return sys._MEIPASS
+        exe_dir = os.path.dirname(sys.executable)
+        candidates = [
+            exe_dir,
+            os.path.dirname(exe_dir),
+            os.path.dirname(os.path.dirname(exe_dir)),
+        ]
+        for candidate in candidates:
+            if os.path.isfile(os.path.join(candidate, "config", "config.yaml")):
+                return candidate
+        return exe_dir
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def get_data_dir():
     """Return the persistent user-data directory (survives rebuilds).
 
-    Frozen onedir: exe is in dist/DayLens/, _internal/ alongside → project root is 2 levels up.
-    Frozen onefile: exe is at project root, no _internal/ → data/ alongside exe.
+    Frozen build: data/ under the resolved app root.
     Normal Python: data/ under project root (3 levels up from this file).
     """
     if getattr(sys, 'frozen', False):
-        exe_dir = os.path.dirname(sys.executable)
-        if os.path.isdir(os.path.join(exe_dir, "_internal")):
-            # onedir: dist/DayLens/ → project root = grandparent
-            return os.path.join(os.path.dirname(os.path.dirname(exe_dir)), "data")
-        # onefile: data/ alongside exe
-        return os.path.join(exe_dir, "data")
+        return os.path.join(get_app_root(), "data")
     return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")

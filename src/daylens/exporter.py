@@ -3,7 +3,6 @@
 import os
 import csv
 import shutil
-import sqlite3
 from datetime import datetime, timedelta
 from . import database
 from . import timeline
@@ -12,27 +11,7 @@ from .utils import fmt_seconds
 
 def _top_titles_by_category(db_path, date_str, limit=3):
     """Return {category_key: [title1, title2, title3]} of top window titles."""
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute("""
-        SELECT category_key, normalized_title, SUM(effective_seconds) as total_sec
-        FROM activity_sessions
-        WHERE date = ? AND effective_seconds > 0 AND normalized_title != ''
-        GROUP BY category_key, normalized_title
-        ORDER BY category_key, total_sec DESC
-    """, (date_str,)).fetchall()
-    conn.close()
-
-    result: dict[str, list[str]] = {}
-    for row in rows:
-        ck = row["category_key"]
-        title = row["normalized_title"]
-        if ck not in result:
-            result[ck] = []
-        if len(result[ck]) < limit:
-            title_short = title[:28] + "…" if len(title) > 28 else title
-            result[ck].append(title_short)
-    return result
+    return database.query_top_titles_by_category(db_path, date_str, limit)
 
 
 def _calculate_efficiency_score(work_sec, video_sec, total_effective_sec):

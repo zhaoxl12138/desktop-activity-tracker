@@ -18,8 +18,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ... import database, get_app_root, timeline
-from ...database import count_consecutive_days, query_today_sessions
+from ... import get_app_root
+from ...services.dashboard_service import load_today_snapshot
 from .. import style as ui_style
 from ..widgets.dashboard_widgets import (
     ActiveRatioRingWidget,
@@ -37,7 +37,9 @@ class TodayOverviewPage(QWidget):
         super().__init__()
         self.db_path = db_path
         self.display_name_mapping = display_name_mapping or {}
-        self.metric_cards: dict[str, MetricCard] = {}
+        self.last_stats_date: str | None = None
+        self.last_stats: dict[str, object] = {}
+        setattr(self, "metric_cards", {})
         self.time_stats_labels: dict[str, QLabel] = {}
         self._icon_provider = QFileIconProvider()
         self._icon_cache: dict[str, QIcon | None] = {}
@@ -319,60 +321,45 @@ class TodayOverviewPage(QWidget):
         return card
 
     def refresh(self) -> None:
-        today = datetime.now().strftime("%Y-%m-%d")
-        stats = database.query_date_stats(self.db_path, today)
-        totals = stats.get("totals", {})
-        effective = totals.get("effective_seconds", 0) or 0
-        idle_seconds = totals.get("idle_seconds", 0) or 0
-        total_seconds = effective + idle_seconds
+        snapshot = load_today_snapshot(self.db_path, self._resolve_display)
+        self.last_stats_date = str(snapshot["today"])
+        self.last_stats = dict(snapshot["stats"])
+        totals = snapshot["totals"]
+        effective = int(totals["effective_seconds"])
+        idle_seconds = int(totals["idle_seconds"])
+        total_seconds = int(totals["total_seconds"])
+        active_ratio = int(totals["active_ratio"])
 
-        work_seconds, social_seconds, entertainment_seconds, tools_seconds = self._category_stats(stats)
-        other_seconds = max(effective - work_seconds - social_seconds - entertainment_seconds, 0)
-        # Donut chart: active time only — idle shown separately below
         distribution = [
-            ("💻 办公", work_seconds, ui_style.COLORS["coding_green"]),
-            ("🎬 视频娱乐", entertainment_seconds, ui_style.COLORS["video_orange"]),
-            ("💬 社交通讯", social_seconds, ui_style.COLORS["social_purple"]),
+            (str(item["label"]), int(item["seconds"]), self._distribution_color(str(item["category_key"])))
+            for item in snapshot["distribution_sections"]
         ]
-        if other_seconds > 0:
-            distribution.append(("📦 其他", other_seconds, ui_style.COLORS["ai_blue"]))
-
         self.donut_widget.set_data(effective, distribution)
         self.legend_widget.set_items(distribution, effective)
 
-        active_ratio = int(round((effective / total_seconds) * 100)) if total_seconds else 0
-        idle_text = _compact_duration(idle_seconds)
         self.active_status_label.setText(f"活跃占比 {active_ratio}%")
-        self.idle_status_label.setText(f"挂机 {idle_text}")
+        self.idle_status_label.setText(f"挂机 {_compact_duration(idle_seconds)}")
         self.time_stats_labels["total"].setText(_compact_duration(total_seconds))
         self.time_stats_labels["active"].setText(_compact_duration(effective))
         self.time_stats_labels["idle"].setText(_compact_duration(idle_seconds))
         self.time_stats_labels["ratio"].setText(f"{active_ratio}%")
         self.time_stats_ratio_ring.set_ratio(active_ratio)
 
-        # Day-over-day category comparison
-        yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-        yesterday_stats = database.query_date_stats(self.db_path, yesterday_str)
-        yesterday_work, yesterday_social, yesterday_ent, _ = self._category_stats(yesterday_stats)
-
-        for key, today_val, yesterday_val in [
-            ("work", work_seconds, yesterday_work),
-            ("entertainment", entertainment_seconds, yesterday_ent),
-            ("social", social_seconds, yesterday_social),
-        ]:
-            delta = today_val - yesterday_val
+        for key, item in snapshot["day_comparison"].items():
             label = self._day_cmp_labels[key]
-            if today_val == 0 and yesterday_val == 0:
+            direction = str(item["direction"])
+            delta = int(item["delta_seconds"])
+            if direction == "empty":
                 label.setText("--")
                 label.setStyleSheet(
                     f"font-size: 15px; color: {ui_style.COLORS['text_muted']};"
                 )
-            elif abs(delta) < 60:
+            elif direction == "flat":
                 label.setText("→ 持平")
                 label.setStyleSheet(
                     f"font-size: 15px; color: {ui_style.COLORS['text_muted']}; font-weight: 700;"
                 )
-            elif delta > 0:
+            elif direction == "up":
                 label.setText(f"↑ +{_compact_duration(delta)}")
                 label.setStyleSheet(
                     f"font-size: 15px; color: {ui_style.COLORS['success_green']}; font-weight: 700;"
@@ -383,43 +370,33 @@ class TodayOverviewPage(QWidget):
                     f"font-size: 15px; color: {ui_style.COLORS['danger_red']}; font-weight: 700;"
                 )
 
-
-        sessions = query_today_sessions(self.db_path, today)
+        sessions = snapshot["sessions"]
         self.timeline_widget.set_sessions(sessions, self.display_name_mapping)
         self.focus_axis.set_minutes(self._build_focus_axis(sessions))
-        self.trend_card.set_data(*self._build_trend_data(sessions))  # today, yesterday, 7d, 30d
-        self._update_focus_summary(today)
-        self._update_top_apps(stats)
-
-    def _update_focus_summary(self, today: str) -> None:
-        blocks = timeline.identify_focus_blocks(timeline.build_timeline(self.db_path, today))
-        if blocks:
-            best = max(blocks, key=lambda block: block.duration_minutes)
-            self.focus_hint.setText(
-                f"最长专注：{best.start_slot}-{best.end_slot}，{best.duration_minutes}分钟，{best.main_category}"
-            )
-        else:
-            self.focus_hint.setText("今日暂未识别到连续专注时段。")
-
-        consecutive_days = count_consecutive_days(self.db_path)
+        trend = snapshot["trend"]
+        self.trend_card.set_data(trend["today"], trend["yesterday"], trend["seven_days"], trend["thirty_days"])
+        self.focus_hint.setText(str(snapshot["focus_summary"]))
+        consecutive_days = int(snapshot["consecutive_days"])
         self.consecutive_label.setText(f"第 {consecutive_days} 天" if consecutive_days > 0 else "")
+        self._update_top_apps(snapshot["top_app_rows"])
 
-    def _update_top_apps(self, stats: dict) -> None:
-        merged: dict[str, dict[str, object]] = {}
-        for item in stats.get("by_app", []):
-            process_name = item.get("process_name") or "Unknown"
-            display_name = self._resolve_display(process_name, stats.get("by_app_detail", []))
-            seconds = item.get("effective_seconds", 0) or 0
-            if display_name not in merged:
-                merged[display_name] = {"process": process_name, "seconds": 0}
-            merged[display_name]["seconds"] = int(merged[display_name]["seconds"]) + seconds
-
+    def _update_top_apps(self, rows_data: list[dict[str, object]]) -> None:
         rows = []
-        for display_name, info in sorted(merged.items(), key=lambda item: -int(item[1]["seconds"]))[:5]:
-            process_name = str(info["process"])
+        for item in rows_data:
+            process_name = str(item["process_name"])
+            display_name = str(item["display_name"])
+            seconds = int(item["seconds"])
             icon_process = self._icon_process_for_display(process_name, display_name)
-            rows.append((process_name, display_name, int(info["seconds"]), self._app_icon(icon_process)))
+            rows.append((process_name, display_name, seconds, self._app_icon(icon_process)))
         self.top_app_card.set_items(rows)
+
+    def _distribution_color(self, category_key: str) -> str:
+        return {
+            "work": ui_style.COLORS["coding_green"],
+            "video": ui_style.COLORS["video_orange"],
+            "social": ui_style.COLORS["social_purple"],
+            "other": ui_style.COLORS["ai_blue"],
+        }.get(category_key, ui_style.COLORS["ai_blue"])
 
     @staticmethod
     def _icon_process_for_display(process_name: str, display_name: str) -> str:
@@ -532,51 +509,6 @@ class TodayOverviewPage(QWidget):
                 colors[minute] = color
         return colors
 
-    def _build_trend_data(self, sessions: list[dict]) -> tuple[list[int], list[int], list[int], list[int]]:
-        today_series = self._build_hourly_series(sessions)
-
-        yesterday_str = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
-        yesterday_sessions = database.query_today_sessions(self.db_path, yesterday_str)
-        yesterday_series = self._build_hourly_series(yesterday_sessions)
-
-        # ── 7d / 30d: daily aggregation from DB
-        today_date = date.today()
-        seven_days = [(today_date - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(6, -1, -1)]
-        thirty_days = [(today_date - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(29, -1, -1)]
-        seven_day_stats = database.query_date_range_stats(self.db_path, seven_days)
-        thirty_day_stats = database.query_date_range_stats(self.db_path, thirty_days)
-        seven_day_series = [
-            round((item.get("effective_seconds", 0) or 0) / 3600.0, 1)
-            for item in seven_day_stats.get("daily", [])
-        ]
-        thirty_day_series = [
-            round((item.get("effective_seconds", 0) or 0) / 3600.0, 1)
-            for item in thirty_day_stats.get("daily", [])
-        ]
-        return today_series, yesterday_series, seven_day_series, thirty_day_series
-
-    def _build_hourly_series(self, sessions: list[dict]) -> list[int]:
-        hour_minutes = [0.0] * 24
-        for session in sessions:
-            start_dt = self._parse_dt(session.get("start_time", ""))
-            end_dt = self._parse_dt(session.get("end_time", ""))
-            eff_sec = float(session.get("effective_seconds", 0) or 0)
-            if eff_sec <= 0 or start_dt is None or end_dt is None:
-                continue
-            total_span = (end_dt - start_dt).total_seconds()
-            if total_span <= 0:
-                hour_minutes[start_dt.hour] += eff_sec / 60.0
-                continue
-            curr = start_dt
-            while curr < end_dt:
-                hour = curr.hour
-                next_hour = curr.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-                seg_end = min(end_dt, next_hour)
-                seg_span = (seg_end - curr).total_seconds()
-                hour_minutes[hour] += (eff_sec / 60.0) * (seg_span / total_span)
-                curr = seg_end
-        return [int(round(v)) for v in hour_minutes]
-
     def _to_minute(self, timestamp: str) -> int:
         try:
             dt = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
@@ -589,25 +521,6 @@ class TodayOverviewPage(QWidget):
             return datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
         except Exception:
             return None
-
-    def _category_stats(self, stats: dict) -> tuple[int, int, int, int]:
-        work_keys = {"ai_tools", "coding", "reading", "creative"}
-        work_seconds = 0
-        social_seconds = 0
-        entertainment_seconds = 0
-        tools_seconds = 0
-        for item in stats.get("by_category", []):
-            seconds = item.get("effective_seconds", 0) or 0
-            category_key = item.get("category_key")
-            if category_key in work_keys:
-                work_seconds += seconds
-            elif category_key == "social":
-                social_seconds += seconds
-            elif category_key == "video":
-                entertainment_seconds += seconds
-            elif category_key == "tools":
-                tools_seconds += seconds
-        return work_seconds, social_seconds, entertainment_seconds, tools_seconds
 
     def _color_for_category(self, category_key: str) -> str:
         if category_key in {"ai_tools", "coding", "reading", "creative"}:
@@ -650,55 +563,6 @@ class TodayOverviewPage(QWidget):
         if mapped_name and mapped_name != process_name:
             return mapped_name
         return mapped_name or process_name
-
-    def _load_metric_history(self, days: int) -> list[dict]:
-        today_date = datetime.now().date()
-        result = []
-        for offset in range(days - 1, -1, -1):
-            day = today_date - timedelta(days=offset)
-            stats = database.query_date_stats(self.db_path, day.strftime("%Y-%m-%d"))
-            totals = stats.get("totals", {})
-            effective = totals.get("effective_seconds", 0) or 0
-            idle_seconds = totals.get("idle_seconds", 0) or 0
-            work_seconds, social_seconds, entertainment_seconds, tools_seconds = self._category_stats(stats)
-            result.append(
-                {
-                    "total": effective + idle_seconds,
-                    "work": work_seconds,
-                    "ent": entertainment_seconds,
-                    "social": social_seconds,
-                    "tools": tools_seconds,
-                }
-            )
-        return result
-
-    def _update_metrics(
-        self,
-        total_seconds: int,
-        work_seconds: int,
-        entertainment_seconds: int,
-        social_seconds: int,
-        tools_seconds: int,
-        history: list[dict],
-    ) -> None:
-        values = {
-            "total": total_seconds,
-            "work": work_seconds,
-            "ent": entertainment_seconds,
-            "social": social_seconds,
-            "tools": tools_seconds,
-        }
-        for key, current in values.items():
-            yesterday = history[-2].get(key, 0) if len(history) >= 2 else 0
-            diff = current - yesterday
-            if diff == 0:
-                delta_text = "较昨日 持平"
-            else:
-                direction = "↑" if diff > 0 else "↓"
-                delta_text = f"较昨日 {direction} {_compact_duration(abs(diff))}"
-            self.metric_cards[key].set_value(_compact_duration(current), delta_text)
-            self.metric_cards[key].set_sparkline([item[key] for item in history])
-        self.metric_cards["ent"].set_warning(entertainment_seconds > 5400)
 
 
 def _compact_duration(total_seconds: int) -> str:

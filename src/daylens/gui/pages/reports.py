@@ -1,8 +1,6 @@
 """Reports page - list generated reports, generate new ones, sync to Obsidian."""
 
 import os
-import glob
-from datetime import datetime, date
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget,
@@ -10,7 +8,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QTimer
 
-from ... import exporter
+from ...services import reports_service
 from .. import style as ui_style
 
 
@@ -133,24 +131,18 @@ class ReportsPage(QWidget):
             (self.tab_weekly, "weekly"),
             (self.tab_monthly, "monthly"),
         ]:
-            d = os.path.join(self.reports_dir, subdir)
-            files = sorted(glob.glob(os.path.join(d, "*.md")), reverse=True)[:50]
-            tab.setRowCount(len(files))
-            for i, f in enumerate(files):
-                fname = os.path.basename(f)
-                label = fname.replace(".md", "").replace("_weekly", "").replace("_monthly", "")
+            rows = reports_service.list_report_rows(self.reports_dir, subdir, limit=50)
+            tab.setRowCount(len(rows))
+            for i, (label, filename, size_text) in enumerate(rows):
                 tab.setItem(i, 0, QTableWidgetItem(label))
-                tab.setItem(i, 1, QTableWidgetItem(fname))
-                size_kb = os.path.getsize(f) // 1024 if os.path.exists(f) else 0
-                tab.setItem(i, 2, QTableWidgetItem(f"{size_kb} KB"))
+                tab.setItem(i, 1, QTableWidgetItem(filename))
+                tab.setItem(i, 2, QTableWidgetItem(size_text))
 
     # ── Generation actions ──
 
     def _generate_daily(self):
-        today = datetime.now().strftime("%Y-%m-%d")
-        daily_dir = os.path.join(self.reports_dir, "daily")
         try:
-            path = exporter.export_markdown(self.db_path, today, daily_dir)
+            path = reports_service.generate_daily_report(self.db_path, self.reports_dir)
             self._sync_one(path)
             QMessageBox.information(self, "生成成功", f"日报已保存\n{path}")
             self.refresh()
@@ -158,11 +150,8 @@ class ReportsPage(QWidget):
             QMessageBox.warning(self, "生成失败", str(e))
 
     def _generate_weekly(self):
-        today = date.today()
-        iso_year, iso_week, _ = today.isocalendar()
-        weekly_dir = os.path.join(self.reports_dir, "weekly")
         try:
-            path = exporter.export_weekly_report(self.db_path, iso_year, iso_week, weekly_dir)
+            path = reports_service.generate_weekly_report(self.db_path, self.reports_dir)
             self._sync_one(path)
             QMessageBox.information(self, "生成成功", f"周报已保存\n{path}")
             self.refresh()
@@ -170,10 +159,8 @@ class ReportsPage(QWidget):
             QMessageBox.warning(self, "生成失败", str(e))
 
     def _generate_monthly(self):
-        today = date.today()
-        monthly_dir = os.path.join(self.reports_dir, "monthly")
         try:
-            path = exporter.export_monthly_report(self.db_path, today.year, today.month, monthly_dir)
+            path = reports_service.generate_monthly_report(self.db_path, self.reports_dir)
             self._sync_one(path)
             QMessageBox.information(self, "生成成功", f"月报已保存\n{path}")
             self.refresh()
@@ -186,9 +173,7 @@ class ReportsPage(QWidget):
         if not self.obsidian_path:
             QMessageBox.warning(self, "未配置", "请在设置页配置 Obsidian 输出路径。")
             return
-        today = datetime.now().strftime("%Y-%m-%d")
-        daily_dir = os.path.join(self.reports_dir, "daily")
-        md_file = os.path.join(daily_dir, f"{today}.md")
+        md_file = reports_service.today_report_path(self.reports_dir)
         if not os.path.exists(md_file):
             QMessageBox.warning(self, "无日报", "请先生成今日日报。")
             return
@@ -196,4 +181,4 @@ class ReportsPage(QWidget):
 
     def _sync_one(self, filepath):
         if self.obsidian_path and os.path.exists(filepath):
-            exporter.sync_to_obsidian(filepath, self.obsidian_path)
+            reports_service.sync_report_to_obsidian(filepath, self.obsidian_path)

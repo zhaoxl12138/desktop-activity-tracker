@@ -25,8 +25,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import database
 from ..utils import fmt_seconds
+from ..services.shell_service import generate_daily_report, load_poetry_hint, load_shell_summary
 from .pages.category_stats import CategoryStatsPage
 from .pages.live_monitor import LiveMonitorPage
 from .pages.reports import ReportsPage
@@ -72,7 +72,7 @@ DISPLAY_NAME_MAPPING = {
 
 
 class MainWindow(QMainWindow):
-    FIXED_SIZE = QSize(1600, 960)
+    FIXED_SIZE = QSize(1600, 900)
 
     def __init__(self, app_root, config, db_path, config_path, reports_dir, worker):
         super().__init__()
@@ -331,7 +331,7 @@ class MainWindow(QMainWindow):
             [
                 ("⚡", "今日活跃", "total"),
                 ("💼", "办公", "work"),
-                ("🎬", "视频娱乐", "ent"),
+                ("▶", "视频娱乐", "ent"),
                 ("💬", "社交通讯", "social"),
             ]
         ):
@@ -522,29 +522,12 @@ class MainWindow(QMainWindow):
         if today_page is not None and today_page.last_stats_date == today:
             stats = today_page.last_stats
         else:
-            stats = database.query_date_stats(self.db_path, today)
-        totals = stats.get("totals", {})
-        effective = totals.get("effective_seconds", 0) or 0
-        work_keys = {"ai_tools", "coding", "reading", "creative"}
-        work_seconds = sum(
-            item.get("effective_seconds", 0) or 0
-            for item in stats.get("by_category", [])
-            if item.get("category_key") in work_keys
-        )
-        video_seconds = sum(
-            item.get("effective_seconds", 0) or 0
-            for item in stats.get("by_category", [])
-            if item.get("category_key") == "video"
-        )
-        social_seconds = sum(
-            item.get("effective_seconds", 0) or 0
-            for item in stats.get("by_category", [])
-            if item.get("category_key") == "social"
-        )
-        self.capsule_values["total"].setText(fmt_seconds(effective))
-        self.capsule_values["work"].setText(fmt_seconds(work_seconds))
-        self.capsule_values["ent"].setText(fmt_seconds(video_seconds))
-        self.capsule_values["social"].setText(fmt_seconds(social_seconds))
+            stats = None
+        summary = load_shell_summary(self.db_path, stats)
+        self.capsule_values["total"].setText(fmt_seconds(summary["effective_seconds"]))
+        self.capsule_values["work"].setText(fmt_seconds(summary["work_seconds"]))
+        self.capsule_values["ent"].setText(fmt_seconds(summary["entertainment_seconds"]))
+        self.capsule_values["social"].setText(fmt_seconds(summary["social_seconds"]))
         if self._current_nav_key == "today":
             self._set_random_poetry(force=False)
 
@@ -560,34 +543,19 @@ class MainWindow(QMainWindow):
             if now - self._last_poetry_refresh < self._poetry_interval:
                 return
             self._last_poetry_refresh = now
-        try:
-            row = database.get_random_poetry(self.db_path)
-            if row:
-                self.lbl_page_hint.setText(f"「{row['content']}」—— {row['author']}")
-                return
-        except Exception:
-            pass
-        # Fallback: find the original hint from NAV_ITEMS
         for _title, nav_key, hint in NAV_ITEMS:
             if nav_key == self._current_nav_key:
-                self.lbl_page_hint.setText(hint)
+                self.lbl_page_hint.setText(load_poetry_hint(self.db_path, hint))
                 return
         self.lbl_page_hint.setText("聚焦今天的使用结构、效率与提醒")
 
     def _quick_report(self) -> None:
-        from .. import exporter
-
-        today = datetime.now().strftime("%Y-%m-%d")
         daily_dir = os.path.join(self.reports_dir, "daily")
-        os.makedirs(daily_dir, exist_ok=True)
         try:
-            path = exporter.export_markdown(self.db_path, today, daily_dir)
-            obsidian_path = self._live_obsidian_path()
-            if obsidian_path:
-                synced = exporter.sync_to_obsidian(path, obsidian_path)
-                if synced:
-                    QMessageBox.information(self, "生成成功", f"日报已保存到\n{path}\n\n已同步到 Obsidian:\n{synced}")
-                    return
+            path, synced = generate_daily_report(self.db_path, daily_dir, self._live_obsidian_path())
+            if synced:
+                QMessageBox.information(self, "生成成功", f"日报已保存到\n{path}\n\n已同步到 Obsidian:\n{synced}")
+                return
             QMessageBox.information(self, "生成成功", f"日报已保存到\n{path}")
         except Exception as exc:
             QMessageBox.warning(self, "生成失败", str(exc))

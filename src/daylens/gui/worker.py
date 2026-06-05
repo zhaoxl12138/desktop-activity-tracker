@@ -5,8 +5,9 @@ from datetime import datetime
 from PySide6.QtCore import QThread, Signal
 from pynput import keyboard
 
-from .. import window_detector, activity_detector, classifier, database
+from .. import window_detector, activity_detector, classifier
 from ..session_tracker import SessionTracker
+from ..services.session_runtime_service import SessionRuntimeStore
 
 try:
     from ..audio_detector import AudioDetector
@@ -35,14 +36,11 @@ class RecordingWorker(QThread):
 
     def run(self):
         clf = classifier.Classifier(self.config_path, self.db_path)
-        conn = database.init_db(self.db_path)
+        store = SessionRuntimeStore(self.db_path)
 
         def on_session_end(session):
             try:
-                if session._db_row_id > 0:
-                    database.update_session(conn, session)
-                else:
-                    session._db_row_id = database.insert_session(conn, session)
+                store.persist_session(session)
             except Exception as e:
                 import sys, traceback
                 print(f"[Worker] insert_session error: {e}", file=sys.stderr)
@@ -50,10 +48,7 @@ class RecordingWorker(QThread):
 
         def on_flush(session):
             try:
-                if session._db_row_id > 0:
-                    database.update_session(conn, session)
-                else:
-                    session._db_row_id = database.insert_session(conn, session)
+                store.persist_session(session)
             except Exception as e:
                 import sys, traceback
                 print(f"[Worker] flush error: {e}", file=sys.stderr)
@@ -122,7 +117,7 @@ class RecordingWorker(QThread):
             sess.switch_reason = "shutdown"
             on_session_end(sess)
 
-        database.close_db(conn)
+        store.close()
 
     def _sleep_check(self, ms):
         """Sleep in short chunks so stop() is responsive."""

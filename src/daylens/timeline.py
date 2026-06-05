@@ -1,10 +1,10 @@
 """30-minute timeline — aggregates activity_sessions into 48 time blocks,
 identifies focus blocks, and computes fragmentation metrics."""
 
-import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+from . import database
 from .utils import fmt_seconds
 
 
@@ -55,18 +55,7 @@ def build_timeline(db_path, date_str):
     """
     blocks = _init_blocks()
 
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute(
-        """SELECT session_id, start_time, end_time, process_name,
-                  window_title, normalized_title, category_key, category_name,
-                  duration_seconds, effective_seconds, idle_seconds
-           FROM activity_sessions
-           WHERE date = ?
-           ORDER BY start_time""",
-        (date_str,)
-    ).fetchall()
-    conn.close()
+    rows = database.query_timeline_sessions(db_path, date_str)
 
     if not rows:
         return blocks

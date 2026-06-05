@@ -1,17 +1,22 @@
 """Software stats page - per-app usage table with export."""
 
-import os
-from datetime import datetime
+from __future__ import annotations
 
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget,
-    QTableWidgetItem, QHeaderView, QPushButton, QFileDialog, QFrame
-)
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor, QBrush
+from PySide6.QtGui import QBrush, QColor
+from PySide6.QtWidgets import (
+    QFileDialog,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
-from ... import database
-from ...utils import fmt_seconds
+from ...services import software_stats_service
 from .. import style as ui_style
 from ..style import COLORS, get_category_color
 
@@ -31,7 +36,6 @@ class SoftwareStatsPage(QWidget):
         title.setStyleSheet(ui_style.get_section_title())
         layout.addWidget(title)
 
-        # Buttons row
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
 
@@ -56,7 +60,6 @@ class SoftwareStatsPage(QWidget):
         btn_layout.addWidget(self.status_label)
         layout.addLayout(btn_layout)
 
-        # Table
         self.table = QTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(["软件", "窗口标题", "分类", "有效时长", "占比"])
@@ -66,7 +69,8 @@ class SoftwareStatsPage(QWidget):
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setAlternatingRowColors(True)
-        self.table.setStyleSheet(f"""
+        self.table.setStyleSheet(
+            f"""
             QTableWidget {{
                 background: {COLORS['panel_bg']};
                 alternate-background-color: {COLORS['panel_bg_alt']};
@@ -91,7 +95,8 @@ class SoftwareStatsPage(QWidget):
                 font-weight: 700;
                 font-size: 13px;
             }}
-        """)
+            """
+        )
         layout.addWidget(self.table, 1)
 
         self.refresh()
@@ -101,44 +106,27 @@ class SoftwareStatsPage(QWidget):
         self.timer.start(30000)
 
     def refresh(self):
-        today = datetime.now().strftime("%Y-%m-%d")
         try:
-            stats = database.query_date_stats(self.db_path, today)
-            details = stats.get("by_app_detail", [])
-            total_eff = stats.get("totals", {}).get("effective_seconds", 0) or 1
-            self.table.setRowCount(len(details))
-            for i, app in enumerate(details):
-                pname = app.get("process_name", "")
-                dname = self.display_name_mapping.get(pname, pname)
-                self.table.setItem(i, 0, QTableWidgetItem(dname))
-                title = app.get("window_title", "") or "-"
-                self.table.setItem(i, 1, QTableWidgetItem(title[:60]))
-                cat_name = ""
-                cat_key = ""
-                for a in stats.get("by_app", []):
-                    if a["process_name"] == pname:
-                        cat_name = a.get("category_name", "")
-                        cat_key = a.get("category_key", "")
-                        break
-                cat_item = QTableWidgetItem(f"● {cat_name}")
-                cat_color = get_category_color(cat_key)
-                cat_item.setForeground(QBrush(QColor(cat_color)))
-                self.table.setItem(i, 2, cat_item)
-                secs = app.get("effective_seconds", 0) or 0
-                self.table.setItem(i, 3, QTableWidgetItem(fmt_seconds(secs)))
-                pct = f"{round(secs / total_eff * 100)}%" if total_eff > 0 else "0%"
-                self.table.setItem(i, 4, QTableWidgetItem(pct))
-        except Exception as e:
-            import sys, traceback
-            print(f"[SoftwareStats] refresh error: {e}", file=sys.stderr)
+            rows = software_stats_service.load_software_rows(self.db_path, self.display_name_mapping)
+            self.table.setRowCount(len(rows))
+            for index, row in enumerate(rows):
+                self.table.setItem(index, 0, QTableWidgetItem(str(row["software"])))
+                self.table.setItem(index, 1, QTableWidgetItem(str(row["title"])))
+                cat_item = QTableWidgetItem(f"● {row['category_name']}")
+                cat_item.setForeground(QBrush(QColor(get_category_color(str(row["category_key"])))))
+                self.table.setItem(index, 2, cat_item)
+                self.table.setItem(index, 3, QTableWidgetItem(str(row["duration"])))
+                self.table.setItem(index, 4, QTableWidgetItem(str(row["percent"])))
+        except Exception as exc:
+            import sys
+            import traceback
+
+            print(f"[SoftwareStats] refresh error: {exc}", file=sys.stderr)
             traceback.print_exc()
 
     def _export_csv(self):
-        from ... import exporter
-        today = datetime.now().strftime("%Y-%m-%d")
-        default_name = f"usage_{today}.csv"
         path, _ = QFileDialog.getSaveFileName(
-            self, "导出 CSV", default_name, "CSV 文件 (*.csv);;所有文件 (*)"
+            self, "导出 CSV", "usage_today.csv", "CSV 文件 (*.csv);;所有文件 (*)"
         )
         if not path:
             self.status_label.setStyleSheet(
@@ -147,24 +135,20 @@ class SoftwareStatsPage(QWidget):
             self.status_label.setText("已取消导出")
             return
         try:
-            exporter.export_csv(self.db_path, today, os.path.dirname(path))
+            filename = software_stats_service.export_software_csv(self.db_path, path)
             self.status_label.setStyleSheet(
                 f"font-size: 12px; color: {COLORS['coding_green']}; font-weight: 600;"
             )
-            self.status_label.setText(f"CSV 已保存 → {os.path.basename(path)}")
-        except Exception as e:
+            self.status_label.setText(f"CSV 已保存 → {filename}")
+        except Exception as exc:
             self.status_label.setStyleSheet(
                 f"font-size: 12px; color: {COLORS['danger_red']}; font-weight: 600;"
             )
-            self.status_label.setText(f"导出失败: {e}")
+            self.status_label.setText(f"导出失败: {exc}")
 
     def _export_md(self):
-        from ... import exporter
-        today = datetime.now().strftime("%Y-%m-%d")
-        default_name = f"{today}.md"
         path, _ = QFileDialog.getSaveFileName(
-            self, "导出 Markdown 日报", default_name,
-            "Markdown 文件 (*.md);;所有文件 (*)"
+            self, "导出 Markdown 日报", "today.md", "Markdown 文件 (*.md);;所有文件 (*)"
         )
         if not path:
             self.status_label.setStyleSheet(
@@ -173,13 +157,14 @@ class SoftwareStatsPage(QWidget):
             self.status_label.setText("已取消导出")
             return
         try:
-            exporter.export_markdown(self.db_path, today, os.path.dirname(path))
+            filename = software_stats_service.export_software_markdown(self.db_path, path)
             self.status_label.setStyleSheet(
                 f"font-size: 12px; color: {COLORS['coding_green']}; font-weight: 600;"
             )
-            self.status_label.setText(f"日报已保存 → {os.path.basename(path)}")
-        except Exception as e:
+            self.status_label.setText(f"日报已保存 → {filename}")
+        except Exception as exc:
             self.status_label.setStyleSheet(
                 f"font-size: 12px; color: {COLORS['danger_red']}; font-weight: 600;"
             )
-            self.status_label.setText(f"导出失败: {e}")
+            self.status_label.setText(f"导出失败: {exc}")
+

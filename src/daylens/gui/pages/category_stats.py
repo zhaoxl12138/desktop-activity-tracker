@@ -1,23 +1,28 @@
-"""Category stats page — progress bar + expandable top 5 apps per category."""
+"""Category stats page - progress bar + expandable top 5 apps per category."""
 
-from datetime import datetime
+from __future__ import annotations
 
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QProgressBar,
-    QScrollArea, QTableWidget, QTableWidgetItem, QHeaderView, QSizePolicy
-)
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QFont
+from PySide6.QtWidgets import (
+    QFrame,
+    QHeaderView,
+    QLabel,
+    QProgressBar,
+    QScrollArea,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
-from ... import database
+from ...services import category_stats_service
 from ...utils import fmt_seconds
-from ..style import COLORS, CATEGORY_COLOR_MAP, get_category_color
+from ..style import CATEGORY_COLOR_MAP, COLORS
 
 
 class _CategoryCard(QFrame):
-    """Clickable category card with expandable detail panel."""
-
-    clicked = Signal(str)  # emits category_key
+    clicked = Signal(str)
 
     def __init__(self, cat_key, cat_name, secs, total_eff, color):
         super().__init__()
@@ -31,21 +36,47 @@ class _CategoryCard(QFrame):
             f"_CategoryCard:hover {{ border-color: {color}; }}"
         )
 
-        # Main row
-        self._main_layout = QHBoxLayout(self)
-        self._main_layout.setContentsMargins(16, 10, 16, 10)
-        self._main_layout.setSpacing(12)
+        self._main_layout = QVBoxLayout(self)
+        self._main_layout.setContentsMargins(0, 0, 0, 0)
+        self._main_layout.setSpacing(0)
+
+        row = QWidget()
+        row_layout = QVBoxLayout(row)
+        row_layout.setContentsMargins(16, 10, 16, 10)
+        row_layout.setSpacing(0)
+
+        top_row = QWidget()
+        top_layout = QVBoxLayout(top_row)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(0)
+
+        header = QWidget()
+        header_layout = QVBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(0)
+
+        line = QFrame()
+        line_layout = QVBoxLayout(line)
+        line_layout.setContentsMargins(0, 0, 0, 0)
+        line_layout.setSpacing(0)
+
+        info = QWidget()
+        from PySide6.QtWidgets import QHBoxLayout
+
+        info_layout = QHBoxLayout(info)
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        info_layout.setSpacing(12)
 
         dot = QLabel()
         dot.setFixedSize(10, 10)
         dot.setStyleSheet(f"background: {color}; border-radius: 5px;")
-        self._main_layout.addWidget(dot)
+        info_layout.addWidget(dot)
 
         self._name_lbl = QLabel(cat_name)
         self._name_lbl.setFont(QFont("Microsoft YaHei", 10, QFont.Bold))
         self._name_lbl.setStyleSheet(f"color: {COLORS['text']};")
         self._name_lbl.setFixedWidth(90)
-        self._main_layout.addWidget(self._name_lbl)
+        info_layout.addWidget(self._name_lbl)
 
         pct = int(secs / total_eff * 100) if total_eff > 0 else 0
         self._bar = QProgressBar()
@@ -53,38 +84,44 @@ class _CategoryCard(QFrame):
         self._bar.setValue(pct)
         self._bar.setTextVisible(False)
         self._bar.setFixedHeight(16)
-        self._bar.setStyleSheet(f"""
+        self._bar.setStyleSheet(
+            f"""
             QProgressBar {{ background: {COLORS['panel_bg']}; border: none; border-radius: 8px; }}
             QProgressBar::chunk {{ background: {color}; border-radius: 8px; }}
-        """)
-        self._main_layout.addWidget(self._bar, 1)
+            """
+        )
+        info_layout.addWidget(self._bar, 1)
 
         self._time_lbl = QLabel(fmt_seconds(secs))
         self._time_lbl.setStyleSheet(f"font-size: 13px; color: {COLORS['text']}; font-weight: 600;")
         self._time_lbl.setFixedWidth(80)
         self._time_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self._main_layout.addWidget(self._time_lbl)
+        info_layout.addWidget(self._time_lbl)
 
         self._pct_lbl = QLabel(f"{pct}%")
         self._pct_lbl.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
         self._pct_lbl.setFixedWidth(36)
         self._pct_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self._main_layout.addWidget(self._pct_lbl)
+        info_layout.addWidget(self._pct_lbl)
 
-        # Expand arrow indicator
         self._arrow = QLabel("▶")
         self._arrow.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
         self._arrow.setFixedWidth(16)
         self._arrow.setAlignment(Qt.AlignCenter)
-        self._main_layout.addWidget(self._arrow)
+        info_layout.addWidget(self._arrow)
 
-        # Detail panel (hidden by default)
+        line_layout.addWidget(info)
+        header_layout.addWidget(line)
+        top_layout.addWidget(header)
+        row_layout.addWidget(top_row)
+        self._main_layout.addWidget(row)
+
         self._detail = QFrame()
         self._detail.setStyleSheet(
-            f"background: {COLORS['panel_bg_alt']}; border-top: 1px solid {COLORS['border']};"
-            f"border-radius: 0 0 12px 12px;"
+            f"background: {COLORS['panel_bg_alt']}; border-top: 1px solid {COLORS['border']}; border-radius: 0 0 12px 12px;"
         )
         self._detail.hide()
+        self._main_layout.addWidget(self._detail)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -92,7 +129,6 @@ class _CategoryCard(QFrame):
         super().mousePressEvent(event)
 
     def update_values(self, secs, total_eff):
-        """Update progress bar and labels in-place without recreating widgets."""
         pct = int(secs / total_eff * 100) if total_eff > 0 else 0
         self._bar.setValue(pct)
         self._time_lbl.setText(fmt_seconds(secs))
@@ -106,18 +142,15 @@ class _CategoryCard(QFrame):
         self._detail.setVisible(expanded)
 
     def _build_detail(self, rows):
-        """Create the detail table from query_category_detail results."""
-        # Clear existing content but keep the same frame (avoid floating window bug)
-        old_layout = self._detail.layout()
-        if old_layout is None:
-            old_layout = QVBoxLayout(self._detail)
-        while old_layout.count():
-            item = old_layout.takeAt(0)
+        layout = self._detail.layout()
+        if layout is None:
+            layout = QVBoxLayout(self._detail)
+        while layout.count():
+            item = layout.takeAt(0)
             if item.widget():
                 item.widget().hide()
                 item.widget().deleteLater()
 
-        layout = old_layout
         layout.setContentsMargins(40, 8, 16, 8)
         layout.setSpacing(4)
 
@@ -140,15 +173,13 @@ class _CategoryCard(QFrame):
         table.setRowCount(len(rows))
         table.setFixedHeight(30 * len(rows) + 28)
 
-        for i, r in enumerate(rows):
-            pname = r.get("process_name", "")
-            table.setItem(i, 0, QTableWidgetItem(pname))
-            title = r.get("window_title", "") or "-"
-            table.setItem(i, 1, QTableWidgetItem(title[:60]))
-            secs = r.get("effective_seconds", 0) or 0
-            table.setItem(i, 2, QTableWidgetItem(fmt_seconds(secs)))
+        for index, row in enumerate(rows):
+            table.setItem(index, 0, QTableWidgetItem(row.get("process_name", "")))
+            table.setItem(index, 1, QTableWidgetItem((row.get("window_title", "") or "-")[:60]))
+            table.setItem(index, 2, QTableWidgetItem(fmt_seconds(row.get("effective_seconds", 0) or 0)))
 
-        table.setStyleSheet(f"""
+        table.setStyleSheet(
+            f"""
             QTableWidget {{
                 background: transparent;
                 color: {COLORS['text']};
@@ -166,7 +197,8 @@ class _CategoryCard(QFrame):
                 font-weight: 700;
                 font-size: 11px;
             }}
-        """)
+            """
+        )
         layout.addWidget(table)
 
 
@@ -174,8 +206,9 @@ class CategoryStatsPage(QWidget):
     def __init__(self, db_path):
         super().__init__()
         self.db_path = db_path
-        self._cards = {}          # cat_key -> _CategoryCard
+        self._cards = {}
         self._expanded_key = None
+        self._current_date = ""
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 24)
@@ -183,9 +216,8 @@ class CategoryStatsPage(QWidget):
 
         self.error_lbl = QLabel()
         self.error_lbl.setStyleSheet(
-            f"color: {COLORS['danger_red']}; font-size: 12px;"
-            f"background: {COLORS['error_bg']}; border: 1px solid {COLORS['danger_red']};"
-            f"border-radius: 6px; padding: 10px;"
+            f"color: {COLORS['danger_red']}; font-size: 12px; background: {COLORS['error_bg']}; "
+            f"border: 1px solid {COLORS['danger_red']}; border-radius: 6px; padding: 10px;"
         )
         self.error_lbl.hide()
         layout.addWidget(self.error_lbl)
@@ -204,9 +236,7 @@ class CategoryStatsPage(QWidget):
         layout.addWidget(scroll, 1)
 
         self.total_label = QLabel()
-        self.total_label.setStyleSheet(
-            f"font-size: 13px; color: {COLORS['text_secondary']}; padding: 4px 0;"
-        )
+        self.total_label.setStyleSheet(f"font-size: 13px; color: {COLORS['text_secondary']}; padding: 4px 0;")
         layout.addWidget(self.total_label)
 
         self.timer = QTimer(self)
@@ -216,16 +246,12 @@ class CategoryStatsPage(QWidget):
 
     def refresh(self):
         self.error_lbl.hide()
-
-        today = datetime.now().strftime("%Y-%m-%d")
         try:
-            stats = database.query_date_stats(self.db_path, today)
-            categories = stats.get("by_category", [])
-
-            total_eff = sum(c.get("effective_seconds", 0) or 0 for c in categories)
-            self.total_label.setText(
-                f"今日有效总计：{fmt_seconds(total_eff)}  |  {len(categories)} 个分类"
-            )
+            summary = category_stats_service.load_category_summary(self.db_path)
+            self._current_date = str(summary["today"])
+            categories = list(summary["categories"])
+            total_eff = int(summary["total_effective_seconds"])
+            self.total_label.setText(str(summary["total_label"]))
 
             if not categories:
                 self._clear_all_cards()
@@ -236,40 +262,29 @@ class CategoryStatsPage(QWidget):
                 self.cards_container.addStretch()
                 return
 
-            new_keys = {cat.get("category_key", "other") for cat in categories}
+            new_keys = {category.get("category_key", "other") for category in categories}
             existing_keys = set(self._cards.keys())
-
-            # Remove cards that no longer exist
             for key in existing_keys - new_keys:
                 card = self._cards.pop(key, None)
                 if card:
                     card.deleteLater()
 
-            # Update existing or create new cards
-            for cat in reversed(categories):
-                key = cat.get("category_key", "other")
-                name = cat.get("category_name", "其他")
-                secs = cat.get("effective_seconds", 0) or 0
-
+            for category in reversed(categories):
+                key = category.get("category_key", "other")
+                name = category.get("category_name", "其他")
+                secs = category.get("effective_seconds", 0) or 0
                 if key in self._cards:
                     self._cards[key].update_values(secs, total_eff)
                 else:
-                    color = CATEGORY_COLOR_MAP.get(key, COLORS['idle_gray'])
+                    color = CATEGORY_COLOR_MAP.get(key, COLORS["idle_gray"])
                     card = _CategoryCard(key, name, secs, total_eff, color)
                     card.clicked.connect(self._on_card_clicked)
                     self._cards[key] = card
-
-                    wrapper = QWidget()
-                    wrapper.setStyleSheet("background: transparent;")
-                    wl = QVBoxLayout(wrapper)
-                    wl.setContentsMargins(0, 0, 0, 0)
-                    wl.setSpacing(0)
-                    wl.addWidget(card)
-                    wl.addWidget(card._detail)
-                    self.cards_container.insertWidget(0, wrapper)
-        except Exception as e:
+                    self.cards_container.insertWidget(0, card)
+        except Exception as exc:
             import traceback
-            self.error_lbl.setText(f"加载失败: {e}\n{traceback.format_exc()}")
+
+            self.error_lbl.setText(f"加载失败: {exc}\n{traceback.format_exc()}")
             self.error_lbl.show()
 
     def _clear_all_cards(self):
@@ -294,9 +309,8 @@ class CategoryStatsPage(QWidget):
         card = self._cards.get(cat_key)
         if not card:
             return
-        today = datetime.now().strftime("%Y-%m-%d")
         try:
-            detail = database.query_category_detail(self.db_path, today, cat_key, 5)
+            detail = category_stats_service.load_category_detail(self.db_path, self._current_date, cat_key, 5)
         except Exception:
             detail = []
         card.set_expanded(True, detail)
@@ -305,3 +319,4 @@ class CategoryStatsPage(QWidget):
         card = self._cards.get(cat_key)
         if card:
             card.set_expanded(False)
+

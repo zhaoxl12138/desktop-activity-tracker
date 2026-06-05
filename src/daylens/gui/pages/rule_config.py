@@ -1,13 +1,12 @@
 """Rule config page - edit software classification rules, persisted to DB."""
 
-import yaml
-
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
     QLineEdit, QTextEdit, QComboBox, QPushButton, QMessageBox, QFrame, QSplitter
 )
 from PySide6.QtCore import Qt
 
+from ...services.rules_service import load_rule_categories, save_rule_categories
 from .. import style as ui_style
 from ..style import COLORS
 
@@ -47,14 +46,7 @@ class RuleConfigPage(QWidget):
         self.db_path = db_path
         self.worker = worker
 
-        # Load factory rules from config.yaml (read-only template)
-        with open(self.config_path, "r", encoding="utf-8") as f:
-            self._factory_config = yaml.safe_load(f)
-        self._factory_categories = dict(self._factory_config.get("categories", {}))
-
-        # Build working set: factory base + DB overrides
-        self.categories = dict(self._factory_categories)
-        self._load_db_overrides()
+        self.categories = load_rule_categories(self.config_path, self.db_path)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 24)
@@ -195,41 +187,10 @@ class RuleConfigPage(QWidget):
 
         self._populate_list()
 
-    def _serialize_categories_for_db(self):
-        """Convert categories to the flat dict format for DB storage."""
-        result = {}
-        for key, cat in self.categories.items():
-            match = cat.get("match", {})
-            result[key] = {
-                "display_name": cat.get("display_name", ""),
-                "active_rule": cat.get("active_rule", "interactive_required"),
-                "process_names": match.get("process_names", []),
-                "title_keywords": match.get("title_keywords", []),
-            }
-        return result
-
-    def _load_db_overrides(self):
-        """Merge custom rules from DB on top of factory categories."""
-        try:
-            from ... import database
-            custom = database.load_custom_rules(self.db_path)
-            for key, rule in custom.items():
-                self.categories[key] = {
-                    "display_name": rule["display_name"],
-                    "active_rule": rule["active_rule"],
-                    "match": {
-                        "process_names": rule["process_names"],
-                        "title_keywords": rule["title_keywords"],
-                    },
-                }
-        except Exception:
-            pass
-
     def _save_to_db(self):
         """Persist ALL current categories to DB. On load, factory + DB merge = current state."""
         try:
-            from ... import database
-            database.save_custom_rules(self.db_path, self._serialize_categories_for_db())
+            save_rule_categories(self.db_path, self.categories)
         except Exception:
             pass
 

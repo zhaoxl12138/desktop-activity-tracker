@@ -1,8 +1,6 @@
 """Settings page - general configuration and data maintenance."""
 
 import os
-import yaml
-from datetime import datetime
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QSpinBox,
@@ -10,6 +8,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
+from ...services import settings_service
 from .. import style as ui_style
 
 
@@ -199,26 +198,10 @@ class SettingsPage(QWidget):
 
     def _load_config(self):
         try:
-            with open(self.config_path, "r", encoding="utf-8") as f:
-                self.config = yaml.safe_load(f) or {}
-        except (FileNotFoundError, yaml.YAMLError) as e:
+            self.config = settings_service.load_page_config(self.config_path, self.db_path)
+        except Exception as e:
             print(f"[SettingsPage] config load error: {e}")
             self.config = {}
-
-        # Merge user_config overrides
-        from daylens.utils import load_user_config
-        user_config = load_user_config()
-        for key in ("obsidian_output_path", "theme", "db_path"):
-            if key in user_config and user_config[key]:
-                self.config[key] = user_config[key]
-
-        # Override from database (primary persistence, survives rebuilds)
-        try:
-            from ... import database
-            db_path = self.config.get("db_path", self.db_path)
-            database.merge_db_settings(self.config, db_path)
-        except Exception as e:
-            print(f"[SettingsPage] merge_db_settings error: {e}")
 
     def _save_all(self):
         sample_interval = self.spin_interval.value()
@@ -227,64 +210,35 @@ class SettingsPage(QWidget):
         # Reload config to pick up any external changes
         self._load_config()
 
-        # Write to both top-level and tracker sub-dict for compatibility
-        self.config["sample_interval_seconds"] = sample_interval
-        self.config["idle_threshold_seconds"] = idle_threshold
-        self.config["db_path"] = self.edit_db.text().strip()
-        self.config["startup_enabled"] = self.chk_startup.isChecked()
-        self.config["obsidian_output_path"] = self.edit_obsidian.text().strip()
-        self.config["theme"] = self.config.get("theme", "dark")
-        self._toggle_startup(self.config["startup_enabled"])
-
-        tracker = self.config.setdefault("tracker", {})
-        tracker["sample_interval_seconds"] = sample_interval
-        tracker["idle_threshold_seconds"] = idle_threshold
-
-        with open(self.config_path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(self.config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        startup_enabled = self.chk_startup.isChecked()
+        self._toggle_startup(startup_enabled)
+        self.config = settings_service.save_page_config(
+            config_path=self.config_path,
+            db_path=self.db_path,
+            config=self.config,
+            sample_interval=sample_interval,
+            idle_threshold=idle_threshold,
+            startup_enabled=startup_enabled,
+            new_db_path=self.edit_db.text().strip(),
+            obsidian_output_path=self.edit_obsidian.text().strip(),
+        )
 
         # Hot-reload worker (settings + classifier)
         if self.worker:
             self.worker.update_settings(self.config)
 
-        # Persist to database (primary persistence, survives rebuilds)
-        try:
-            from ... import database
-            db_path = self.config.get("db_path", self.db_path)
-            database.save_settings(db_path, self.config)
-        except Exception as e:
-            print(f"[SettingsPage] save_settings error: {e}")
-
-        # Also persist to user_config.yaml in data dir (survives rebuilds)
-        try:
-            from daylens.utils import save_user_config
-            save_user_config({
-                k: self.config[k]
-                for k in ("obsidian_output_path", "theme", "db_path")
-                if k in self.config and self.config[k]
-            })
-        except Exception as e:
-            print(f"[SettingsPage] save_user_config error: {e}")
-
         QMessageBox.information(self, "成功", "设置已保存，采样间隔和空闲阈值已实时生效。")
 
     @staticmethod
     def _get_startup_link_path() -> str:
-        startup_dir = os.path.expandvars(
-            r"%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"
-        )
-        return os.path.join(startup_dir, "DayLens.lnk")
+        return settings_service.get_startup_link_path()
 
     @staticmethod
     def _get_exe_path() -> str:
         import sys
-        # PyInstaller: sys.executable points to the bundled exe
         if getattr(sys, "frozen", False):
             return sys.executable
-        # Running from source — we can't create a working shortcut,
-        # but write the exe path we'd expect after packaging
-        from daylens import get_app_root
-        return os.path.join(get_app_root(), "DayLens.exe")
+        return settings_service.get_release_exe_path()
 
     def _toggle_startup(self, enable: bool) -> None:
         link_path = self._get_startup_link_path()
@@ -296,23 +250,13 @@ class SettingsPage(QWidget):
                 self.chk_startup.setChecked(False)
                 return
             try:
-                import win32com.client
-                shell = win32com.client.Dispatch("WScript.Shell")
-                shortcut = shell.CreateShortcut(link_path)
-                shortcut.TargetPath = exe_path
-                shortcut.WorkingDirectory = os.path.dirname(exe_path)
-                shortcut.Description = "DayLens - 个人数字行为分析系统"
-                shortcut.WindowStyle = 7  # minimized
-                shortcut.Save()
+                settings_service.toggle_startup_shortcut(True, exe_path, link_path)
             except Exception as e:
                 print(f"[SettingsPage] shortcut creation error: {e}")
                 QMessageBox.warning(self, "失败", f"创建开机启动快捷方式失败:\n{e}")
                 self.chk_startup.setChecked(False)
         else:
-            try:
-                os.remove(link_path)
-            except OSError:
-                pass
+            settings_service.toggle_startup_shortcut(False, "", link_path)
 
     def _browse_dir(self, edit):
         d = QFileDialog.getExistingDirectory(self, "选择目录")
@@ -326,12 +270,5 @@ class SettingsPage(QWidget):
         )
         if reply != QMessageBox.Yes:
             return
-        import sqlite3
-        from datetime import timedelta
-        cutoff = (datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-                  - timedelta(days=30)).strftime("%Y-%m-%d")
-        conn = sqlite3.connect(self.db_path)
-        conn.execute("DELETE FROM activity_logs WHERE date < ?", (cutoff,))
-        conn.commit()
-        conn.close()
+        cutoff = settings_service.cleanup_old_logs(self.db_path, days=30)
         QMessageBox.information(self, "完成", f"已清理 {cutoff} 之前的记录。")

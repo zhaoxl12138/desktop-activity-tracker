@@ -17,9 +17,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import database, get_app_root, get_data_dir
+from .. import get_app_root, get_data_dir
 from ..gui import style as ui_style
-from ..utils import fmt_seconds
+from ..services.shell_service import build_tray_tooltip, generate_daily_report
 
 
 class TrayManager:
@@ -169,32 +169,25 @@ class TrayManager:
 
     def _auto_generate_report(self) -> None:
         """Silent auto-generation every 5 minutes; overwrites today's report."""
-        today = datetime.now().strftime("%Y-%m-%d")
         reports_dir = os.path.join(get_data_dir(), "reports", "daily")
-        os.makedirs(reports_dir, exist_ok=True)
-        from .. import exporter as exporter
-
         try:
-            exporter.export_markdown(self.db_path, today, reports_dir)
-            obsidian_path = self.config.get("obsidian_output_path", "").strip()
-            if obsidian_path:
-                markdown_file = os.path.join(reports_dir, f"{today}.md")
-                exporter.sync_to_obsidian(markdown_file, obsidian_path)
+            generate_daily_report(
+                self.db_path,
+                reports_dir,
+                self.config.get("obsidian_output_path", "").strip(),
+            )
         except Exception as e:
             print(f"[TrayManager] auto_generate_report error: {e}", file=sys.stderr)
 
     def _generate_report(self) -> None:
         today = datetime.now().strftime("%Y-%m-%d")
         reports_dir = os.path.join(get_data_dir(), "reports", "daily")
-        os.makedirs(reports_dir, exist_ok=True)
-        from .. import exporter as exporter
-
         try:
-            exporter.export_markdown(self.db_path, today, reports_dir)
-            obsidian_path = self.config.get("obsidian_output_path", "").strip()
-            if obsidian_path:
-                markdown_file = os.path.join(reports_dir, f"{today}.md")
-                exporter.sync_to_obsidian(markdown_file, obsidian_path)
+            generate_daily_report(
+                self.db_path,
+                reports_dir,
+                self.config.get("obsidian_output_path", "").strip(),
+            )
             self.tray.showMessage("DayLens", f"日报已生成\n{today}.md")
         except Exception as exc:
             self.tray.showMessage("DayLens", f"生成失败: {exc}")
@@ -216,35 +209,13 @@ class TrayManager:
         if self.tray is None:
             return
         try:
-            today = datetime.now().strftime("%Y-%m-%d")
-            stats = database.query_date_stats(self.db_path, today)
-            totals = stats.get("totals", {})
-            effective = totals.get("effective_seconds", 0) or 0
-            work_categories = {"ai_tools", "coding", "reading", "creative"}
-            work_seconds = sum(
-                item.get("effective_seconds", 0) or 0
-                for item in stats.get("by_category", [])
-                if item.get("category_key") in work_categories
-            )
-            video_seconds = sum(
-                item.get("effective_seconds", 0) or 0
-                for item in stats.get("by_category", [])
-                if item.get("category_key") == "video"
-            )
-            status = "记录中"
-            if (
-                self.main_window
-                and hasattr(self.main_window, "worker")
-                and self.main_window.worker.is_paused()
-            ):
-                status = "已暂停"
-
-            tooltip = (
-                f"DayLens\n"
-                f"今日有效: {fmt_seconds(effective)}\n"
-                f"办公: {fmt_seconds(work_seconds)}\n"
-                f"娱乐: {fmt_seconds(video_seconds)}\n"
-                f"状态: {status}"
+            tooltip = build_tray_tooltip(
+                self.db_path,
+                bool(
+                    self.main_window
+                    and hasattr(self.main_window, "worker")
+                    and self.main_window.worker.is_paused()
+                ),
             )
             self.tray.setToolTip(tooltip)
         except Exception as exc:

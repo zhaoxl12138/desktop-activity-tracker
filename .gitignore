@@ -4,6 +4,10 @@ __pycache__/
 *.pyo
 dist/
 build/
+release/
+build_temp/
+data/
+DayLens/
 *.egg-info/
 *.egg
 *.spec
@@ -26,6 +30,8 @@ ENV/
 # Generated reports
 reports/*.csv
 reports/*.md
+reports/**/*.csv
+reports/**/*.md
 
 # Environment
 .env

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "desktop-activity-tracker"
 version = "1.1.0"
-description = "Windows 桌面软件使用时长记录器 / 个人数字行为分析系统"
+description = "Windows desktop activity tracking and analysis"
 authors = [{ name = "zhaoxl12138", email = "zhaoxl12138@github.com" }]
 license = { text = "MIT" }
 readme = "README.md"
@@ -33,7 +33,7 @@ dependencies = [
 ]
 
 [project.scripts]
-desktop-activity-tracker = "desktop_activity_tracker.main:main"
+desktop-activity-tracker = "daylens.main:main"
 
 [project.urls]
 Homepage = "https://github.com/zhaoxl12138/desktop-activity-tracker"
