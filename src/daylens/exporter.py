@@ -63,7 +63,7 @@ def _generate_suggestions(db_path, today_date, stats):
     )
     video_sec = sum(
         c["effective_seconds"] for c in stats["by_category"]
-        if c["category_key"] in ("video", "gaming")
+        if c["category_key"] == "video"
     )
 
     # Rule 1: Today's entertainment > 90 min

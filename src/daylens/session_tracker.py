@@ -336,7 +336,7 @@ class SessionTracker:
         # Audio actually playing (peak > 0) → user is definitely watching,
         # no idle timeout. Silent (paused) → standard 60s rule.
         if (
-            self._current.category_key in ("video", "gaming")
+            self._current.category_key == "video"
             and self._audio_detector is not None
             and self._audio_detector.is_any_playing()
         ):
@@ -375,7 +375,7 @@ class SessionTracker:
         s = self._current
         if s:
             cat_key = s.category_key or ""
-            is_ent = cat_key in ("video", "gaming")
+            is_ent = cat_key == "video"
             audio_playing = (
                 is_ent and self._audio_detector is not None
                 and self._audio_detector.is_any_playing()

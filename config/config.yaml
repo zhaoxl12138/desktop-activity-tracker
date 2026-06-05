@@ -21,21 +21,44 @@ categories:
     active_rule: interactive_required
     match:
       process_names:
+      - AnythingLLM.exe
+      - ChatGPT.exe
       - claude.exe
+      - Copilot.exe
       - Doubao.exe
+      - doubao.exe
+      - Gemini.exe
+      - Grok.exe
+      - jan.exe
+      - lm-studio.exe
+      - ollama.exe
+      - Perplexity.exe
+      - Poe.exe
+      - spark.exe
+      - tabnine.exe
+      - tongyi.exe
+      - wenxin.exe
+      - windsurf.exe
       title_keywords:
       - ChatGPT
       - Claude
+      - CodeWhisperer
+      - Copilot
       - DeepSeek
       - Gemini
-      - Kimi
-      - 通义千问
-      - 文心一言
-      - 豆包
-      - Copilot
       - Grok
+      - Kimi
+      - LM Studio
+      - Ollama
       - Perplexity
       - Poe
+      - Tabnine
+      - Windsurf
+      - 文心一言
+      - 星火
+      - 讯飞
+      - 豆包
+      - 通义千问
   # ── 编程开发 ──
   coding:
     display_name: 编程开发
@@ -43,35 +66,70 @@ categories:
     match:
       process_names:
       - clion64.exe
+      - cmake.exe
       - cmd.exe
       - Code.exe
       - codex.exe
       - com.docker.admin.exe
       - Cursor.exe
+      - dbeaver.exe
+      - devenv.exe
       - Docker Desktop.exe
+      - eclipse.exe
       - git-bash.exe
       - git-cmd.exe
       - git-gui.exe
+      - GitExtensions.exe
+      - GitHubDesktop.exe
+      - goland64.exe
+      - idea64.exe
       - MobaXterm1_CHS1.exe
+      - MySQLWorkbench.exe
       - node.exe
       - notepad++.exe
+      - nvim.exe
+      - Postman.exe
       - powershell.exe
       - powershell_ise.exe
+      - putty.exe
+      - pycharm64.exe
       - python.exe
       - pythonw.exe
+      - RedisInsight.exe
+      - rider64.exe
+      - SourceTree.exe
+      - studio64.exe
+      - sublime_text.exe
+      - TortoiseGitProc.exe
       - Trae CN.exe
       - UV4.exe
+      - webstorm64.exe
       - WindowsTerminal.exe
+      - WinSCP.exe
+      - zed.exe
       title_keywords:
-      - VS Code
-      - Cursor
+      - Android Studio
       - Claude Code
+      - CLion
       - Codex
-      - Visual Studio
+      - Cursor
+      - DBeaver
+      - Eclipse
       - GitHub
       - GitLab
-      - CLion
+      - IntelliJ
+      - MySQL
+      - Postman
+      - PyCharm
+      - Redis
+      - SourceTree
+      - Sublime
+      - TortoiseGit
       - Trae
+      - Visual Studio
+      - VS Code
+      - WebStorm
+      - WinSCP
   # ── 办公套件 ──
   office:
     display_name: 办公套件
@@ -280,61 +338,167 @@ categories:
     active_rule: interactive_required
     match:
       process_names:
-      - ksolaunch.exe
-      - ksomisc.exe
-      - Obsidian.exe
-      - wordpad.exe
-      - Zotero.exe
+      - anki.exe
       - bookxnote.exe
       - BookxNote.exe
+      - calibre.exe
+      - calibre-gui.exe
+      - Joplin.exe
+      - Kindle.exe
+      - ksolaunch.exe
+      - ksomisc.exe
+      - Logseq.exe
       - marginnote.exe
+      - MarginNote.exe
+      - Mendeley.exe
+      - Obsidian.exe
+      - wordpad.exe
+      - Xodo.exe
+      - YoudaoDict.exe
+      - YoudaoTranslate.exe
+      - Zotero.exe
       title_keywords:
-      - Obsidian
-      - 阅读
+      - Anki
+      - Calibre
+      - Kindle
+      - Logseq
+      - Mendeley
       - Notion
+      - Obsidian
+      - Xodo
+      - Zotero
+      - 阅读
       - 语雀
       - 知乎
       - 豆瓣
       - 微信读书
       - 得到
       - 极客时间
-  # ── 视频娱乐 ──
+  # ── 视频与游戏 ──
   video:
-    display_name: 视频娱乐
+    display_name: 视频与游戏
     active_rule: passive_allowed
     match:
       process_names:
+      - bilibili.exe
+      - 哔哩哔哩.exe
+      - cloudmusic.exe
+      - EpicGamesLauncher.exe
+      - foobar2000.exe
+      - GalaxyClient.exe
+      - kmplayer.exe
+      - kodi.exe
+      - KuGou.exe
+      - kugou.exe
+      - mpv.exe
+      - mpc-be64.exe
+      - mpc-hc.exe
+      - obs64.exe
+      - Plex.exe
       - PotPlayer.exe
       - PotPlayerMini64.exe
       - QQLive.exe
       - QQMusic.exe
       - QyClient.exe
       - QyPlayer.exe
+      - smplayer.exe
+      - Spotify.exe
+      - Steam.exe
       - vlc.exe
+      - WeGame.exe
       - wmplayer.exe
+      - Xbox.exe
+      - Youku.exe
       title_keywords:
-      - YouTube
       - B站
       - bilibili
-      - 腾讯视频
-      - 爱奇艺
+      - Epic
+      - GOG
+      - Kodi
       - Netflix
+      - OBS
+      - Plex
+      - Spotify
+      - Steam
+      - Twitch
+      - Xbox
+      - YouTube
+      - 云游戏
+      - 优酷
+      - 原神
+      - 崩坏
       - 抖音
-      - 西瓜视频
       - 斗鱼
       - 虎牙
-      - Twitch
+      - 网易云
+      - 腾讯视频
+      - 西瓜视频
+      - 酷狗
+      - 爱奇艺
+      - 王者荣耀
+      - 绝区零
   # ── 创作工具 ──
   creative:
     display_name: 创作工具
     active_rule: interactive_required
     match:
       process_names:
+      - 3dsmax.exe
+      - Adobe Premiere Pro.exe
+      - AfterFX.exe
+      - Bandicam.exe
+      - blender.exe
+      - CaptureOne.exe
+      - CINEMA 4D.exe
+      - ClipStudioPaint.exe
+      - CorelDRAW.exe
+      - Designer.exe
+      - Eagle.exe
+      - Figma.exe
+      - gimp.exe
+      - Godot.exe
+      - houdini.exe
+      - Illustrator.exe
+      - InDesign.exe
+      - inkscape.exe
       - JianyingPro.exe
+      - krita.exe
+      - Lightroom.exe
+      - maya.exe
+      - obs64.exe
+      - Photo.exe
+      - Photoshop.exe
+      - Publisher.exe
+      - Resolve.exe
+      - ScreenToGif.exe
+      - UE4Editor.exe
+      - Unity Hub.exe
+      - Unity.exe
+      - UnrealEditor.exe
       title_keywords:
       - Adobe
+      - Affinity
+      - After Effect
+      - Bandicam
+      - Blender
       - Canva
+      - Cinema 4D
+      - Clip Studio
+      - CorelDRAW
+      - DaVinci
       - Figma
+      - GIMP
+      - Houdini
+      - Illustrator
+      - Inkscape
+      - Krita
+      - Lightroom
+      - Maya
+      - OBS
+      - Photoshop
+      - Premiere
+      - Unreal
+      - Unity
       - 创客贴
       - 可画
       - 稿定设计
@@ -346,18 +510,45 @@ categories:
     active_rule: passive_allowed
     match:
       process_names:
+      - Discord.exe
+      - douyin.exe
+      - Instagram.exe
+      - LINE.exe
+      - LinkedIn.exe
+      - Messenger.exe
       - QClaw.exe
       - QQ.exe
+      - signal.exe
+      - Skype.exe
+      - slack.exe
+      - Teams.exe
       - Telegram.exe
+      - TIM.exe
+      - Twitter.exe
+      - Viber.exe
       - WeChat.exe
       - WeChatAppEx.exe
       - weixin.exe
       - WeMail.exe
+      - WhatsApp.exe
       - WXWork.exe
+      - Zoom.exe
       title_keywords:
       - Discord
+      - Instagram
+      - LINE
+      - LinkedIn
+      - Messenger
+      - Signal
+      - Skype
+      - Slack
+      - Teams
       - Telegram
+      - WhatsApp
+      - Zoom
       - 小红书
+      - 快手
+      - 抖音
       - 微博
       - 百度贴吧
   # ── 系统工具 ──
@@ -366,19 +557,35 @@ categories:
     active_rule: interactive_required
     match:
       process_names:
+      - 7z.exe
       - 7zFM.exe
       - amdbugreporttool.exe
+      - AnyDesk.exe
       - BaiduNetdisk.exe
+      - Bandizip.exe
+      - CCleaner64.exe
+      - DayLens.exe
       - charmap.exe
       - clash-verge.exe
-      - DayLens.exe
       - cleanmgr.exe
       - control.exe
+      - cpuz.exe
       - dfrgui.exe
       - DiskInfo64.exe
+      - Dism++.exe
+      - Ditto.exe
       - Everything.exe
+      - Everything64.exe
+      - ffmpeg.exe
+      - Flow.Launcher.exe
       - GameViewer.exe
+      - GPU-Z.exe
+      - Greenshot.exe
+      - HandBrake.exe
+      - HWiNFO64.exe
+      - HWMonitor.exe
       - iscsicpl.exe
+      - Listary.exe
       - localsend_app.exe
       - magnify.exe
       - mdsched.exe
@@ -392,35 +599,40 @@ categories:
       - notepad.exe
       - osk.exe
       - perfmon.exe
+      - PowerToys.exe
+      - procexp64.exe
+      - procmon64.exe
       - psr.exe
       - quickassist.exe
       - recoverydrive.exe
       - regedit.exe
       - Resilio Sync.exe
+      - rufus.exe
+      - ShareX.exe
       - Snipaste.exe
       - snippingtool.exe
+      - SunloginClient.exe
       - taskmgr.exe
+      - TeamViewer.exe
       - ToDesk.exe
+      - TotalCMD64.exe
+      - VirtualBox.exe
+      - vmware.exe
       - wfs.exe
+      - WinRAR.exe
+      - Wireshark.exe
       - wiztree.exe
       - WizTree64.exe
+      - Wox.exe
       - 红海Pro兼容版.exe
-      title_keywords: []
-  # ── 游戏 ──
-  gaming:
-    display_name: 游戏
-    active_rule: passive_allowed
-    match:
-      process_names:
-      - Steam.exe
-      - WeGame.exe
       title_keywords:
-      - Steam
-      - 原神
-      - 崩坏
-      - 绝区零
-      - 王者荣耀
-      - 云游戏
+      - CPU-Z
+      - Everything
+      - GPU-Z
+      - PowerToys
+      - Rufus
+      - TeamViewer
+      - VMware
   # ── 浏览器兜底 ──
   browser_general:
     display_name: 浏览器其他
@@ -437,6 +649,13 @@ categories:
   other:
     display_name: 其他
     active_rule: interactive_required
+    match:
+      process_names: []
+      title_keywords: []
+  # ── 挂机（用户离开时自动创建） ──
+  idle_leave:
+    display_name: 挂机
+    active_rule: passive_allowed
     match:
       process_names: []
       title_keywords: []

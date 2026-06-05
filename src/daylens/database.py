@@ -512,7 +512,7 @@ def _query_date_stats_from_sessions(db_path, date_str):
                 SUM(effective_seconds) as effective_seconds,
                 SUM(idle_seconds) as idle_seconds,
                 SUM(duration_seconds) as total_seconds
-            FROM activity_sessions WHERE date = ?
+            FROM activity_sessions WHERE date = ? AND category_name != '空闲'
             GROUP BY category_key, category_name
             ORDER BY effective_seconds DESC
         """, (date_str,)).fetchall()
@@ -720,7 +720,7 @@ def _query_date_range_from_sessions(db_path, dates):
         work_video_rows = conn.execute(f"""
             SELECT date,
                    SUM(CASE WHEN category_key IN ('ai_tools','coding','reading','creative') THEN effective_seconds ELSE 0 END) as work_seconds,
-                   SUM(CASE WHEN category_key IN ('video','gaming') THEN effective_seconds ELSE 0 END) as video_seconds
+                   SUM(CASE WHEN category_key = 'video' THEN effective_seconds ELSE 0 END) as video_seconds
             FROM activity_sessions
             WHERE date IN ({placeholders})
             GROUP BY date
@@ -733,7 +733,7 @@ def _query_date_range_from_sessions(db_path, dates):
                    SUM(idle_seconds) as idle_seconds,
                    SUM(duration_seconds) as total_seconds
             FROM activity_sessions
-            WHERE date IN ({placeholders})
+            WHERE date IN ({placeholders}) AND category_name != '空闲'
             GROUP BY category_key, category_name
             ORDER BY effective_seconds DESC
         """, dates).fetchall()

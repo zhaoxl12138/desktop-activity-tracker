@@ -91,7 +91,7 @@ class TodayOverviewPage(QWidget):
             )
             if persistent_idle > 5:
                 parts = [f"空闲 {int(persistent_idle)}s"]
-                if category_key in ("video", "gaming"):
+                if category_key == "video":
                     parts.append("| 音频=" + ("有" if audio_playing else "无"))
                 self.idle_status_label.setText(" ".join(parts))
             else:
@@ -603,7 +603,7 @@ class TodayOverviewPage(QWidget):
                 work_seconds += seconds
             elif category_key == "social":
                 social_seconds += seconds
-            elif category_key in {"video", "gaming"}:
+            elif category_key == "video":
                 entertainment_seconds += seconds
             elif category_key == "tools":
                 tools_seconds += seconds
@@ -612,7 +612,7 @@ class TodayOverviewPage(QWidget):
     def _color_for_category(self, category_key: str) -> str:
         if category_key in {"ai_tools", "coding", "reading", "creative"}:
             return ui_style.COLORS["coding_green"]
-        if category_key in {"video", "gaming"}:
+        if category_key == "video":
             return ui_style.COLORS["video_orange"]
         if category_key == "social":
             return ui_style.COLORS["social_purple"]

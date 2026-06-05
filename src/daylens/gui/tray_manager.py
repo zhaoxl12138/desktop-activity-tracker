@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import database, get_app_root, get_data_dir
+from ..gui import style as ui_style
 from ..utils import fmt_seconds
 
 
@@ -27,6 +28,11 @@ class TrayManager:
         self.db_path = db_path
         self.config = config
         self.main_window = None
+
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            print("[TrayManager] 系统托盘不可用，跳过托盘创建。")
+            self.tray = None
+            return
 
         if getattr(sys, "frozen", False):
             base = sys._MEIPASS
@@ -49,12 +55,12 @@ class TrayManager:
         self.tray.activated.connect(self._on_tray_activated)
         self.tray.show()
 
-        self.tooltip_timer = QTimer()
+        self.tooltip_timer = QTimer(self.tray)
         self.tooltip_timer.timeout.connect(self._update_tooltip)
         self.tooltip_timer.start(60000)
         self._update_tooltip()
 
-        self.report_timer = QTimer()
+        self.report_timer = QTimer(self.tray)
         self.report_timer.timeout.connect(self._auto_generate_report)
         self.report_timer.start(300000)
         self._auto_generate_report()
@@ -65,36 +71,35 @@ class TrayManager:
     def _show_tray_popup(self) -> None:
         popup = QWidget()
         popup.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
-        popup.setStyleSheet(
-            """
-            QWidget {
-                background: #0E203D;
-                border: 1px solid #2C4772;
+        C = ui_style.COLORS
+        popup.setStyleSheet(f"""
+            QWidget {{
+                background: {C['panel_bg_alt']};
+                border: 1px solid {C['border_light']};
                 border-radius: 10px;
-            }
-            QPushButton {
+            }}
+            QPushButton {{
                 background: transparent;
                 border: none;
                 padding: 8px 28px 8px 14px;
                 text-align: left;
                 font-size: 13px;
-                color: #B8C4D9;
-            }
-            QPushButton:hover {
-                background: #122A52;
-                color: #F4F8FF;
+                color: {C['text_secondary']};
+            }}
+            QPushButton:hover {{
+                background: {C['sidebar_hover']};
+                color: {C['text']};
                 border-radius: 4px;
-            }
-            QPushButton#btnQuit {
-                color: #EF4444;
+            }}
+            QPushButton#btnQuit {{
+                color: {C['danger_red']};
                 font-weight: 600;
-            }
-            QPushButton#btnQuit:hover {
-                background: #321827;
-                color: #F87171;
-            }
-            """
-        )
+            }}
+            QPushButton#btnQuit:hover {{
+                background: {C['danger_bg']};
+                color: {C['danger_red']};
+            }}
+        """)
 
         layout = QVBoxLayout(popup)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -112,7 +117,7 @@ class TrayManager:
 
         separator = QWidget()
         separator.setFixedHeight(1)
-        separator.setStyleSheet("background: #2C4772; margin: 2px 8px;")
+        separator.setStyleSheet(f"background: {ui_style.COLORS['border_light']}; margin: 2px 8px;")
         layout.addWidget(separator)
 
         btn_quit = QPushButton("退出程序")
@@ -175,8 +180,8 @@ class TrayManager:
             if obsidian_path:
                 markdown_file = os.path.join(reports_dir, f"{today}.md")
                 exporter.sync_to_obsidian(markdown_file, obsidian_path)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[TrayManager] auto_generate_report error: {e}", file=sys.stderr)
 
     def _generate_report(self) -> None:
         today = datetime.now().strftime("%Y-%m-%d")
@@ -203,10 +208,13 @@ class TrayManager:
         if self.main_window and hasattr(self.main_window, "worker"):
             self.main_window.worker.stop()
             self.main_window.worker.wait(5000)
-        self.tray.hide()
+        if self.tray is not None:
+            self.tray.hide()
         self.app.quit()
 
     def _update_tooltip(self) -> None:
+        if self.tray is None:
+            return
         try:
             today = datetime.now().strftime("%Y-%m-%d")
             stats = database.query_date_stats(self.db_path, today)
@@ -221,7 +229,7 @@ class TrayManager:
             video_seconds = sum(
                 item.get("effective_seconds", 0) or 0
                 for item in stats.get("by_category", [])
-                if item.get("category_key") in ("video", "gaming")
+                if item.get("category_key") == "video"
             )
             status = "记录中"
             if (

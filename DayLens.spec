@@ -1,11 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+
 a = Analysis(
     ['src\\daylens\\main.py'],
     pathex=[],
     binaries=[],
-    datas=[('config', 'config'), ('assets', 'assets')],
-    hiddenimports=['pycaw', 'comtypes', 'comtypes.gen', 'comtypes.stream', 'psutil'],
+    datas=[('config/config.yaml', 'config'), ('assets', 'assets')],
+    hiddenimports=['yaml', 'PySide6'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -18,6 +19,8 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.datas,
     [],
     name='DayLens',
     debug=False,
@@ -33,16 +36,4 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=['assets\\icon.ico'],
-    exclude_binaries=True,
-)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    a.zipfiles,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='DayLens',
 )

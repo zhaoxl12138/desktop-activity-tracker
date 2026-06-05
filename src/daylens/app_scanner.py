@@ -506,20 +506,20 @@ KNOWN_APPS: dict[str, str] = {
     "wordpad.exe": "reading",
     "explorer.exe": "tools",
 
-    # ── 游戏 ──
-    "steam.exe": "gaming",
-    "wegame.exe": "gaming",
-    "epic games launcher.exe": "gaming",
-    "ubisoft connect.exe": "gaming",
-    "origin.exe": "gaming",
-    "ea app.exe": "gaming",
-    "battle.net.exe": "gaming",
-    "gog galaxy.exe": "gaming",
-    "ubisoftconnect.exe": "gaming",
-    "eadesktop.exe": "gaming",
-    "itch.exe": "gaming",
-    "xbox app.exe": "gaming",
-    "rockstar games launcher.exe": "gaming",
+    # ── 游戏（已合并至视频与游戏）──
+    "steam.exe": "video",
+    "wegame.exe": "video",
+    "epic games launcher.exe": "video",
+    "ubisoft connect.exe": "video",
+    "origin.exe": "video",
+    "ea app.exe": "video",
+    "battle.net.exe": "video",
+    "gog galaxy.exe": "video",
+    "ubisoftconnect.exe": "video",
+    "eadesktop.exe": "video",
+    "itch.exe": "video",
+    "xbox app.exe": "video",
+    "rockstar games launcher.exe": "video",
 
     # ── 浏览器（通用）──
     "chrome.exe": "browser_general",
@@ -579,6 +579,10 @@ _PATH_KEYWORDS: dict[str, list[str]] = {
         "video", "player", "media", "music", "audio", "stream",
         "bilibili", "youtube", "youku", "iqiyi", "netflix",
         "douyin", "tiktok", "kuaishou", "xigua",
+        "steam", "epic games", "ubisoft", "origin", "battle.net",
+        "gog", "wegame", "riot games", "blizzard", "miHoYo",
+        "hoyoverse", "ea games", "rockstar",
+        "game", "gaming",
     ],
     "creative": [
         "adobe", "photoshop", "illustrator", "premiere", "after effect",
@@ -595,12 +599,6 @@ _PATH_KEYWORDS: dict[str, list[str]] = {
         "slack", "discord", "skype", "teams", "zoom", "signal",
         "whatsapp", "line", "messenger", "im", "chat", "talk",
         "outlook", "thunderbird", "foxmail", "mailmaster", "mail",
-    ],
-    "gaming": [
-        "steam", "epic games", "ubisoft", "origin", "battle.net",
-        "gog", "wegame", "riot games", "blizzard", "miHoYo",
-        "hoyoverse", "ea games", "rockstar",
-        "game", "gaming",
     ],
     "tools": [
         "everything", "listary", "wiztree", "spacesniffer", "windirstat",
@@ -624,10 +622,9 @@ _NAME_KEYWORDS: dict[str, list[str]] = {
         "git", "dev", "build", "compile", "debug", "code",
     ],
     "reading": ["read", "pdf", "ebook", "note", "doc", "wps"],
-    "video": ["player", "video", "music", "audio", "media", "stream", "play"],
+    "video": ["player", "video", "music", "audio", "media", "stream", "play", "game", "steam", "launcher"],
     "creative": ["design", "draw", "paint", "animate", "render", "compose"],
     "social": ["chat", "msg", "talk", "im", "mail", "message"],
-    "gaming": ["game", "steam", "launcher"],
     "tools": ["manager", "monitor", "tool", "utility", "clean", "viewer"],
 }
 

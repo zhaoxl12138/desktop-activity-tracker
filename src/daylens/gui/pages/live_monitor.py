@@ -214,7 +214,7 @@ class LiveMonitorPage(QWidget):
         self.lbl_duration.setText(fmt_seconds(dur))
         self.lbl_effective.setText(fmt_seconds(eff))
         self.lbl_session_idle.setText(fmt_seconds(sidle))
-        if cat_key in ("video", "gaming"):
+        if cat_key == "video":
             self.lbl_idle.setText(f"{persistent_idle:.0f}s 🔊={'Y' if audio_playing else 'N'}")
         else:
             self.lbl_idle.setText(f"{persistent_idle:.0f}s")

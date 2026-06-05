@@ -198,8 +198,12 @@ class SettingsPage(QWidget):
         outer.addWidget(scroll)
 
     def _load_config(self):
-        with open(self.config_path, "r", encoding="utf-8") as f:
-            self.config = yaml.safe_load(f)
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                self.config = yaml.safe_load(f) or {}
+        except (FileNotFoundError, yaml.YAMLError) as e:
+            print(f"[SettingsPage] config load error: {e}")
+            self.config = {}
 
         # Merge user_config overrides
         from daylens.utils import load_user_config
@@ -213,8 +217,8 @@ class SettingsPage(QWidget):
             from ... import database
             db_path = self.config.get("db_path", self.db_path)
             database.merge_db_settings(self.config, db_path)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[SettingsPage] merge_db_settings error: {e}")
 
     def _save_all(self):
         sample_interval = self.spin_interval.value()
@@ -248,8 +252,8 @@ class SettingsPage(QWidget):
             from ... import database
             db_path = self.config.get("db_path", self.db_path)
             database.save_settings(db_path, self.config)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[SettingsPage] save_settings error: {e}")
 
         # Also persist to user_config.yaml in data dir (survives rebuilds)
         try:
@@ -259,8 +263,8 @@ class SettingsPage(QWidget):
                 for k in ("obsidian_output_path", "theme", "db_path")
                 if k in self.config and self.config[k]
             })
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[SettingsPage] save_user_config error: {e}")
 
         QMessageBox.information(self, "成功", "设置已保存，采样间隔和空闲阈值已实时生效。")
 
@@ -287,6 +291,9 @@ class SettingsPage(QWidget):
         if enable:
             exe_path = self._get_exe_path()
             if not os.path.isfile(exe_path):
+                QMessageBox.warning(self, "提示",
+                    f"未找到 DayLens.exe，请先打包程序。\n\n预期路径: {exe_path}")
+                self.chk_startup.setChecked(False)
                 return
             try:
                 import win32com.client
@@ -297,8 +304,10 @@ class SettingsPage(QWidget):
                 shortcut.Description = "DayLens - 个人数字行为分析系统"
                 shortcut.WindowStyle = 7  # minimized
                 shortcut.Save()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[SettingsPage] shortcut creation error: {e}")
+                QMessageBox.warning(self, "失败", f"创建开机启动快捷方式失败:\n{e}")
+                self.chk_startup.setChecked(False)
         else:
             try:
                 os.remove(link_path)

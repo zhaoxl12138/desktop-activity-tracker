@@ -518,7 +518,11 @@ class MainWindow(QMainWindow):
     def _update_top_bar(self) -> None:
         self.lbl_today.setText(self._today_text())
         today = datetime.now().strftime("%Y-%m-%d")
-        stats = database.query_date_stats(self.db_path, today)
+        today_page = self.pages.get("today")
+        if today_page is not None and today_page.last_stats_date == today:
+            stats = today_page.last_stats
+        else:
+            stats = database.query_date_stats(self.db_path, today)
         totals = stats.get("totals", {})
         effective = totals.get("effective_seconds", 0) or 0
         work_keys = {"ai_tools", "coding", "reading", "creative"}
@@ -530,7 +534,7 @@ class MainWindow(QMainWindow):
         video_seconds = sum(
             item.get("effective_seconds", 0) or 0
             for item in stats.get("by_category", [])
-            if item.get("category_key") in {"video", "gaming"}
+            if item.get("category_key") == "video"
         )
         social_seconds = sum(
             item.get("effective_seconds", 0) or 0
@@ -667,7 +671,8 @@ class MainWindow(QMainWindow):
         self._theme_rebuilding = False
 
     def _persist_theme_preference(self) -> None:
-        """Write only the theme key back, preserving the rest of the file."""
+        """Write only the theme key back, atomically via temp file."""
+        import os
         import re
 
         try:
@@ -682,8 +687,13 @@ class MainWindow(QMainWindow):
         else:
             content = content.rstrip() + "\n" + theme_line + "\n"
 
-        with open(self.config_path, "w", encoding="utf-8") as f:
-            f.write(content)
+        tmp_path = self.config_path + ".tmp"
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            os.replace(tmp_path, self.config_path)
+        except Exception as e:
+            print(f"[MainWindow] _persist_theme_preference write error: {e}")
 
         # Also persist to data/user_config.yaml
         from ..utils import save_user_config

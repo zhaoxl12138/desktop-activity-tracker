@@ -96,7 +96,6 @@ def refresh_category_colors() -> None:
             "reading": COLORS["reading_blue"],
             "creative": COLORS["creative_pink"],
             "video": COLORS["video_orange"],
-            "gaming": COLORS["gaming_red"],
             "social": COLORS["social_purple"],
             "tools": COLORS["tools_grey"],
             "system_tools": COLORS["tools_grey"],

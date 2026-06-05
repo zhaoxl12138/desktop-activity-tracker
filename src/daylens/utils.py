@@ -18,7 +18,7 @@ def fmt_seconds(total_seconds):
 
 # ── Default config as Python dict ──────────────────────────────────
 # Category order: ai_tools, coding, reading, video, creative, social,
-# tools, gaming, browser_general, other
+# tools, browser_general, other
 
 _DEFAULT_CATEGORIES = {
     "ai_tools": {
@@ -99,12 +99,6 @@ _DEFAULT_CATEGORIES = {
         ],
         "title_keywords": [],
     },
-    "gaming": {
-        "display_name": "游戏",
-        "active_rule": "passive_allowed",
-        "process_names": ["Steam.exe", "WeGame.exe"],
-        "title_keywords": [],
-    },
     "browser_general": {
         "display_name": "浏览器其他",
         "active_rule": "interactive_required",
@@ -124,7 +118,7 @@ _DEFAULT_CATEGORIES = {
 
 _CATEGORY_ORDER = [
     "ai_tools", "coding", "reading", "video", "creative",
-    "social", "tools", "gaming", "browser_general", "other",
+    "social", "tools", "browser_general", "other",
 ]
 
 # Track which fields comment each category header
@@ -136,7 +130,6 @@ _CATEGORY_COMMENTS = {
     "creative": "创作工具",
     "social": "社交通讯",
     "tools": "系统工具",
-    "gaming": "游戏",
     "browser_general": "浏览器兜底",
     "other": "兜底",
 }

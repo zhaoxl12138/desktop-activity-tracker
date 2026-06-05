@@ -184,7 +184,7 @@ class CategoryStatsPage(QWidget):
         self.error_lbl = QLabel()
         self.error_lbl.setStyleSheet(
             f"color: {COLORS['danger_red']}; font-size: 12px;"
-            f"background: #3A1620; border: 1px solid {COLORS['danger_red']};"
+            f"background: {COLORS['error_bg']}; border: 1px solid {COLORS['danger_red']};"
             f"border-radius: 6px; padding: 10px;"
         )
         self.error_lbl.hide()

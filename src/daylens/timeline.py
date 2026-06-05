@@ -11,7 +11,7 @@ from .utils import fmt_seconds
 # ── Category groups ──
 
 WORK_CATS = {"ai_tools", "coding", "reading", "creative"}
-ENTERTAINMENT_CATS = {"video", "gaming"}
+ENTERTAINMENT_CATS = {"video"}
 
 
 # ── Data classes ──
