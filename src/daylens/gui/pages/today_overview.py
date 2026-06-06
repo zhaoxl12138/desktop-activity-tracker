@@ -46,7 +46,6 @@ class TodayOverviewPage(QWidget):
         setattr(self, "metric_cards", {})
         self.time_stats_labels: dict[str, QLabel] = {}
         self.distribution_cmp_labels: dict[str, QLabel] = {}
-        self.insight_card_labels: list[dict[str, QLabel]] = []
         self._icon_provider = QFileIconProvider()
         self._icon_cache: dict[str, QIcon | None] = {}
         self._is_active = False
@@ -64,26 +63,27 @@ class TodayOverviewPage(QWidget):
         root.addLayout(content_grid, 1)
 
         self.distribution_card = self._build_distribution_card()
-        self.insight_card = self._build_insight_card()
         self.focus_timeline_card = self._build_focus_timeline_card()
         self.time_stats_card = None
         self.time_stats_ratio_ring = None
-        content_grid.addWidget(self.distribution_card, 0, 0, 1, 4)
-        content_grid.addWidget(self.insight_card, 0, 4, 1, 4)
+        content_grid.addWidget(self.distribution_card, 0, 0, 1, 8)
         self.trend_card = TrendChartWidget()
         content_grid.addWidget(self.trend_card, 0, 8, 1, 4)
         content_grid.addWidget(self.focus_timeline_card, 1, 0, 1, 8)
         self.top_app_card = TopAppListWidget()
         content_grid.addWidget(self.top_app_card, 1, 8, 1, 4)
 
-        content_grid.setRowStretch(0, 3)
-        content_grid.setRowStretch(1, 5)
+        content_grid.setRowStretch(0, 4)
+        content_grid.setRowStretch(1, 6)
         for column in range(12):
             content_grid.setColumnStretch(column, 1)
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._refresh_if_active)
         self.timer.setInterval(5000)
+        self.insight_card = None
+        self.insight_grid_widget = None
+        self.insight_empty_label = None
 
     def activate(self, force: bool = False) -> None:
         self._is_active = True
@@ -240,95 +240,6 @@ class TodayOverviewPage(QWidget):
 
         cmp_row.addStretch()
         layout.addLayout(cmp_row)
-        return card
-
-    def _build_insight_card(self) -> QWidget:
-        card = QFrame()
-        card.setObjectName("dashboardCard")
-        card.setStyleSheet(ui_style.get_dashboard_card_style())
-        card.setMinimumHeight(282)
-
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(16, 14, 16, 12)
-        layout.setSpacing(10)
-
-        title = QLabel("✦ 今日洞察")
-        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {ui_style.COLORS['text']};")
-        layout.addWidget(title)
-
-        self.insight_empty_label = QLabel("数据积累中\n使用一段时间后将生成洞察")
-        self.insight_empty_label.setAlignment(Qt.AlignCenter)
-        self.insight_empty_label.setWordWrap(True)
-        self.insight_empty_label.setStyleSheet(
-            f"font-size: 13px; color: {ui_style.COLORS['text_secondary']}; font-weight: 700;"
-            f"padding: 30px 16px; border: 1px dashed {ui_style.COLORS['border_light']};"
-            f"border-radius: 14px; background: {ui_style.COLORS['panel_bg_alt']};"
-        )
-        layout.addWidget(self.insight_empty_label, 1)
-
-        self.insight_grid_widget = QWidget()
-        grid = QGridLayout(self.insight_grid_widget)
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(10)
-        grid.setVerticalSpacing(10)
-
-        specs = [
-            ("最长专注", "🏆", ui_style.COLORS["coding_green"]),
-            ("最佳状态时段", "🕒", ui_style.COLORS["primary"]),
-            ("最大干扰源", "⚠", ui_style.COLORS["warning_yellow"]),
-            ("今日建议", "💡", ui_style.COLORS["social_purple"]),
-        ]
-        self.insight_card_labels = []
-        for index, (title_text, icon_text, accent) in enumerate(specs):
-            mini = QFrame()
-            mini.setObjectName("insightMiniCard")
-            mini.setStyleSheet(
-                f"""
-                QFrame#insightMiniCard {{
-                    background: {ui_style.COLORS['panel_bg_alt']};
-                    border: 1px solid {accent};
-                    border-radius: 14px;
-                }}
-                """
-            )
-            mini_layout = QVBoxLayout(mini)
-            mini_layout.setContentsMargins(12, 10, 12, 10)
-            mini_layout.setSpacing(4)
-
-            header = QHBoxLayout()
-            header.setSpacing(6)
-            icon = QLabel(icon_text)
-            icon.setStyleSheet(f"font-size: 16px; color: {accent};")
-            header.addWidget(icon)
-            title_label = QLabel(title_text)
-            title_label.setStyleSheet(f"font-size: 12px; color: {ui_style.COLORS['text_secondary']}; font-weight: 800;")
-            header.addWidget(title_label)
-            header.addStretch()
-            mini_layout.addLayout(header)
-
-            primary_label = QLabel("--")
-            primary_label.setWordWrap(True)
-            primary_label.setStyleSheet(f"font-size: 15px; color: {ui_style.COLORS['text']}; font-weight: 900;")
-            mini_layout.addWidget(primary_label)
-
-            secondary_label = QLabel("--")
-            secondary_label.setWordWrap(True)
-            secondary_label.setStyleSheet(f"font-size: 11px; color: {ui_style.COLORS['text_secondary']};")
-            mini_layout.addWidget(secondary_label)
-
-            grid.addWidget(mini, index // 2, index % 2)
-            self.insight_card_labels.append(
-                {
-                    "title": title_label,
-                    "primary": primary_label,
-                    "secondary": secondary_label,
-                    "icon": icon,
-                    "accent": accent,
-                }
-            )
-
-        layout.addWidget(self.insight_grid_widget, 1)
-        self.insight_grid_widget.setVisible(False)
         return card
 
     def _build_time_stats_card(self) -> QWidget:
@@ -521,7 +432,6 @@ class TodayOverviewPage(QWidget):
         effective = int(totals["effective_seconds"])
         idle_seconds = int(totals["idle_seconds"])
         active_ratio = int(totals["active_ratio"])
-        insights = snapshot.get("insights", {})
 
         distribution = [
             (str(item["label"]), int(item["seconds"]), self._distribution_color(str(item["category_key"])))
@@ -591,27 +501,8 @@ class TodayOverviewPage(QWidget):
         self.focus_hint.setVisible("??" not in focus_summary and "???" not in focus_summary)
         consecutive_days = int(snapshot["consecutive_days"])
         self.last_consecutive_days = consecutive_days
-        self.consecutive_label.setText(f"?{consecutive_days}?" if consecutive_days > 0 else "")
-        self._update_insights(insights)
+        self.consecutive_label.setText(f"???? ?{consecutive_days}?" if consecutive_days > 0 else "")
         self._update_top_apps(snapshot["top_app_rows"])
-
-    def _update_insights(self, insights: dict) -> None:
-        ready = bool(insights.get("ready"))
-        self.insight_empty_label.setVisible(not ready)
-        self.insight_grid_widget.setVisible(ready)
-        cards = list(insights.get("cards", [])) if ready else []
-        for index, slots in enumerate(self.insight_card_labels):
-            if index < len(cards):
-                card = cards[index]
-                slots["title"].setText(str(card.get("title", "")))
-                slots["primary"].setText(str(card.get("primary", "--")))
-                slots["secondary"].setText(str(card.get("secondary", "--")))
-                accent = str(card.get("accent", ui_style.COLORS["primary"]))
-                slots["icon"].setStyleSheet(f"font-size: 16px; color: {accent};")
-            else:
-                slots["title"].setText("--")
-                slots["primary"].setText("--")
-                slots["secondary"].setText("--")
 
     def _update_top_apps(self, rows_data: list[dict[str, object]]) -> None:
         rows = []

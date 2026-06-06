@@ -152,7 +152,7 @@ def main():
         assert overview.top_app_card is not None, "top app card missing"
         assert overview.timeline_widget is not None, "timeline widget missing"
         assert overview.focus_axis is not None, "focus axis missing"
-        assert overview.insight_card is not None, "insight card missing"
+        assert overview.insight_card is None, "insight card should be removed"
         assert overview.time_stats_card is None, "time stats card should be removed"
         assert overview.timeline_widget.more_label.isVisible() is False
 

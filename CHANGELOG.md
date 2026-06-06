@@ -2,6 +2,6 @@
 
 ## Unreleased
 
-- Redesign the homepage into an insights-first dashboard.
-- Replace the old timeline with high-value session cards.
+- Remove the homepage insight panel and rebalance the right column.
+- Keep the high-value session cards and compact the dashboard layout.
 - Strengthen the sidebar status card with record summary.
