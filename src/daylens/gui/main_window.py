@@ -86,7 +86,7 @@ class MainWindow(QMainWindow):
         self._last_sample: dict | None = None
         self._current_nav_key: str | None = None
         self._last_poetry_refresh = 0.0
-        self._poetry_interval = 1800  # 30 minutes between auto-refresh
+        self._poetry_interval = 1800
         self.current_theme = ui_style.apply_theme(self.config.get("theme", "dark"))
 
         self.setWindowTitle("DayLens")
@@ -211,11 +211,23 @@ class MainWindow(QMainWindow):
         status_layout.setContentsMargins(16, 14, 16, 14)
         status_layout.setSpacing(8)
 
-        self.sidebar_record_status = QLabel("● 记录中")
+        self.sidebar_record_status = QLabel("🟢 正在记录")
         self.sidebar_record_status.setStyleSheet(
             f"font-size: 14px; color: {ui_style.COLORS['success_green']}; font-weight: 800;"
         )
         status_layout.addWidget(self.sidebar_record_status)
+
+        self.sidebar_record_value = QLabel("已记录：--")
+        self.sidebar_record_value.setStyleSheet(
+            f"font-size: 12px; color: {ui_style.COLORS['text_secondary']}; font-weight: 700;"
+        )
+        status_layout.addWidget(self.sidebar_record_value)
+
+        self.sidebar_record_streak = QLabel("连续记录：第--天")
+        self.sidebar_record_streak.setStyleSheet(
+            f"font-size: 12px; color: {ui_style.COLORS['text_secondary']}; font-weight: 700;"
+        )
+        status_layout.addWidget(self.sidebar_record_streak)
 
         self.sidebar_version = QLabel("v1.5.3")
         self.sidebar_version.setStyleSheet(
@@ -223,7 +235,7 @@ class MainWindow(QMainWindow):
         )
         status_layout.addWidget(self.sidebar_version)
 
-        self.sidebar_sample_time = QLabel(f"最近采样 {datetime.now().strftime('%H:%M:%S')}")
+        self.sidebar_sample_time = QLabel(f"最后采样：{datetime.now().strftime('%H:%M:%S')}")
         self.sidebar_sample_time.setStyleSheet(
             f"font-size: 11px; color: {ui_style.COLORS['text_muted']};"
         )
@@ -235,6 +247,7 @@ class MainWindow(QMainWindow):
         self.sidebar_quit_btn.setStyleSheet(ui_style.get_button_danger_style())
         self.sidebar_quit_btn.clicked.connect(self._quit_app)
         layout.addWidget(self.sidebar_quit_btn)
+        self._update_sidebar_status_card()
         return frame
 
     def _build_top_bar(self) -> QWidget:
@@ -286,10 +299,14 @@ class MainWindow(QMainWindow):
         title_wrap.addLayout(top_line)
 
         self.lbl_page_hint = QLabel("聚焦今天的使用结构、效率与提醒")
+        self.lbl_page_hint.setWordWrap(True)
         self.lbl_page_hint.setStyleSheet(
             f"font-size: 12px; color: {ui_style.COLORS['text_secondary']};"
         )
-        title_wrap.addWidget(self.lbl_page_hint)
+        hint_line = QHBoxLayout()
+        hint_line.addWidget(self.lbl_page_hint)
+        hint_line.addStretch()
+        title_wrap.addLayout(hint_line)
         layout.addLayout(title_wrap)
 
         self.capsule_values: dict[str, QLabel] = {}
@@ -474,12 +491,16 @@ class MainWindow(QMainWindow):
         key = data.get("key")
         if not key:
             return
+        previous_key = self._current_nav_key
+        if previous_key == "today" and key != "today":
+            self.pages["today"].deactivate()
         for index, (title, nav_key, hint) in enumerate(NAV_ITEMS):
             if nav_key == key:
                 self.stack.setCurrentIndex(index)
                 self.lbl_page_title.setText(title)
                 self._current_nav_key = key
                 if key == "today":
+                    self.pages["today"].activate(force=previous_key != "today")
                     self._set_random_poetry(force=True)
                 else:
                     self.lbl_page_hint.setText(hint)
@@ -494,23 +515,40 @@ class MainWindow(QMainWindow):
         if self.stack.currentWidget() is self.pages.get("live"):
             self.pages["live"].on_sample_updated(sample)
         self.pages["today"].on_sample_updated(sample)
-        self.sidebar_sample_time.setText(f"最近采样 {datetime.now().strftime('%H:%M:%S')}")
+        self._update_sidebar_status_card()
+
+    def _update_sidebar_status_card(self) -> None:
+        if not hasattr(self, "sidebar_record_value"):
+            return
+        today_page = self.pages.get("today")
+        totals = getattr(today_page, "last_snapshot_totals", {}) if today_page is not None else {}
+        effective_seconds = int((totals or {}).get("effective_seconds", 0) or 0)
+        consecutive_days = int(getattr(today_page, "last_consecutive_days", 0) or 0)
+        self.sidebar_record_value.setText(
+            f"已记录：{fmt_seconds(effective_seconds)}" if effective_seconds > 0 else "已记录：--"
+        )
+        self.sidebar_record_streak.setText(
+            f"连续记录：第{consecutive_days}天" if consecutive_days > 0 else "连续记录：--"
+        )
+        self.sidebar_version.setText("v1.5.3")
+        self.sidebar_sample_time.setText(f"最后采样：{datetime.now().strftime('%H:%M:%S')}")
 
     def _toggle_pause(self) -> None:
         if self.worker.is_paused():
             self.worker.resume()
             self.btn_pause.setText("暂停记录")
             self.btn_pause.setStyleSheet(ui_style.get_button_secondary_style())
-            text = "记录中"
+            text = "正在记录"
             color = ui_style.COLORS["success_green"]
         else:
             self.worker.pause()
             self.btn_pause.setText("继续记录")
             self.btn_pause.setStyleSheet(ui_style.get_button_primary_style())
-            text = "已暂停"
+            text = "暂停记录"
             color = ui_style.COLORS["warning_yellow"]
 
-        self.sidebar_record_status.setText(f"● {text}")
+        prefix = "🟢" if self.worker.is_paused() is False else "🟡"
+        self.sidebar_record_status.setText(f"{prefix} {text}")
         self.sidebar_record_status.setStyleSheet(
             f"font-size: 14px; color: {color}; font-weight: 800;"
         )
@@ -528,6 +566,7 @@ class MainWindow(QMainWindow):
         self.capsule_values["work"].setText(fmt_seconds(summary["work_seconds"]))
         self.capsule_values["ent"].setText(fmt_seconds(summary["entertainment_seconds"]))
         self.capsule_values["social"].setText(fmt_seconds(summary["social_seconds"]))
+        self._update_sidebar_status_card()
         if self._current_nav_key == "today":
             self._set_random_poetry(force=False)
 

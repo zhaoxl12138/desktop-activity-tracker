@@ -134,7 +134,7 @@ class ActiveRatioRingWidget(QWidget):
 class FocusTimelineBarWidget(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self._minute_colors = [COLORS["idle_gray"]] * 1440
+        self._minute_colors = [COLORS["timeline_idle"]] * 1440
         self.setFixedHeight(24)
 
     def set_minutes(self, minute_colors: list[str]) -> None:
@@ -185,7 +185,7 @@ class TimelineWidget(QFrame):
         "挂机": COLORS["idle_gray"],
         "离开": COLORS["idle_gray"],
         "空闲": COLORS["idle_gray"],
-        "其他": COLORS["ai_blue"],
+        "其他": COLORS["other_teal"],
     }
 
     def __init__(
@@ -193,12 +193,16 @@ class TimelineWidget(QFrame):
         max_rows: int = 8,
         show_title: bool = True,
         open_detail_on_more: bool = False,
+        min_effective_seconds: int = 0,
+        sort_by_value: bool = False,
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
         self._max_rows = max_rows
         self._show_title = show_title
         self._open_detail_on_more = open_detail_on_more
+        self._min_effective_seconds = max(0, min_effective_seconds)
+        self._sort_by_value = sort_by_value
         self._rows: list[QWidget] = []
         self._sessions: list[dict] = []
         self._display_name_mapping = {}
@@ -279,7 +283,16 @@ class TimelineWidget(QFrame):
         root.addWidget(self.more_label, 0, Qt.AlignHCenter)
 
     def set_sessions(self, sessions, display_name_mapping=None) -> None:
-        self._sessions = self._merge_sessions(list(sessions or []))
+        merged_sessions = self._merge_sessions(list(sessions or []))
+        filtered_sessions = [session for session in merged_sessions if self._should_show_session(session)]
+        if self._sort_by_value:
+            filtered_sessions.sort(
+                key=lambda session: (
+                    -self._session_effective_seconds(session),
+                    str(session.get("end_time", "") or ""),
+                )
+            )
+        self._sessions = filtered_sessions
         self._display_name_mapping = display_name_mapping or {}
         self._expanded = len(self._sessions) > self._max_rows
         self._render_rows()
@@ -314,6 +327,123 @@ class TimelineWidget(QFrame):
         merged.append(current)
         return merged
 
+    def _should_show_session(self, session: dict) -> bool:
+        if self._min_effective_seconds <= 0:
+            return True
+        return self._session_effective_seconds(session) >= self._min_effective_seconds
+
+    @staticmethod
+    def _session_effective_seconds(session: dict) -> int:
+        effective = session.get("effective_seconds", 0) or 0
+        if effective:
+            return int(effective)
+        duration = session.get("duration_seconds", 0) or 0
+        return int(duration)
+
+    def _session_display_label(self, session: dict) -> str:
+        process_name = str(session.get("process_name", "") or "")
+        base_name = self._display_name_mapping.get(process_name, process_name) or process_name or "未知应用"
+        title = str(session.get("normalized_title", "") or session.get("window_title", "") or "").strip()
+        if not title:
+            return base_name
+        normalized_title = title.lower()
+        normalized_base = base_name.lower()
+        if normalized_title == normalized_base:
+            return base_name
+        if normalized_title in normalized_base or normalized_base in normalized_title:
+            return base_name
+        if normalized_title in {"program manager", "desktop", "start", "任务管理器"}:
+            return base_name
+        if len(title) > 20:
+            title = title[:20] + "…"
+        return f"{base_name}({title})"
+
+    @staticmethod
+    def _session_duration_text(session: dict) -> str:
+        seconds = TimelineWidget._session_effective_seconds(session)
+        if seconds < 60:
+            return f"{seconds}秒"
+        minutes = max(1, int(round(seconds / 60.0)))
+        return f"{minutes}分钟"
+
+    @staticmethod
+    def _short_time_range(session: dict) -> str:
+        start = str(session.get("start_time", "") or "")
+        end = str(session.get("end_time", "") or "")
+        start_short = start[-8:-3] if len(start) >= 8 else start
+        end_short = end[-8:-3] if len(end) >= 8 else end
+        if start_short == end_short:
+            start_short = start[-8:] if len(start) >= 8 else start
+            end_short = end[-8:] if len(end) >= 8 else end
+        return f"{start_short} - {end_short}".strip()
+
+    def _build_session_card(self, session: dict, color: str) -> QWidget:
+        card = QFrame()
+        card.setObjectName("sessionCard")
+        card.setStyleSheet(
+            f"""
+            QFrame#sessionCard {{
+                background: {COLORS['panel_bg']};
+                border: 1px solid {COLORS['border_light']};
+                border-radius: 12px;
+            }}
+            """
+        )
+
+        layout = QHBoxLayout(card)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(10)
+
+        accent = QFrame()
+        accent.setFixedWidth(4)
+        accent.setStyleSheet(f"background: {color}; border-radius: 2px;")
+        layout.addWidget(accent)
+
+        body = QVBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(4)
+
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(8)
+
+        app_label = QLabel(self._session_display_label(session))
+        app_label.setStyleSheet(f"font-size: 13px; color: {COLORS['text']}; font-weight: 800;")
+        app_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        top_row.addWidget(app_label, 1)
+
+        duration_label = QLabel(self._session_duration_text(session))
+        duration_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        duration_label.setStyleSheet(f"font-size: 12px; color: {color}; font-weight: 800;")
+        top_row.addWidget(duration_label, 0, Qt.AlignRight)
+
+        body.addLayout(top_row)
+
+        time_label = QLabel(self._short_time_range(session))
+        time_label.setStyleSheet(f"font-size: 11px; color: {COLORS['text_secondary']};")
+        time_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        body.addWidget(time_label)
+
+        category_name = str(session.get("category_name", "") or "其他")
+        category_chip = QLabel(category_name)
+        category_chip.setStyleSheet(
+            f"""
+            QLabel {{
+                font-size: 10px;
+                color: {color};
+                font-weight: 800;
+                padding: 2px 8px;
+                border-radius: 999px;
+                border: 1px solid {color};
+                background: rgba(255, 255, 255, 0.03);
+            }}
+            """
+        )
+        body.addWidget(category_chip)
+
+        layout.addLayout(body, 1)
+        return card
+
     def toggle_expanded(self) -> None:
         if len(self._sessions) <= self._max_rows:
             return
@@ -325,7 +455,7 @@ class TimelineWidget(QFrame):
 
     def show_detail_dialog(self) -> None:
         dialog = QDialog(self)
-        dialog.setWindowTitle("今日时间线")
+        dialog.setWindowTitle("今日专注 Session")
         dialog.setModal(True)
         dialog.resize(980, 720)
         dialog.setStyleSheet(
@@ -339,7 +469,7 @@ class TimelineWidget(QFrame):
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(10)
 
-        title = QLabel("今日时间线")
+        title = QLabel("今日专注 Session")
         title.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {COLORS['text']};")
         layout.addWidget(title)
 
@@ -347,9 +477,10 @@ class TimelineWidget(QFrame):
             max_rows=max(len(self._sessions), self._max_rows),
             show_title=False,
             open_detail_on_more=False,
+            min_effective_seconds=self._min_effective_seconds,
             parent=dialog,
         )
-        detail_widget.set_sessions(list(reversed(list(reversed(self._sessions)))), self._display_name_mapping)
+        detail_widget.set_sessions(list(self._sessions), self._display_name_mapping)
         detail_widget.more_label.setVisible(False)
         layout.addWidget(detail_widget, 1)
 
@@ -384,14 +515,14 @@ class TimelineWidget(QFrame):
             row.deleteLater()
 
         if not self._sessions:
-            placeholder = QLabel("暂无会话数据")
+            placeholder = QLabel("暂无足够长的专注 Session")
             placeholder.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
             self._content_layout.insertWidget(0, placeholder)
             self._rows.append(placeholder)
             self.more_label.setVisible(False)
             return
 
-        displayed_sessions = list(reversed(self._sessions))
+        displayed_sessions = list(self._sessions) if self._sort_by_value else list(reversed(self._sessions))
         if not self._expanded:
             displayed_sessions = displayed_sessions[: self._max_rows]
 
@@ -399,50 +530,7 @@ class TimelineWidget(QFrame):
             category_name = session.get("category_name") or "其他"
             category_key = session.get("category_key") or "other"
             color = self.CATEGORY_COLORS.get(category_name, get_category_color(category_key))
-
-            row = QWidget()
-            row.setMinimumHeight(18)
-            row_layout = QHBoxLayout(row)
-            row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setSpacing(5)
-
-            start = session.get("start_time", "") or ""
-            end = session.get("end_time", "") or ""
-            start_short = start[-8:-3] if len(start) >= 8 else start
-            end_short = end[-8:-3] if len(end) >= 8 else end
-            if start_short == end_short:
-                start_short = start[-8:] if len(start) >= 8 else start
-                end_short = end[-8:] if len(end) >= 8 else end
-            time_label = QLabel(f"{start_short}-{end_short}")
-            time_label.setFixedWidth(112)
-            time_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            time_label.setStyleSheet(
-                f"font-size: 12px; color: {COLORS['text_secondary']}; font-weight: 600;"
-            )
-            row_layout.addWidget(time_label)
-
-            dot = QFrame()
-            dot.setFixedSize(6, 6)
-            dot.setStyleSheet(f"background: {color}; border-radius: 3px;")
-            row_layout.addWidget(dot)
-
-            process_name = session.get("process_name") or ""
-            app_label = QLabel(self._display_name_mapping.get(process_name, process_name) or process_name)
-            app_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            app_label.setStyleSheet(f"font-size: 12px; color: {COLORS['text']}; font-weight: 700;")
-            row_layout.addWidget(app_label)
-
-            category_label = QLabel(category_name)
-            category_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            category_label.setStyleSheet(f"font-size: 11px; color: {color}; font-weight: 700;")
-            row_layout.addWidget(category_label, 1)
-
-            duration_label = QLabel(_timeline_duration_text(session))
-            duration_label.setFixedWidth(46)
-            duration_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            duration_label.setStyleSheet(f"font-size: 11px; color: {COLORS['text_muted']};")
-            row_layout.addWidget(duration_label)
-
+            row = self._build_session_card(session, color)
             self._content_layout.insertWidget(self._content_layout.count() - 1, row)
             self._rows.append(row)
 
@@ -451,7 +539,7 @@ class TimelineWidget(QFrame):
         self.more_label.setEnabled(has_more)
         if has_more:
             if self._open_detail_on_more:
-                self.more_label.setText("查看全部 ↗")
+                self.more_label.setText(f"查看全部 Session ({len(self._sessions)}) ↗")
             else:
                 self.more_label.setText("收起 ↑" if self._expanded else "查看更多 ↓")
 
@@ -465,6 +553,7 @@ class TrendChartWidget(QFrame):
         self._mode = "today"
         self._series: dict[str, list] = {"today": [], "7d": [], "30d": []}
         self._labels: dict[str, list[str]] = {"today": [], "7d": [], "30d": []}
+        self._weekday_indices: dict[str, list[int]] = {"today": [], "7d": [], "30d": []}
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 10, 16, 6)
@@ -529,9 +618,25 @@ class TrendChartWidget(QFrame):
             if button is not None and not button.isChecked():
                 button.setChecked(True)
             self._apply_series()
-            unit = "分钟" if mode == "today" else "小时"
+            unit = "分钟" if mode in {"today", "7d"} else "小时"
             self._title_label.setText(f"时间趋势（{unit}）")
-            self._cmp_legend.setVisible(mode == "today" and bool(self._yesterday_today))
+            if mode == "today":
+                cmp_color = COLORS["text_muted"]
+                self._cmp_legend.setText(
+                    f"<span>── 今日</span>  "
+                    f"<span style='color:{cmp_color}'>- - 昨日</span>"
+                )
+                self._cmp_legend.setVisible(bool(self._yesterday_today))
+            elif mode == "7d":
+                week_labels = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+                parts = [
+                    f"<span style='color:{self.canvas._weekday_colors[idx]}'>── {label}</span>"
+                    for idx, label in enumerate(week_labels)
+                ]
+                self._cmp_legend.setText("  ".join(parts))
+                self._cmp_legend.setVisible(True)
+            else:
+                self._cmp_legend.setVisible(False)
 
     def _apply_series(self) -> None:
         compare = self._yesterday_today if self._mode == "today" else []
@@ -540,6 +645,7 @@ class TrendChartWidget(QFrame):
             self._labels.get(self._mode, []),
             self._mode,
             compare,
+            self._weekday_indices.get(self._mode, []),
         )
 
     def set_data(self, today: list, yesterday_today: list, seven_days: list, thirty_days: list) -> None:
@@ -549,11 +655,12 @@ class TrendChartWidget(QFrame):
         self._yesterday_today = yesterday_today or []
 
         self._labels["today"] = ["0h", "", "2h", "", "4h", "", "6h", "", "8h", "", "10h", "", "12h", "", "14h", "", "16h", "", "18h", "", "20h", "", "22h", ""]
+        self._labels["7d"] = list(self._labels["today"])
 
         today_date = date.today()
-        self._labels["7d"] = [
-            f"{d.month}/{d.day}" if i % 2 == 0 else ""
-            for i, d in enumerate([today_date - timedelta(days=6-i) for i in range(7)])
+        self._weekday_indices["7d"] = [
+            (today_date - timedelta(days=6 - i)).weekday()
+            for i in range(7)
         ]
 
         markers = []
@@ -561,6 +668,8 @@ class TrendChartWidget(QFrame):
             d = today_date - timedelta(days=29-i)
             markers.append(f"{d.month}/{d.day}" if i % 3 == 0 else "")
         self._labels["30d"] = markers
+        self._weekday_indices["today"] = []
+        self._weekday_indices["30d"] = []
 
         self._apply_series()
 
@@ -572,23 +681,77 @@ class _TrendCanvas(QWidget):
         self._labels: list[str] = []
         self._mode = "today"
         self._compare_points: list[float] = []
+        self._week_series: list[list[float]] = []
+        self._weekday_indices: list[int] = []
+        self._weekday_colors = [
+            COLORS["weekday_mon"],
+            COLORS["weekday_tue"],
+            COLORS["weekday_wed"],
+            COLORS["weekday_thu"],
+            COLORS["weekday_fri"],
+            COLORS["weekday_sat"],
+            COLORS["weekday_sun"],
+        ]
 
-    def set_series(self, points: list, labels: list[str] | None = None, mode: str = "today", compare_points: list | None = None) -> None:
-        self._points = [max(0.0, float(point)) for point in points]
+    def set_series(
+        self,
+        points: list,
+        labels: list[str] | None = None,
+        mode: str = "today",
+        compare_points: list | None = None,
+        weekday_indices: list[int] | None = None,
+    ) -> None:
+        self._week_series = []
+        if mode == "7d" and points and isinstance(points[0], (list, tuple)):
+            self._week_series = [
+                [max(0.0, float(value)) for value in day_points]
+                for day_points in points
+            ]
+            self._points = [max((series[idx] for series in self._week_series), default=0.0) for idx in range(24)]
+        else:
+            self._points = [max(0.0, float(point)) for point in points]
         self._labels = labels or []
         self._mode = mode
         self._compare_points = [max(0.0, float(p)) for p in (compare_points or [])]
+        self._weekday_indices = list(weekday_indices or [])
         self.update()
 
     def _series_state(self) -> str:
         if not self._points:
             return "empty"
+        if self._mode == "7d" and self._week_series:
+            valid_count = sum(1 for series in self._week_series for value in series if value > 0)
+            return "chart" if valid_count > 0 else "empty"
         valid_count = sum(1 for value in self._points if value > 0)
         if valid_count == 0:
             return "empty"
         if self._mode == "today" and valid_count < 3:
             return "accumulating"
         return "chart"
+
+    def _uses_hour_units(self) -> bool:
+        return self._mode == "30d"
+
+    def _compute_y_axis_max(self, max_value: float) -> float:
+        if self._mode == "today":
+            y_max = max_value * 1.25
+            if y_max < 1:
+                y_max = 1.0
+            return float(max(10, int(y_max) + 1))
+        if self._mode == "7d":
+            rounded = int((max_value + 29) // 30) * 30
+            return float(max(30, rounded))
+        y_max = max_value * 1.25
+        if y_max < 1:
+            y_max = 1.0
+        y_max = round(y_max + 0.5, 1)
+        return max(1.0, y_max)
+
+    def _weekday_line_style(self, weekday: int, active: bool) -> dict[str, float | int]:
+        is_weekend = weekday in {5, 6}
+        if is_weekend:
+            return {"width": 2.6 if active else 2.2, "alpha": 255 if active else 220}
+        return {"width": 2.0 if active else 1.5, "alpha": 210 if active else 150}
 
     def paintEvent(self, event) -> None:  # noqa: N802
         super().paintEvent(event)
@@ -606,16 +769,9 @@ class _TrendCanvas(QWidget):
             return
 
         max_value = max(self._points)
-        y_max = max_value * 1.25
-        if y_max < 1:
-            y_max = 1.0
-        # Round up to a nice ceiling
-        if self._mode == "today":
-            y_max = max(10, int(y_max) + 1)
-        else:
-            y_max = round(y_max + 0.5, 1)
-            if y_max < 1.0:
-                y_max = 1.0
+        if self._mode == "7d" and self._week_series:
+            max_value = max(max(series) for series in self._week_series)
+        y_max = self._compute_y_axis_max(max_value)
 
         # Grid lines
         painter.setPen(QPen(QColor(COLORS["border"]), 1, Qt.DashLine))
@@ -628,7 +784,7 @@ class _TrendCanvas(QWidget):
         font = painter.font()
         font.setPixelSize(10)
         painter.setFont(font)
-        is_hours = self._mode != "today"
+        is_hours = self._uses_hour_units()
         for i in range(5):
             y = int(chart_rect.top() + i * chart_rect.height() / 4.0)
             val = y_max * (4 - i) / 4
@@ -637,6 +793,11 @@ class _TrendCanvas(QWidget):
             else:
                 label = str(int(val))
             painter.drawText(QRectF(0, y - 7, 34, 14), Qt.AlignRight | Qt.AlignVCenter, label)
+
+        if self._mode == "7d":
+            self._draw_weekday_lines(painter, chart_rect, y_max)
+            self._draw_x_axis_labels(painter, chart_rect)
+            return
 
         # Compute chart points
         step = chart_rect.width() / max(len(self._points) - 1, 1)
@@ -694,7 +855,39 @@ class _TrendCanvas(QWidget):
         for pt in chart_points:
             painter.drawEllipse(pt, 2.5, 2.5)
 
-        # X-axis labels
+        self._draw_x_axis_labels(painter, chart_rect)
+
+    def _draw_weekday_lines(self, painter: QPainter, chart_rect: QRectF, y_max: float) -> None:
+        if not self._week_series:
+            return
+        step = chart_rect.width() / max(24 - 1, 1)
+        for index, series in enumerate(self._week_series):
+            weekday = self._weekday_indices[index] if index < len(self._weekday_indices) else index
+            color = QColor(self._weekday_colors[weekday % 7])
+            style = self._weekday_line_style(weekday, index == len(self._week_series) - 1)
+            color.setAlpha(int(style["alpha"]))
+            points = []
+            for hour, value in enumerate(series[:24]):
+                x = chart_rect.left() + hour * step
+                y = chart_rect.bottom() - (value / y_max) * chart_rect.height()
+                points.append(QPointF(x, y))
+            if not points:
+                continue
+            path = QPainterPath()
+            path.moveTo(points[0])
+            for pt in points[1:]:
+                path.lineTo(pt)
+            pen = QPen(color, float(style["width"]))
+            painter.setPen(pen)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPath(path)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(color)
+            dot_radius = 2.4 if weekday in {5, 6} else 1.8
+            for pt in points:
+                painter.drawEllipse(pt, dot_radius, dot_radius)
+
+    def _draw_x_axis_labels(self, painter: QPainter, chart_rect: QRectF) -> None:
         if self._labels and len(self._labels) == len(self._points):
             xfont = painter.font()
             xfont.setPixelSize(9)

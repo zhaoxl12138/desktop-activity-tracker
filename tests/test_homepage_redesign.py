@@ -15,6 +15,7 @@ sys.path.insert(0, str(SRC))
 
 from desktop_activity_tracker import database  # noqa: E402
 from desktop_activity_tracker.gui.main_window import MainWindow  # noqa: E402
+from desktop_activity_tracker.gui import style as ui_style  # noqa: E402
 
 
 class DummyWorker(QObject):
@@ -112,6 +113,25 @@ def test_homepage_shell_matches_reference_structure():
         assert window.capsule_labels["social"].text() == "社交通讯"
         assert not hasattr(window, "bottom_bar")
         assert window.pages["today"].metric_cards == {}
-        assert window.pages["today"].time_stats_ratio_ring is not None
+        assert getattr(window.pages["today"], "time_stats_ratio_ring", None) is None
+        assert window.pages["today"].time_stats_card is None
+        assert window.pages["today"].insight_card is not None
+        assert window.pages["today"].insight_grid_widget.isVisible() is False
+        assert window.pages["today"].insight_empty_label.isVisible() is True
+        assert set(window.pages["today"].distribution_cmp_labels) == {"work", "entertainment", "social"}
+        assert ui_style.get_category_color("other") != ui_style.COLORS["social_purple"]
+        assert window.pages["today"]._distribution_color("other") == ui_style.get_category_color("other")
+        assert window.pages["today"]._color_for_category("other") == ui_style.get_category_color("other")
+        assert window.pages["today"]._color_for_category("idle") == ui_style.COLORS["timeline_idle"]
+        assert window.pages["today"]._color_for_category("idle_leave") == ui_style.COLORS["timeline_idle"]
+        assert window.pages["today"].timer.isActive() is True
+
+        window.nav_list.setCurrentRow(1)
+        app.processEvents()
+        assert window.pages["today"].timer.isActive() is False
+
+        window.nav_list.setCurrentRow(0)
+        app.processEvents()
+        assert window.pages["today"].timer.isActive() is True
 
         window.close()

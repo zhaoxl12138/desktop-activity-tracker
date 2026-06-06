@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
+from PySide6.QtCore import QCoreApplication
 import yaml
 from PySide6.QtWidgets import QApplication
 
@@ -36,5 +37,53 @@ def test_today_overview_refreshes_every_five_seconds(tmp_path):
     page = TodayOverviewPage(str(db_path))
 
     assert page.timer.interval() == 5000
+    assert page.timer.isActive() is False
+    page.deleteLater()
+    app.processEvents()
+
+
+def test_today_overview_only_refreshes_after_activation(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    db_path = tmp_path / "usage.db"
+    database.close_db(database.init_db(str(db_path)))
+    calls = {"count": 0}
+
+    def fake_snapshot(_db_path, _resolver):
+        calls["count"] += 1
+        return {
+            "today": "2026-06-06",
+            "stats": {},
+            "totals": {
+                "effective_seconds": 0,
+                "idle_seconds": 0,
+                "total_seconds": 0,
+                "active_ratio": 0,
+            },
+            "distribution_sections": [],
+            "day_comparison": {
+                "work": {"direction": "empty", "delta_seconds": 0},
+                "entertainment": {"direction": "empty", "delta_seconds": 0},
+                "social": {"direction": "empty", "delta_seconds": 0},
+            },
+            "sessions": [],
+            "focus_summary": "今日暂未识别到连续专注时段。",
+            "consecutive_days": 0,
+            "top_app_rows": [],
+            "trend": {"today": [0] * 24, "yesterday": [0] * 24, "seven_days": [[0] * 24 for _ in range(7)], "thirty_days": [0] * 30},
+        }
+
+    monkeypatch.setattr("desktop_activity_tracker.gui.pages.today_overview.load_today_snapshot", fake_snapshot)
+
+    page = TodayOverviewPage(str(db_path))
+
+    assert calls["count"] == 0
+    page.activate(force=True)
+    QCoreApplication.processEvents()
+    app.processEvents()
+    assert calls["count"] == 1
+    assert page.timer.isActive() is True
+
+    page.deactivate()
+    assert page.timer.isActive() is False
     page.deleteLater()
     app.processEvents()

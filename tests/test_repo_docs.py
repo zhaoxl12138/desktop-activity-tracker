@@ -33,3 +33,8 @@ def test_editorconfig_declares_utf8_for_repo_text_files():
 def test_repository_uses_single_packaging_spec():
     assert (ROOT / "DayLens.spec").exists()
     assert not (ROOT / "DayLensNew.spec").exists()
+
+
+def test_changelog_and_todo_exist():
+    assert (ROOT / "CHANGELOG.md").exists()
+    assert (ROOT / "TODO.md").exists()

@@ -112,6 +112,8 @@ def main():
         assert window.chk_dark_mode.isChecked() is True, "dark mode toggle should default on"
         assert window.sidebar_quit_btn.text(), "sidebar quit button should exist"
         assert window.sidebar_record_status.text(), "sidebar record status should exist"
+        assert window.sidebar_record_value.text(), "sidebar record value should exist"
+        assert window.sidebar_record_streak.text(), "sidebar record streak should exist"
         assert window.nav_list.verticalScrollBar().maximum() == 0, "sidebar nav should not require scrolling"
 
         dark_style = window.styleSheet()
@@ -150,7 +152,9 @@ def main():
         assert overview.top_app_card is not None, "top app card missing"
         assert overview.timeline_widget is not None, "timeline widget missing"
         assert overview.focus_axis is not None, "focus axis missing"
-        assert overview.timeline_widget.more_label.text() == "查看更多 ↓"
+        assert overview.insight_card is not None, "insight card missing"
+        assert overview.time_stats_card is None, "time stats card should be removed"
+        assert overview.timeline_widget.more_label.isVisible() is False
 
         for row in range(window.nav_list.count()):
             item = window.nav_list.item(row)

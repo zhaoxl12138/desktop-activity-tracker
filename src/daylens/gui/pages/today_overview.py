@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from datetime import date, datetime, timedelta
 
 import psutil
@@ -40,10 +41,18 @@ class TodayOverviewPage(QWidget):
         self.display_name_mapping = display_name_mapping or {}
         self.last_stats_date: str | None = None
         self.last_stats: dict[str, object] = {}
+        self.last_snapshot_totals: dict[str, object] = {}
+        self.last_consecutive_days = 0
         setattr(self, "metric_cards", {})
         self.time_stats_labels: dict[str, QLabel] = {}
+        self.distribution_cmp_labels: dict[str, QLabel] = {}
+        self.insight_card_labels: list[dict[str, QLabel]] = []
         self._icon_provider = QFileIconProvider()
         self._icon_cache: dict[str, QIcon | None] = {}
+        self._is_active = False
+        self._refresh_scheduled = False
+        self._last_refresh_at = 0.0
+        self._refresh_interval_seconds = 5.0
 
         root = QVBoxLayout(self)
         root.setContentsMargins(18, 18, 18, 18)
@@ -54,24 +63,71 @@ class TodayOverviewPage(QWidget):
         content_grid.setVerticalSpacing(14)
         root.addLayout(content_grid, 1)
 
-        content_grid.addWidget(self._build_distribution_card(), 0, 0, 1, 7)
-        content_grid.addWidget(self._build_time_stats_card(), 0, 7, 1, 5)
-        content_grid.addWidget(self._build_focus_timeline_card(), 1, 0, 2, 7)
+        self.distribution_card = self._build_distribution_card()
+        self.insight_card = self._build_insight_card()
+        self.focus_timeline_card = self._build_focus_timeline_card()
+        self.time_stats_card = None
+        self.time_stats_ratio_ring = None
+        content_grid.addWidget(self.distribution_card, 0, 0, 1, 4)
+        content_grid.addWidget(self.insight_card, 0, 4, 1, 4)
         self.trend_card = TrendChartWidget()
-        content_grid.addWidget(self.trend_card, 1, 7, 1, 5)
+        content_grid.addWidget(self.trend_card, 0, 8, 1, 4)
+        content_grid.addWidget(self.focus_timeline_card, 1, 0, 1, 8)
         self.top_app_card = TopAppListWidget()
-        content_grid.addWidget(self.top_app_card, 2, 7, 1, 5)
+        content_grid.addWidget(self.top_app_card, 1, 8, 1, 4)
 
-        content_grid.setRowStretch(0, 2)
-        content_grid.setRowStretch(1, 2)
-        content_grid.setRowStretch(2, 5)
+        content_grid.setRowStretch(0, 3)
+        content_grid.setRowStretch(1, 5)
         for column in range(12):
             content_grid.setColumnStretch(column, 1)
 
         self.timer = QTimer(self)
-        self.timer.timeout.connect(self.refresh)
-        self.timer.start(5000)
-        self.refresh()
+        self.timer.timeout.connect(self._refresh_if_active)
+        self.timer.setInterval(5000)
+
+    def activate(self, force: bool = False) -> None:
+        self._is_active = True
+        if not self.timer.isActive():
+            self.timer.start()
+        if force or self._needs_refresh():
+            self.schedule_refresh(force=force)
+
+    def deactivate(self) -> None:
+        self._is_active = False
+        self._refresh_scheduled = False
+        self.timer.stop()
+
+    def schedule_refresh(self, force: bool = False) -> None:
+        if self._refresh_scheduled:
+            return
+        self._refresh_scheduled = True
+        QTimer.singleShot(0, lambda: self._run_scheduled_refresh(force))
+
+    def _run_scheduled_refresh(self, force: bool) -> None:
+        self._refresh_scheduled = False
+        if not self._is_active and not force:
+            return
+        if force or self._needs_refresh():
+            self.refresh()
+
+    def _needs_refresh(self) -> bool:
+        return (time.time() - self._last_refresh_at) >= self._refresh_interval_seconds
+
+    def _refresh_if_active(self) -> None:
+        if self._is_active:
+            self.refresh()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self.activate(force=False)
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        self.deactivate()
+        super().hideEvent(event)
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        self.deactivate()
+        super().closeEvent(event)
 
     def on_sample_updated(self, sample: dict) -> None:
         """Real-time idle status from worker — cursor/window-based persistent timer."""
@@ -103,7 +159,7 @@ class TodayOverviewPage(QWidget):
         card = QFrame()
         card.setObjectName("dashboardCard")
         card.setStyleSheet(ui_style.get_dashboard_card_style())
-        card.setMinimumHeight(270)
+        card.setMinimumHeight(282)
 
         layout = QVBoxLayout(card)
         layout.setContentsMargins(16, 14, 16, 12)
@@ -150,6 +206,129 @@ class TodayOverviewPage(QWidget):
         status_row.addWidget(self.idle_status_label)
         status_row.addStretch()
         layout.addLayout(status_row)
+
+        cmp_row = QHBoxLayout()
+        cmp_row.setSpacing(8)
+        cmp_title = QLabel("较昨日")
+        cmp_title.setStyleSheet(
+            f"font-size: 14px; color: {ui_style.COLORS['text_secondary']}; font-weight: 700;"
+        )
+        cmp_row.addWidget(cmp_title)
+
+        self.distribution_cmp_labels = {}
+        for key, icon, label_text, color in [
+            ("work", "💼", "工作学习", ui_style.COLORS["coding_green"]),
+            ("entertainment", "📺", "娱乐休闲", ui_style.COLORS["video_orange"]),
+            ("social", "💬", "社交通讯", ui_style.COLORS["social_purple"]),
+        ]:
+            icon_label = QLabel(icon)
+            icon_label.setStyleSheet(f"font-size: 14px; color: {color};")
+            cmp_row.addWidget(icon_label)
+
+            name_label = QLabel(label_text)
+            name_label.setStyleSheet(
+                f"font-size: 13px; color: {ui_style.COLORS['text_secondary']}; font-weight: 700;"
+            )
+            cmp_row.addWidget(name_label)
+
+            value_label = QLabel("--")
+            value_label.setStyleSheet(
+                f"font-size: 13px; color: {ui_style.COLORS['text']}; font-weight: 800;"
+            )
+            cmp_row.addWidget(value_label)
+            self.distribution_cmp_labels[key] = value_label
+
+        cmp_row.addStretch()
+        layout.addLayout(cmp_row)
+        return card
+
+    def _build_insight_card(self) -> QWidget:
+        card = QFrame()
+        card.setObjectName("dashboardCard")
+        card.setStyleSheet(ui_style.get_dashboard_card_style())
+        card.setMinimumHeight(282)
+
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 14, 16, 12)
+        layout.setSpacing(10)
+
+        title = QLabel("✦ 今日洞察")
+        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {ui_style.COLORS['text']};")
+        layout.addWidget(title)
+
+        self.insight_empty_label = QLabel("数据积累中\n使用一段时间后将生成洞察")
+        self.insight_empty_label.setAlignment(Qt.AlignCenter)
+        self.insight_empty_label.setWordWrap(True)
+        self.insight_empty_label.setStyleSheet(
+            f"font-size: 13px; color: {ui_style.COLORS['text_secondary']}; font-weight: 700;"
+            f"padding: 30px 16px; border: 1px dashed {ui_style.COLORS['border_light']};"
+            f"border-radius: 14px; background: {ui_style.COLORS['panel_bg_alt']};"
+        )
+        layout.addWidget(self.insight_empty_label, 1)
+
+        self.insight_grid_widget = QWidget()
+        grid = QGridLayout(self.insight_grid_widget)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(10)
+
+        specs = [
+            ("最长专注", "🏆", ui_style.COLORS["coding_green"]),
+            ("最佳状态时段", "🕒", ui_style.COLORS["primary"]),
+            ("最大干扰源", "⚠", ui_style.COLORS["warning_yellow"]),
+            ("今日建议", "💡", ui_style.COLORS["social_purple"]),
+        ]
+        self.insight_card_labels = []
+        for index, (title_text, icon_text, accent) in enumerate(specs):
+            mini = QFrame()
+            mini.setObjectName("insightMiniCard")
+            mini.setStyleSheet(
+                f"""
+                QFrame#insightMiniCard {{
+                    background: {ui_style.COLORS['panel_bg_alt']};
+                    border: 1px solid {accent};
+                    border-radius: 14px;
+                }}
+                """
+            )
+            mini_layout = QVBoxLayout(mini)
+            mini_layout.setContentsMargins(12, 10, 12, 10)
+            mini_layout.setSpacing(4)
+
+            header = QHBoxLayout()
+            header.setSpacing(6)
+            icon = QLabel(icon_text)
+            icon.setStyleSheet(f"font-size: 16px; color: {accent};")
+            header.addWidget(icon)
+            title_label = QLabel(title_text)
+            title_label.setStyleSheet(f"font-size: 12px; color: {ui_style.COLORS['text_secondary']}; font-weight: 800;")
+            header.addWidget(title_label)
+            header.addStretch()
+            mini_layout.addLayout(header)
+
+            primary_label = QLabel("--")
+            primary_label.setWordWrap(True)
+            primary_label.setStyleSheet(f"font-size: 15px; color: {ui_style.COLORS['text']}; font-weight: 900;")
+            mini_layout.addWidget(primary_label)
+
+            secondary_label = QLabel("--")
+            secondary_label.setWordWrap(True)
+            secondary_label.setStyleSheet(f"font-size: 11px; color: {ui_style.COLORS['text_secondary']};")
+            mini_layout.addWidget(secondary_label)
+
+            grid.addWidget(mini, index // 2, index % 2)
+            self.insight_card_labels.append(
+                {
+                    "title": title_label,
+                    "primary": primary_label,
+                    "secondary": secondary_label,
+                    "icon": icon,
+                    "accent": accent,
+                }
+            )
+
+        layout.addWidget(self.insight_grid_widget, 1)
+        self.insight_grid_widget.setVisible(False)
         return card
 
     def _build_time_stats_card(self) -> QWidget:
@@ -298,8 +477,8 @@ class TodayOverviewPage(QWidget):
             ("💼 工作学习", ui_style.COLORS["coding_green"]),
             ("📺 娱乐休闲", ui_style.COLORS["video_orange"]),
             ("💬 社交通讯", ui_style.COLORS["social_purple"]),
-            ("📦 其他", ui_style.COLORS["tools_grey"]),
-            ("💤 离开/空闲", ui_style.COLORS["idle_gray"]),
+            ("📦 其他", ui_style.get_category_color("other")),
+            ("💤 离开/空闲", ui_style.COLORS["timeline_idle"]),
         ]:
             dot = QLabel("●")
             dot.setStyleSheet(f"font-size: 10px; color: {color};")
@@ -318,23 +497,31 @@ class TodayOverviewPage(QWidget):
         self.consecutive_label = QLabel("")
         self.consecutive_label.setVisible(False)
 
-        section_title = QLabel("今日时间线")
+        section_title = QLabel("今日专注 Session")
         section_title.setStyleSheet(f"font-size: 14px; font-weight: 700; color: {ui_style.COLORS['text']};")
         layout.addWidget(section_title)
 
-        self.timeline_widget = TimelineWidget(max_rows=11, show_title=False, open_detail_on_more=True)
+        self.timeline_widget = TimelineWidget(
+            max_rows=5,
+            show_title=False,
+            open_detail_on_more=True,
+            min_effective_seconds=300,
+            sort_by_value=True,
+        )
         layout.addWidget(self.timeline_widget, 1)
         return card
 
     def refresh(self) -> None:
         snapshot = load_today_snapshot(self.db_path, self._resolve_display)
+        self._last_refresh_at = time.time()
         self.last_stats_date = str(snapshot["today"])
         self.last_stats = dict(snapshot["stats"])
         totals = snapshot["totals"]
+        self.last_snapshot_totals = dict(totals)
         effective = int(totals["effective_seconds"])
         idle_seconds = int(totals["idle_seconds"])
-        total_seconds = int(totals["total_seconds"])
         active_ratio = int(totals["active_ratio"])
+        insights = snapshot.get("insights", {})
 
         distribution = [
             (str(item["label"]), int(item["seconds"]), self._distribution_color(str(item["category_key"])))
@@ -343,37 +530,32 @@ class TodayOverviewPage(QWidget):
         self.donut_widget.set_data(effective, distribution)
         self.legend_widget.set_items(distribution, effective)
 
-        self.active_status_label.setText(f"活跃占比 {active_ratio}%")
-        self.idle_status_label.setText(f"挂机 {_compact_duration(idle_seconds)}")
-        self.time_stats_labels["total"].setText(_compact_duration(total_seconds))
-        self.time_stats_labels["active"].setText(_compact_duration(effective))
-        self.time_stats_labels["idle"].setText(_compact_duration(idle_seconds))
-        self.time_stats_labels["ratio"].setText(f"{active_ratio}%")
-        self.time_stats_ratio_ring.set_ratio(active_ratio)
+        self.active_status_label.setText(f"???? {active_ratio}%")
+        self.idle_status_label.setText(f"??/?? {_compact_duration(idle_seconds)}")
 
-        for key, item in snapshot["day_comparison"].items():
-            label = self._day_cmp_labels[key]
-            direction = str(item["direction"])
-            delta = int(item["delta_seconds"])
+        for key, label in self.distribution_cmp_labels.items():
+            item = snapshot["day_comparison"].get(key, {})
+            direction = str(item.get("direction", "empty"))
+            delta = int(item.get("delta_seconds", 0) or 0)
             if direction == "empty":
                 label.setText("--")
                 label.setStyleSheet(
-                    f"font-size: 15px; color: {ui_style.COLORS['text_muted']};"
+                    f"font-size: 13px; color: {ui_style.COLORS['text_muted']}; font-weight: 800;"
                 )
             elif direction == "flat":
-                label.setText("→ 持平")
+                label.setText("? 0")
                 label.setStyleSheet(
-                    f"font-size: 15px; color: {ui_style.COLORS['text_muted']}; font-weight: 700;"
+                    f"font-size: 13px; color: {ui_style.COLORS['text_muted']}; font-weight: 800;"
                 )
             elif direction == "up":
-                label.setText(f"↑ +{_compact_duration(delta)}")
+                label.setText(f"+{_compact_duration(delta)}")
                 label.setStyleSheet(
-                    f"font-size: 15px; color: {ui_style.COLORS['success_green']}; font-weight: 700;"
+                    f"font-size: 13px; color: {ui_style.COLORS['success_green']}; font-weight: 800;"
                 )
             else:
-                label.setText(f"↓ {_compact_duration(abs(delta))}")
+                label.setText(f"-{_compact_duration(abs(delta))}")
                 label.setStyleSheet(
-                    f"font-size: 15px; color: {ui_style.COLORS['danger_red']}; font-weight: 700;"
+                    f"font-size: 13px; color: {ui_style.COLORS['danger_red']}; font-weight: 800;"
                 )
 
         sessions = [
@@ -386,16 +568,50 @@ class TodayOverviewPage(QWidget):
             }
             for session in snapshot["sessions"]
         ]
-        self.timeline_widget.set_sessions(sessions, self.display_name_mapping)
-        self.focus_axis.set_minutes(self._build_focus_axis(sessions))
+        session_cards = sorted(
+            sessions,
+            key=lambda session: (
+                -int(session.get("effective_seconds", 0) or 0),
+                str(session.get("end_time", "") or ""),
+            ),
+        )
+        timeline_sessions = sorted(
+            sessions,
+            key=lambda session: (
+                str(session.get("start_time", "") or ""),
+                str(session.get("end_time", "") or ""),
+            ),
+        )
+        self.timeline_widget.set_sessions(session_cards, self.display_name_mapping)
+        self.focus_axis.set_minutes(self._build_focus_axis(timeline_sessions))
         trend = snapshot["trend"]
         self.trend_card.set_data(trend["today"], trend["yesterday"], trend["seven_days"], trend["thirty_days"])
         focus_summary = str(snapshot["focus_summary"])
         self.focus_hint.setText(focus_summary)
-        self.focus_hint.setVisible("暂无识别" not in focus_summary)
+        self.focus_hint.setVisible("??" not in focus_summary and "???" not in focus_summary)
         consecutive_days = int(snapshot["consecutive_days"])
-        self.consecutive_label.setText(f"第 {consecutive_days} 天" if consecutive_days > 0 else "")
+        self.last_consecutive_days = consecutive_days
+        self.consecutive_label.setText(f"?{consecutive_days}?" if consecutive_days > 0 else "")
+        self._update_insights(insights)
         self._update_top_apps(snapshot["top_app_rows"])
+
+    def _update_insights(self, insights: dict) -> None:
+        ready = bool(insights.get("ready"))
+        self.insight_empty_label.setVisible(not ready)
+        self.insight_grid_widget.setVisible(ready)
+        cards = list(insights.get("cards", [])) if ready else []
+        for index, slots in enumerate(self.insight_card_labels):
+            if index < len(cards):
+                card = cards[index]
+                slots["title"].setText(str(card.get("title", "")))
+                slots["primary"].setText(str(card.get("primary", "--")))
+                slots["secondary"].setText(str(card.get("secondary", "--")))
+                accent = str(card.get("accent", ui_style.COLORS["primary"]))
+                slots["icon"].setStyleSheet(f"font-size: 16px; color: {accent};")
+            else:
+                slots["title"].setText("--")
+                slots["primary"].setText("--")
+                slots["secondary"].setText("--")
 
     def _update_top_apps(self, rows_data: list[dict[str, object]]) -> None:
         rows = []
@@ -412,8 +628,8 @@ class TodayOverviewPage(QWidget):
             "work": ui_style.COLORS["coding_green"],
             "video": ui_style.COLORS["video_orange"],
             "social": ui_style.COLORS["social_purple"],
-            "other": ui_style.COLORS["ai_blue"],
-        }.get(category_key, ui_style.COLORS["ai_blue"])
+            "other": ui_style.get_category_color("other"),
+        }.get(category_key, ui_style.get_category_color("other"))
 
     @staticmethod
     def _icon_process_for_display(process_name: str, display_name: str) -> str:
@@ -517,7 +733,7 @@ class TodayOverviewPage(QWidget):
         return None
 
     def _build_focus_axis(self, sessions: list[dict]) -> list[str]:
-        colors = [ui_style.COLORS["idle_gray"]] * 1440
+        colors = [ui_style.COLORS["timeline_idle"]] * 1440
         for session in sessions:
             start = self._to_minute(session.get("start_time", ""))
             end = max(start, self._to_minute(session.get("end_time", "")))
@@ -547,8 +763,8 @@ class TodayOverviewPage(QWidget):
         if category_key == "social":
             return ui_style.COLORS["social_purple"]
         if category_key in {"idle", "idle_leave"}:
-            return ui_style.COLORS["idle_gray"]
-        return ui_style.COLORS["ai_blue"]
+            return ui_style.COLORS["timeline_idle"]
+        return ui_style.get_category_color("other")
 
     def _resolve_display(self, process_name: str, app_details: list[dict]) -> str:
         wrapper_processes = {"WindowsTerminal.exe", "cmd.exe", "powershell.exe", "Code.exe", "Cursor.exe"}
