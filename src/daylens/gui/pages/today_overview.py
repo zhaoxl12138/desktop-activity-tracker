@@ -76,8 +76,8 @@ class TodayOverviewPage(QWidget):
         self.top_app_card = TopAppListWidget()
         content_grid.addWidget(self.top_app_card, 1, 8, 1, 4)
 
-        content_grid.setRowStretch(0, 3)
-        content_grid.setRowStretch(1, 5)
+        content_grid.setRowStretch(0, 4)
+        content_grid.setRowStretch(1, 6)
         for column in range(12):
             content_grid.setColumnStretch(column, 1)
 

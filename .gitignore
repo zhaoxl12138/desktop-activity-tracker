@@ -49,3 +49,5 @@ Thumbs.db
 *.swo
 artifacts/
 .worktrees/
+tools/chinese-poetry/
+tools/chinese-poetry-sqlite/

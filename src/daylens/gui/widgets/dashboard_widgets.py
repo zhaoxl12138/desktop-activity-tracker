@@ -549,15 +549,15 @@ class TrendChartWidget(QFrame):
         super().__init__(parent)
         self.setObjectName("dashboardCard")
         self.setStyleSheet(ui_style.get_dashboard_card_style())
-        self.setFixedHeight(236)
+        self.setMinimumHeight(282)
         self._mode = "today"
         self._series: dict[str, list] = {"today": [], "7d": [], "30d": []}
         self._labels: dict[str, list[str]] = {"today": [], "7d": [], "30d": []}
         self._weekday_indices: dict[str, list[int]] = {"today": [], "7d": [], "30d": []}
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(16, 10, 16, 6)
-        root.setSpacing(2)
+        root.setContentsMargins(16, 10, 16, 8)
+        root.setSpacing(4)
 
         header = QHBoxLayout()
         self._title_label = QLabel("时间趋势（分钟）")
@@ -575,8 +575,8 @@ class TrendChartWidget(QFrame):
             button.setStyleSheet(
                 f"""
                 QPushButton {{
-                    padding: 3px 8px;
-                    border-radius: 7px;
+                    padding: 3px 9px;
+                    border-radius: 6px;
                     border: 1px solid {COLORS['border']};
                     color: {COLORS['text_secondary']};
                     background: {COLORS['panel_bg']};
@@ -598,6 +598,7 @@ class TrendChartWidget(QFrame):
         root.addLayout(header)
 
         self.canvas = _TrendCanvas()
+        self.canvas.setMinimumHeight(208)
         root.addWidget(self.canvas, 1)
 
         cmp_color = COLORS["text_muted"]
@@ -606,7 +607,7 @@ class TrendChartWidget(QFrame):
             f"<span style='color:{cmp_color}'>- - 昨日</span>"
         )
         self._cmp_legend.setStyleSheet(
-            f"font-size: 10px; color: {COLORS['text_secondary']}; padding-left: 4px;"
+            f"font-size: 10px; color: {COLORS['text_secondary']}; padding-left: 2px;"
         )
         self._cmp_legend.setVisible(False)
         root.addWidget(self._cmp_legend)
@@ -914,19 +915,19 @@ class TopAppListWidget(QFrame):
         super().__init__(parent)
         self.setObjectName("dashboardCard")
         self.setStyleSheet(ui_style.get_dashboard_card_style())
-        self.setFixedHeight(156)
+        self.setMinimumHeight(236)
         self._rows: list[tuple[QLabel, QLabel, QProgressBar, QLabel]] = []
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 12, 16, 14)
-        root.setSpacing(8)
+        root.setSpacing(10)
 
         title = QLabel("软件使用 TOP5")
-        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {COLORS['text']};")
+        title.setStyleSheet(f"font-size: 16px; font-weight: 800; color: {COLORS['text']};")
         root.addWidget(title)
 
         self.rows_container = QVBoxLayout()
-        self.rows_container.setSpacing(10)
+        self.rows_container.setSpacing(12)
         root.addLayout(self.rows_container)
         root.addStretch()
 
@@ -937,13 +938,11 @@ class TopAppListWidget(QFrame):
 
     def _build_row(self, rank: int):
         layout = QHBoxLayout()
-        layout.setSpacing(8)
+        layout.setSpacing(10)
 
         rank_label = QLabel(str(rank))
-        rank_label.setFixedWidth(16)
-        rank_label.setStyleSheet(
-            f"font-size: 15px; color: {COLORS['text_secondary']}; font-weight: 700;"
-        )
+        rank_label.setFixedWidth(18)
+        rank_label.setStyleSheet(f"font-size: 15px; color: {COLORS['text_secondary']}; font-weight: 700;")
         layout.addWidget(rank_label)
 
         icon_label = QLabel("")
@@ -959,7 +958,7 @@ class TopAppListWidget(QFrame):
         progress_bar = QProgressBar()
         progress_bar.setTextVisible(False)
         progress_bar.setRange(0, 100)
-        progress_bar.setFixedHeight(7)
+        progress_bar.setFixedHeight(8)
         progress_bar.setStyleSheet(
             f"""
             QProgressBar {{
@@ -976,9 +975,9 @@ class TopAppListWidget(QFrame):
         layout.addWidget(progress_bar, 1)
 
         duration_label = QLabel("--")
-        duration_label.setFixedWidth(66)
+        duration_label.setFixedWidth(68)
         duration_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        duration_label.setStyleSheet(f"font-size: 12px; color: {COLORS['text_secondary']};")
+        duration_label.setStyleSheet(f"font-size: 13px; color: {COLORS['text_secondary']};")
         layout.addWidget(duration_label)
 
         return layout, icon_label, name_label, progress_bar, duration_label
