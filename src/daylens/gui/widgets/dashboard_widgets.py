@@ -9,6 +9,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -134,7 +135,7 @@ class FocusTimelineBarWidget(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._minute_colors = [COLORS["idle_gray"]] * 1440
-        self.setFixedHeight(28)
+        self.setFixedHeight(24)
 
     def set_minutes(self, minute_colors: list[str]) -> None:
         if len(minute_colors) == 1440:
@@ -175,41 +176,83 @@ class FocusTimelineBarWidget(QWidget):
 class TimelineWidget(QFrame):
     CATEGORY_COLORS = {
         "办公": COLORS["coding_green"],
+        "工作学习": COLORS["coding_green"],
         "视频娱乐": COLORS["video_orange"],
+        "娱乐休闲": COLORS["video_orange"],
         "社交通讯": COLORS["social_purple"],
+        "浏览器": COLORS["tools_grey"],
+        "系统工具": COLORS["tools_grey"],
         "挂机": COLORS["idle_gray"],
         "离开": COLORS["idle_gray"],
         "空闲": COLORS["idle_gray"],
         "其他": COLORS["ai_blue"],
     }
 
-    def __init__(self, max_rows: int = 6, parent: QWidget | None = None):
+    def __init__(
+        self,
+        max_rows: int = 8,
+        show_title: bool = True,
+        open_detail_on_more: bool = False,
+        parent: QWidget | None = None,
+    ):
         super().__init__(parent)
         self._max_rows = max_rows
+        self._show_title = show_title
+        self._open_detail_on_more = open_detail_on_more
         self._rows: list[QWidget] = []
         self._sessions: list[dict] = []
         self._display_name_mapping = {}
-        self._expanded = False
+        self._expanded = True
+        self._detail_dialog: QDialog | None = None
         self.setObjectName("dashboardCard")
         self.setStyleSheet("QFrame#dashboardCard { background: transparent; border: none; }")
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(8)
+        root.setSpacing(2)
 
-        title = QLabel("今日时间线")
-        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {COLORS['text']};")
-        root.addWidget(title)
+        if self._show_title:
+            title = QLabel("今日时间线")
+            title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {COLORS['text']};")
+            root.addWidget(title)
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.scroll.setStyleSheet(
+            f"""
+            QScrollArea {{
+                border: none;
+                background: transparent;
+            }}
+            QScrollBar:vertical {{
+                background: transparent;
+                width: 8px;
+                margin: 2px 0 2px 0;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {COLORS['border_light']};
+                border-radius: 4px;
+                min-height: 36px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: {COLORS['primary']};
+            }}
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical,
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {{
+                background: transparent;
+                height: 0;
+            }}
+            """
+        )
 
         self._content = QWidget()
         self._content_layout = QVBoxLayout(self._content)
         self._content_layout.setContentsMargins(0, 0, 2, 0)
-        self._content_layout.setSpacing(6)
+        self._content_layout.setSpacing(2)
         self._content_layout.addStretch()
         self.scroll.setWidget(self._content)
         root.addWidget(self.scroll, 1)
@@ -225,7 +268,7 @@ class TimelineWidget(QFrame):
                 font-weight: 700;
                 border: none;
                 background: transparent;
-                padding: 2px 0 0 0;
+                padding: 0;
             }}
             QPushButton:hover {{
                 color: {COLORS['primary_hover']};
@@ -238,7 +281,7 @@ class TimelineWidget(QFrame):
     def set_sessions(self, sessions, display_name_mapping=None) -> None:
         self._sessions = self._merge_sessions(list(sessions or []))
         self._display_name_mapping = display_name_mapping or {}
-        self._expanded = False
+        self._expanded = len(self._sessions) > self._max_rows
         self._render_rows()
 
     def _merge_sessions(self, sessions: list[dict]) -> list[dict]:
@@ -274,8 +317,65 @@ class TimelineWidget(QFrame):
     def toggle_expanded(self) -> None:
         if len(self._sessions) <= self._max_rows:
             return
+        if self._open_detail_on_more:
+            self.show_detail_dialog()
+            return
         self._expanded = not self._expanded
         self._render_rows()
+
+    def show_detail_dialog(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("今日时间线")
+        dialog.setModal(True)
+        dialog.resize(980, 720)
+        dialog.setStyleSheet(
+            f"""
+            QDialog {{
+                background: {COLORS['bg']};
+            }}
+            """
+        )
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(10)
+
+        title = QLabel("今日时间线")
+        title.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {COLORS['text']};")
+        layout.addWidget(title)
+
+        detail_widget = TimelineWidget(
+            max_rows=max(len(self._sessions), self._max_rows),
+            show_title=False,
+            open_detail_on_more=False,
+            parent=dialog,
+        )
+        detail_widget.set_sessions(list(reversed(list(reversed(self._sessions)))), self._display_name_mapping)
+        detail_widget.more_label.setVisible(False)
+        layout.addWidget(detail_widget, 1)
+
+        close_button = QPushButton("关闭")
+        close_button.setCursor(Qt.PointingHandCursor)
+        close_button.setStyleSheet(
+            f"""
+            QPushButton {{
+                padding: 8px 18px;
+                border-radius: 10px;
+                border: 1px solid {COLORS['border']};
+                color: {COLORS['text']};
+                background: {COLORS['panel_bg']};
+                font-size: 13px;
+                font-weight: 700;
+            }}
+            QPushButton:hover {{
+                border-color: {COLORS['primary']};
+            }}
+            """
+        )
+        close_button.clicked.connect(dialog.accept)
+        layout.addWidget(close_button, 0, Qt.AlignRight)
+
+        self._detail_dialog = dialog
+        dialog.show()
 
     def _render_rows(self) -> None:
         while self._rows:
@@ -288,9 +388,7 @@ class TimelineWidget(QFrame):
             placeholder.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
             self._content_layout.insertWidget(0, placeholder)
             self._rows.append(placeholder)
-            self.more_label.setVisible(True)
-            self.more_label.setEnabled(False)
-            self.more_label.setText("查看更多 ↓")
+            self.more_label.setVisible(False)
             return
 
         displayed_sessions = list(reversed(self._sessions))
@@ -303,9 +401,10 @@ class TimelineWidget(QFrame):
             color = self.CATEGORY_COLORS.get(category_name, get_category_color(category_key))
 
             row = QWidget()
+            row.setMinimumHeight(18)
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setSpacing(8)
+            row_layout.setSpacing(5)
 
             start = session.get("start_time", "") or ""
             end = session.get("end_time", "") or ""
@@ -315,42 +414,46 @@ class TimelineWidget(QFrame):
                 start_short = start[-8:] if len(start) >= 8 else start
                 end_short = end[-8:] if len(end) >= 8 else end
             time_label = QLabel(f"{start_short}-{end_short}")
-            time_label.setFixedWidth(130)
+            time_label.setFixedWidth(112)
+            time_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             time_label.setStyleSheet(
-                f"font-size: 13px; color: {COLORS['text_secondary']}; font-weight: 600;"
+                f"font-size: 12px; color: {COLORS['text_secondary']}; font-weight: 600;"
             )
             row_layout.addWidget(time_label)
 
             dot = QFrame()
-            dot.setFixedSize(8, 8)
-            dot.setStyleSheet(f"background: {color}; border-radius: 4px;")
+            dot.setFixedSize(6, 6)
+            dot.setStyleSheet(f"background: {color}; border-radius: 3px;")
             row_layout.addWidget(dot)
 
             process_name = session.get("process_name") or ""
             app_label = QLabel(self._display_name_mapping.get(process_name, process_name) or process_name)
-            app_label.setStyleSheet(f"font-size: 13px; color: {COLORS['text']}; font-weight: 700;")
+            app_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            app_label.setStyleSheet(f"font-size: 12px; color: {COLORS['text']}; font-weight: 700;")
             row_layout.addWidget(app_label)
 
             category_label = QLabel(category_name)
-            category_label.setStyleSheet(f"font-size: 12px; color: {color}; font-weight: 700;")
+            category_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            category_label.setStyleSheet(f"font-size: 11px; color: {color}; font-weight: 700;")
             row_layout.addWidget(category_label, 1)
 
             duration_label = QLabel(_timeline_duration_text(session))
-            duration_label.setFixedWidth(60)
+            duration_label.setFixedWidth(46)
             duration_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            duration_label.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
+            duration_label.setStyleSheet(f"font-size: 11px; color: {COLORS['text_muted']};")
             row_layout.addWidget(duration_label)
 
             self._content_layout.insertWidget(self._content_layout.count() - 1, row)
             self._rows.append(row)
 
         has_more = len(self._sessions) > self._max_rows
-        self.more_label.setVisible(True)
+        self.more_label.setVisible(has_more)
         self.more_label.setEnabled(has_more)
-        if not has_more:
-            self.more_label.setText("查看更多 ↓")
-        else:
-            self.more_label.setText("收起 ↑" if self._expanded else "查看更多 ↓")
+        if has_more:
+            if self._open_detail_on_more:
+                self.more_label.setText("查看全部 ↗")
+            else:
+                self.more_label.setText("收起 ↑" if self._expanded else "查看更多 ↓")
 
 
 class TrendChartWidget(QFrame):
@@ -358,7 +461,7 @@ class TrendChartWidget(QFrame):
         super().__init__(parent)
         self.setObjectName("dashboardCard")
         self.setStyleSheet(ui_style.get_dashboard_card_style())
-        self.setFixedHeight(250)
+        self.setFixedHeight(236)
         self._mode = "today"
         self._series: dict[str, list] = {"today": [], "7d": [], "30d": []}
         self._labels: dict[str, list[str]] = {"today": [], "7d": [], "30d": []}
@@ -374,6 +477,8 @@ class TrendChartWidget(QFrame):
         header.addStretch()
 
         self.group = QButtonGroup(self)
+        self.group.setExclusive(True)
+        self._mode_buttons: dict[str, QPushButton] = {}
         for mode, text in [("today", "今日"), ("7d", "近7天"), ("30d", "近30天")]:
             button = QPushButton(text)
             button.setCheckable(True)
@@ -398,6 +503,7 @@ class TrendChartWidget(QFrame):
             button.clicked.connect(lambda _, current_mode=mode: self.set_mode(current_mode))
             header.addWidget(button)
             self.group.addButton(button)
+            self._mode_buttons[mode] = button
             if mode == "today":
                 button.setChecked(True)
         root.addLayout(header)
@@ -419,6 +525,9 @@ class TrendChartWidget(QFrame):
     def set_mode(self, mode: str) -> None:
         if mode in self._series:
             self._mode = mode
+            button = self._mode_buttons.get(mode)
+            if button is not None and not button.isChecked():
+                button.setChecked(True)
             self._apply_series()
             unit = "分钟" if mode == "today" else "小时"
             self._title_label.setText(f"时间趋势（{unit}）")
@@ -471,6 +580,16 @@ class _TrendCanvas(QWidget):
         self._compare_points = [max(0.0, float(p)) for p in (compare_points or [])]
         self.update()
 
+    def _series_state(self) -> str:
+        if not self._points:
+            return "empty"
+        valid_count = sum(1 for value in self._points if value > 0)
+        if valid_count == 0:
+            return "empty"
+        if self._mode == "today" and valid_count < 3:
+            return "accumulating"
+        return "chart"
+
     def paintEvent(self, event) -> None:  # noqa: N802
         super().paintEvent(event)
         painter = QPainter(self)
@@ -478,15 +597,11 @@ class _TrendCanvas(QWidget):
         r = self.rect()
         chart_rect = r.adjusted(42, 6, -14, -30)
 
-        if not self._points:
+        state = self._series_state()
+        if state == "empty":
             self._draw_empty(painter, r, "暂无趋势数据")
             return
-
-        valid_count = sum(1 for v in self._points if v > 0)
-        if valid_count == 0:
-            self._draw_empty(painter, r, "暂无趋势数据")
-            return
-        if valid_count < 3:
+        if state == "accumulating":
             self._draw_empty(painter, r, "数据积累中\n使用一段时间后将显示趋势")
             return
 
@@ -606,7 +721,7 @@ class TopAppListWidget(QFrame):
         super().__init__(parent)
         self.setObjectName("dashboardCard")
         self.setStyleSheet(ui_style.get_dashboard_card_style())
-        self.setFixedHeight(170)
+        self.setFixedHeight(156)
         self._rows: list[tuple[QLabel, QLabel, QProgressBar, QLabel]] = []
 
         root = QVBoxLayout(self)

@@ -105,8 +105,10 @@ def test_homepage_shell_matches_reference_structure():
         assert window.size().height() == 900
         assert window.minimumSize() == window.maximumSize()
         assert set(window.capsule_values) == {"total", "work", "ent", "social"}
-        assert window.capsule_labels["ent"].text() == "视频娱乐"
-        assert window.capsule_icons["ent"].text() == "▶"
+        assert window.capsule_labels["total"].text() == "活跃时间"
+        assert window.capsule_labels["work"].text() == "工作学习"
+        assert window.capsule_labels["ent"].text() == "娱乐休闲"
+        assert window.capsule_icons["ent"].text() == "📺"
         assert window.capsule_labels["social"].text() == "社交通讯"
         assert not hasattr(window, "bottom_bar")
         assert window.pages["today"].metric_cards == {}

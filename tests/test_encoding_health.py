@@ -60,7 +60,7 @@ def test_report_and_timeline_labels_are_human_readable_chinese():
         "总览",
         "活跃时间：",
         "挂机/空闲时间：",
-        "娱乐时间：",
+        "娱乐休闲时间：",
         "效率评分",
         "分类统计",
         "软件排行",
@@ -71,12 +71,12 @@ def test_report_and_timeline_labels_are_human_readable_chinese():
     timeline_text = (ROOT / "src" / "daylens" / "timeline.py").read_text(encoding="utf-8")
     for snippet in (
         "离线",
-        "办公",
-        "娱乐",
+        "工作学习",
+        "娱乐休闲",
         "混合",
         "低，今天专注度较好",
         "严重碎片化，建议减少频繁切换",
-        "办公较集中",
-        "娱乐时间控制得当",
+        "工作学习较集中",
+        "娱乐休闲时间控制得当",
     ):
         assert snippet in timeline_text

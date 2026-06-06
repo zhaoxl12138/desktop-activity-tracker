@@ -105,8 +105,8 @@ class FakeClassifier:
     def classify(self, process_name, window_title):
         mapping = {
             "chrome.exe": ("browser_general", "浏览器", "interactive_required"),
-            "code.exe": ("coding", "编程开发", "interactive_required"),
-            "vlc.exe": ("video", "视频娱乐", "passive_allowed"),
+            "code.exe": ("coding", "工作学习", "interactive_required"),
+            "vlc.exe": ("video", "娱乐休闲", "passive_allowed"),
             "wechat.exe": ("social", "社交通讯", "passive_allowed"),
         }
         key, name, rule = mapping.get(process_name.lower(), ("other", "其他", "interactive_required"))
@@ -295,7 +295,7 @@ def test_exporter():
         window_title="Movie",
         normalized_title="Movie",
         category_key="video",
-        category_name="视频娱乐",
+        category_name="娱乐休闲",
         active_rule="passive_allowed",
         duration_seconds=1800,
         effective_seconds=1800,
@@ -309,8 +309,8 @@ def test_exporter():
     check(os.path.exists(md_path), f"markdown file created: {md_path}")
     if os.path.exists(md_path):
         content = open(md_path, 'r', encoding='utf-8').read()
-        check("编程开发" in content, "markdown contains 编程开发")
-        check("视频娱乐" in content, "markdown contains 视频娱乐")
+        check("工作学习" in content, "markdown contains 工作学习")
+        check("娱乐休闲" in content, "markdown contains 娱乐休闲")
 
     # Export CSV
     csv_path = exporter.export_csv(db_path, today, tmpdir)

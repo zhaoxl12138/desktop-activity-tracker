@@ -1,5 +1,12 @@
 """Shared utility functions used across the package."""
 
+WORK_CATEGORY_KEYS = {"ai_tools", "coding", "reading", "creative", "work"}
+ENTERTAINMENT_CATEGORY_KEYS = {"video", "gaming", "entertainment"}
+SOCIAL_CATEGORY_KEYS = {"social"}
+BROWSER_CATEGORY_KEYS = {"browser_general", "browser_other"}
+TOOLS_CATEGORY_KEYS = {"tools", "system_tools"}
+HIDDEN_RULE_CATEGORY_KEYS = {"idle", "hangup"}
+
 
 def fmt_seconds(total_seconds):
     """Format seconds into Chinese-readable duration string."""
@@ -58,7 +65,7 @@ _DEFAULT_CATEGORIES = {
         ],
     },
     "video": {
-        "display_name": "视频娱乐",
+        "display_name": "娱乐休闲",
         "active_rule": "passive_allowed",
         "process_names": [
             "QyClient.exe", "QyPlayer.exe", "QQLive.exe", "QQMusic.exe",
@@ -100,7 +107,7 @@ _DEFAULT_CATEGORIES = {
         "title_keywords": [],
     },
     "browser_general": {
-        "display_name": "浏览器其他",
+        "display_name": "浏览器",
         "active_rule": "interactive_required",
         "process_names": [
             "chrome.exe", "msedge.exe", "iexplore.exe",
@@ -126,13 +133,67 @@ _CATEGORY_COMMENTS = {
     "ai_tools": "AI 工具",
     "coding": "编程开发",
     "reading": "阅读学习",
-    "video": "视频娱乐",
+    "video": "娱乐休闲",
     "creative": "创作工具",
     "social": "社交通讯",
     "tools": "系统工具",
-    "browser_general": "浏览器兜底",
+    "browser_general": "浏览器",
     "other": "兜底",
 }
+
+
+def normalize_category_bucket_key(category_key: str, category_name: str = "") -> str:
+    """Map fine-grained categories into UI-facing buckets."""
+    key = (category_key or "").strip()
+    name = (category_name or "").strip()
+    if key in WORK_CATEGORY_KEYS or name in {"学习/工作", "工作学习", "办公"}:
+        return "work"
+    if key in ENTERTAINMENT_CATEGORY_KEYS or name in {"视频娱乐", "视频与游戏", "娱乐休闲"}:
+        return "entertainment"
+    if key in SOCIAL_CATEGORY_KEYS or name == "社交通讯":
+        return "social"
+    if key in BROWSER_CATEGORY_KEYS or name in {"浏览器其他", "浏览器兜底", "浏览器"}:
+        return "browser_general"
+    if key in TOOLS_CATEGORY_KEYS or name == "系统工具":
+        return "tools"
+    return key or "other"
+
+
+def normalize_category_display_name(category_key: str, category_name: str = "") -> str:
+    """Return the unified UI label for category displays."""
+    bucket = normalize_category_bucket_key(category_key, category_name)
+    if bucket == "work":
+        return "工作学习"
+    if bucket == "entertainment":
+        return "娱乐休闲"
+    if bucket == "social":
+        return "社交通讯"
+    if bucket == "browser_general":
+        return "浏览器"
+    if bucket == "tools":
+        return "系统工具"
+    if category_name in {"浏览器其他", "浏览器兜底"}:
+        return "浏览器"
+    if category_name in {"视频娱乐", "视频与游戏"}:
+        return "娱乐休闲"
+    return category_name or "其他"
+
+
+def normalize_rule_category_display_name(category_key: str, category_name: str = "") -> str:
+    """Return rule-list labels without broad work-category merging."""
+    key = (category_key or "").strip()
+    name = (category_name or "").strip()
+    if key in BROWSER_CATEGORY_KEYS or name in {"浏览器其他", "浏览器兜底"}:
+        return "浏览器"
+    if key in ENTERTAINMENT_CATEGORY_KEYS or name in {"视频娱乐", "视频与游戏"}:
+        return "娱乐休闲"
+    return name or normalize_category_display_name(key, name)
+
+
+def should_hide_rule_category(category_key: str, category_name: str = "") -> bool:
+    key = (category_key or "").strip()
+    name = (category_name or "").strip()
+    return key in HIDDEN_RULE_CATEGORY_KEYS or name == "挂机"
 
 
 def generate_default_config(path):

@@ -6,7 +6,7 @@ import shutil
 from datetime import datetime, timedelta
 from . import database
 from . import timeline
-from .utils import fmt_seconds
+from .utils import fmt_seconds, normalize_category_display_name
 
 
 def _top_titles_by_category(db_path, date_str, limit=3):
@@ -47,18 +47,18 @@ def _generate_suggestions(db_path, today_date, stats):
 
     # Rule 1: Today's entertainment > 90 min
     if video_sec > 5400:
-        suggestions.append("今日娱乐时间超过90分钟，建议控制")
+        suggestions.append("今日娱乐休闲时间超过90分钟，建议控制")
 
     # Rule 2: Entertainment > 90 min for 3 consecutive days
     trend = database.query_entertainment_trend(db_path, days=3)
     if len(trend) >= 3 and all(d["entertainment_seconds"] > 5400 for d in trend):
-        suggestions.append("娱乐时间连续3天超过90分钟，建议减少视频时间")
+        suggestions.append("娱乐休闲时间连续3天超过90分钟，建议减少视频时间")
 
     # Rule 3: Low study/work ratio with sufficient total time
     if effective_sec > 0:
         work_ratio = work_sec / effective_sec
         if work_ratio < 0.3 and total_sec > 7200:
-            suggestions.append("今日办公占比较低（<30%），建议增加办公时间")
+            suggestions.append("今日工作学习占比较低（<30%），建议增加工作学习时间")
 
     return suggestions, work_sec, video_sec
 
@@ -135,10 +135,10 @@ def export_markdown(db_path, date_str, output_dir):
     lines.append(f"- 总电脑使用：{fmt_seconds(total_sec)}")
     lines.append(f"- 活跃时间：{fmt_seconds(effective_sec)}")
     lines.append(f"- 挂机/空闲时间：{fmt_seconds(idle_sec)}")
-    lines.append(f"- 娱乐时间：{fmt_seconds(entertain_sec)}")
+    lines.append(f"- 娱乐休闲时间：{fmt_seconds(entertain_sec)}")
     lines.append(f"- 最长使用软件：{top_app_title or top_app}")
-    lines.append(f"- 办公占比：{work_pct}%")
-    lines.append(f"- 娱乐占比：{entertain_pct}%")
+    lines.append(f"- 工作学习占比：{work_pct}%")
+    lines.append(f"- 娱乐休闲占比：{entertain_pct}%")
     lines.append("")
 
     # ── 效率评分 ──
@@ -179,7 +179,7 @@ def export_markdown(db_path, date_str, output_dir):
     lines.append("| 分类 | 时长 | 占比 | 环比昨日 | Top应用 | Top 内容 |")
     lines.append("|---|---:|---:|---|---|---|")
     for cat in stats["by_category"]:
-        name = cat["category_name"]
+        name = normalize_category_display_name(cat.get("category_key", ""), cat["category_name"])
         sec = cat.get("effective_seconds", 0) or 0
         pct = round(sec / effective_sec * 100) if effective_sec else 0
         delta = _delta_text(sec, yesterday_by_cat.get(cat["category_key"], 0))
@@ -229,7 +229,7 @@ def export_markdown(db_path, date_str, output_dir):
             time_text = f"{start_short}-{end_short}" if start_short and end_short else start_short
             proc = s.get("process_name") or ""
             title = s.get("normalized_title") or s.get("window_title") or proc
-            cat = s.get("category_name") or "其他"
+            cat = normalize_category_display_name(s.get("category_key", ""), s.get("category_name") or "其他")
             eff = s.get("effective_seconds", 0) or 0
             app_label = title[:30] if title else proc
             lines.append(
@@ -243,10 +243,10 @@ def export_markdown(db_path, date_str, output_dir):
     if active_blocks:
         lines.append("## 30分钟时间线概览")
         lines.append("")
-        lines.append("| 时间段 | 主状态 | 活跃 | 娱乐 | 挂机 | Top应用 | 切换 |")
+        lines.append("| 时间段 | 主状态 | 活跃 | 娱乐休闲 | 挂机 | Top应用 | 切换 |")
         lines.append("|---|---|---:|---:|---:|---|---:|")
         for b in active_blocks:
-            cat_label = b.dominant_category
+            cat_label = normalize_category_display_name("", b.dominant_category)
             top_label = b.top_title or b.top_app or "-"
             lines.append(
                 f"| {b.slot} | {cat_label} | {b.effective_seconds // 60}分 | "
@@ -410,8 +410,8 @@ def export_weekly_report(db_path, year, week_number, output_dir):
     lines.append("")
     lines.append(f"- 总电脑使用：{fmt_seconds(totals['total_seconds'])}")
     lines.append(f"- 活跃时间：{fmt_seconds(totals['effective_seconds'])}")
-    lines.append(f"- 办公：{fmt_seconds(totals['work_seconds'])}")
-    lines.append(f"- 视频娱乐：{fmt_seconds(totals['video_seconds'])}")
+    lines.append(f"- 工作学习：{fmt_seconds(totals['work_seconds'])}")
+    lines.append(f"- 娱乐休闲：{fmt_seconds(totals['video_seconds'])}")
     lines.append(f"- 日均有效：{fmt_seconds(totals['effective_seconds'] // max(days_with_data, 1))}")
     lines.append("")
 
@@ -422,7 +422,7 @@ def export_weekly_report(db_path, year, week_number, output_dir):
     # ── 每日趋势 ──
     lines.append("## 每日趋势")
     lines.append("")
-    lines.append("| 日期 | 有效时长 | 办公 | 视频娱乐 | 日效率 |")
+    lines.append("| 日期 | 有效时长 | 工作学习 | 娱乐休闲 | 日效率 |")
     lines.append("|---|---:|---:|---:|---:|")
     work_spark = []
     video_spark = []
@@ -439,8 +439,8 @@ def export_weekly_report(db_path, year, week_number, output_dir):
 
     # Sparklines
     max_val = max(max(work_spark), max(video_spark)) or 1
-    lines.append(f"办公趋势: `{_sparkline(work_spark, width=14, max_val=max_val)}`")
-    lines.append(f"视频娱乐趋势: `{_sparkline(video_spark, width=14, max_val=max_val)}`")
+    lines.append(f"工作学习趋势: `{_sparkline(work_spark, width=14, max_val=max_val)}`")
+    lines.append(f"娱乐休闲趋势: `{_sparkline(video_spark, width=14, max_val=max_val)}`")
     lines.append("")
 
     # ── 分类统计 ──
@@ -450,7 +450,7 @@ def export_weekly_report(db_path, year, week_number, output_dir):
     lines.append("|---|---:|---:|")
     for cat in stats["by_category"]:
         daily_avg = (cat["effective_seconds"] or 0) // max(days_with_data, 1)
-        lines.append(f"| {cat['category_name']} | {fmt_seconds(cat['effective_seconds'])} | {fmt_seconds(daily_avg)} |")
+        lines.append(f"| {normalize_category_display_name(cat.get('category_key', ''), cat['category_name'])} | {fmt_seconds(cat['effective_seconds'])} | {fmt_seconds(daily_avg)} |")
     lines.append("")
 
     # ── 软件排行 ──
@@ -466,9 +466,9 @@ def export_weekly_report(db_path, year, week_number, output_dir):
     video_days = sum(1 for d in daily if d["video_seconds"] > 5400)
     work_days = sum(1 for d in daily if d["work_seconds"] > 7200)
     if video_days >= 4:
-        lines.append(f"- 本周有 {video_days} 天娱乐时间超过90分钟，建议下周控制")
+        lines.append(f"- 本周有 {video_days} 天娱乐休闲时间超过90分钟，建议下周控制")
     if work_days < 3 and days_with_data >= 5:
-        lines.append(f"- 本周仅 {work_days} 天办公时间超过2小时，建议增加办公投入")
+        lines.append(f"- 本周仅 {work_days} 天工作学习时间超过2小时，建议增加投入")
     if days_with_data < 5:
         lines.append(f"- 本周仅 {days_with_data} 天有有效记录，建议提高电脑利用率")
     if not totals["video_seconds"] and not totals["work_seconds"]:
@@ -523,11 +523,11 @@ def export_monthly_report(db_path, year, month, output_dir):
     lines.append("")
     lines.append(f"- 总电脑使用：{fmt_seconds(totals['total_seconds'])}")
     lines.append(f"- 活跃时间：{fmt_seconds(eff_total)}")
-    lines.append(f"- 办公：{fmt_seconds(work_total)}")
-    lines.append(f"- 视频娱乐：{fmt_seconds(video_total)}")
+    lines.append(f"- 工作学习：{fmt_seconds(work_total)}")
+    lines.append(f"- 娱乐休闲：{fmt_seconds(video_total)}")
     lines.append(f"- 日均有效：{fmt_seconds(avg_daily_eff)}")
-    lines.append(f"- 日均办公：{fmt_seconds(work_total // max(days_with_data, 1))}")
-    lines.append(f"- 日均视频娱乐：{fmt_seconds(video_total // max(days_with_data, 1))}")
+    lines.append(f"- 日均工作学习：{fmt_seconds(work_total // max(days_with_data, 1))}")
+    lines.append(f"- 日均娱乐休闲：{fmt_seconds(video_total // max(days_with_data, 1))}")
     lines.append("")
 
     if score is not None:
@@ -550,7 +550,7 @@ def export_monthly_report(db_path, year, month, output_dir):
         weeks[wkey]["eff"] += d["effective_seconds"]
         weeks[wkey]["days"] += 1
 
-    lines.append("| 周 | 有效时长 | 办公 | 视频娱乐 | 周效率 |")
+    lines.append("| 周 | 有效时长 | 工作学习 | 娱乐休闲 | 周效率 |")
     lines.append("|---|---:|---:|---:|---:|")
     for wkey in sorted(weeks.keys()):
         w = weeks[wkey]
@@ -566,7 +566,7 @@ def export_monthly_report(db_path, year, month, output_dir):
     for cat in stats["by_category"]:
         daily_avg = (cat["effective_seconds"] or 0) // max(days_with_data, 1)
         pct = round(cat["effective_seconds"] / eff_total * 100) if eff_total > 0 else 0
-        lines.append(f"| {cat['category_name']} | {fmt_seconds(cat['effective_seconds'])} | {fmt_seconds(daily_avg)} | {pct}% |")
+        lines.append(f"| {normalize_category_display_name(cat.get('category_key', ''), cat['category_name'])} | {fmt_seconds(cat['effective_seconds'])} | {fmt_seconds(daily_avg)} | {pct}% |")
     lines.append("")
 
     # ── 软件排行 ──
@@ -583,9 +583,9 @@ def export_monthly_report(db_path, year, month, output_dir):
     if days_with_data < 15:
         lines.append(f"- 本月仅 {days_with_data} 天有记录，建议保持每日开机记录习惯")
     if video_total > 5400 * 30:
-        lines.append("- 本月娱乐时间偏高，建议每月娱乐控制在 45 小时以内")
+        lines.append("- 本月娱乐休闲时间偏高，建议每月控制在 45 小时以内")
     if work_total > 0 and work_total / max(eff_total, 1) < 0.4:
-        lines.append("- 本月办公占比偏低 (<40%)，下月可以设定办公目标")
+        lines.append("- 本月工作学习占比偏低 (<40%)，下月可以设定目标")
     if not totals["video_seconds"] and not totals["work_seconds"]:
         lines.append("- 数据不足，请保持记录以获取分析建议")
     lines.append("")

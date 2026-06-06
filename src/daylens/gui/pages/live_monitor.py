@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...utils import fmt_seconds
+from ...utils import fmt_seconds, normalize_category_display_name
 from .. import style as ui_style
 from ..style import COLORS, get_category_color
 
@@ -186,8 +186,11 @@ class LiveMonitorPage(QWidget):
 
         proc = sample.get("process_name", "--")
         title = (sample.get("window_title", "--") or "--")[:90]
-        cat_name = sample.get("category_name", "--") or "--"
         cat_key = sample.get("category_key", "other") or "other"
+        cat_name = normalize_category_display_name(
+            str(cat_key),
+            str(sample.get("category_name", "--") or "--"),
+        )
         dur = sample.get("duration_seconds", 0) or 0
         eff = sample.get("effective_seconds", 0) or 0
         sidle = sample.get("session_idle_seconds", 0) or 0
@@ -277,7 +280,11 @@ class LiveMonitorPage(QWidget):
             self.table.setItem(row, 0, QTableWidgetItem(time_text))
             self.table.setItem(row, 1, QTableWidgetItem(item.get("process_name", "")))
             self.table.setItem(row, 2, QTableWidgetItem(normalized_title))
-            category_item = QTableWidgetItem(f"● {item.get('category_name', '')}")
+            category_name = normalize_category_display_name(
+                str(row_cat_key),
+                str(item.get("category_name", "") or ""),
+            )
+            category_item = QTableWidgetItem(f"● {category_name}")
             category_item.setForeground(QBrush(QColor(row_color)))
             category_item.setToolTip(f"分类颜色：{row_color}")
             self.table.setItem(row, 3, category_item)

@@ -97,7 +97,7 @@ class Classifier:
         if bg_procs and process_name in bg_procs:
             return {
                 "category_key": "browser_general",
-                "category_name": bg.get("display_name", "浏览器其他"),
+                "category_name": bg.get("display_name", "浏览器"),
                 "active_rule": bg.get("active_rule", "interactive_required"),
             }
 
@@ -115,4 +115,3 @@ class Classifier:
         if active_rule == "passive_allowed":
             return True
         return idle_seconds <= self.idle_threshold
-

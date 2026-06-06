@@ -91,10 +91,12 @@ def refresh_category_colors() -> None:
     CATEGORY_COLOR_MAP.clear()
     CATEGORY_COLOR_MAP.update(
         {
+            "work": COLORS["coding_green"],
             "ai_tools": COLORS["ai_blue"],
             "coding": COLORS["coding_green"],
             "reading": COLORS["reading_blue"],
             "creative": COLORS["creative_pink"],
+            "entertainment": COLORS["video_orange"],
             "video": COLORS["video_orange"],
             "social": COLORS["social_purple"],
             "tools": COLORS["tools_grey"],

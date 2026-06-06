@@ -331,7 +331,7 @@ KNOWN_APPS: dict[str, str] = {
     "evernote.exe": "reading",
     "joplin.exe": "reading",
 
-    # ── 视频娱乐 ──
+    # ── 娱乐休闲 ──
     "qyclient.exe": "video",
     "qyplayer.exe": "video",
     "qqlive.exe": "video",
@@ -506,7 +506,7 @@ KNOWN_APPS: dict[str, str] = {
     "wordpad.exe": "reading",
     "explorer.exe": "tools",
 
-    # ── 游戏（已合并至视频与游戏）──
+    # ── 游戏（已合并至娱乐休闲）──
     "steam.exe": "video",
     "wegame.exe": "video",
     "epic games launcher.exe": "video",

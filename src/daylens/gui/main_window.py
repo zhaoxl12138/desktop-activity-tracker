@@ -329,9 +329,9 @@ class MainWindow(QMainWindow):
 
         for index, (emoji, label, key) in enumerate(
             [
-                ("⚡", "今日活跃", "total"),
-                ("💼", "办公", "work"),
-                ("▶", "视频娱乐", "ent"),
+                ("⚡", "活跃时间", "total"),
+                ("💼", "工作学习", "work"),
+                ("📺", "娱乐休闲", "ent"),
                 ("💬", "社交通讯", "social"),
             ]
         ):
