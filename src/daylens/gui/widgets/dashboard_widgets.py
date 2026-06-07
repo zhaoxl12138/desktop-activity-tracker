@@ -135,7 +135,7 @@ class FocusTimelineBarWidget(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._minute_colors = [COLORS["timeline_idle"]] * 1440
-        self.setFixedHeight(24)
+        self.setFixedHeight(32)
 
     def set_minutes(self, minute_colors: list[str]) -> None:
         if len(minute_colors) == 1440:
@@ -384,7 +384,7 @@ class TimelineWidget(QFrame):
         card.setStyleSheet(
             f"""
             QFrame#sessionCard {{
-                background: {COLORS['panel_bg']};
+                background: {COLORS['panel_bg_alt']};
                 border: 1px solid {COLORS['border_light']};
                 border-radius: 12px;
             }}
@@ -494,7 +494,7 @@ class TimelineWidget(QFrame):
                 border-radius: 10px;
                 border: 1px solid {COLORS['border']};
                 color: {COLORS['text']};
-                background: {COLORS['panel_bg']};
+                background: {COLORS['panel_bg_alt']};
                 font-size: 13px;
                 font-weight: 700;
             }}
@@ -636,7 +636,7 @@ class SessionTop3Widget(QFrame):
         card.setStyleSheet(
             f"""
             QFrame#sessionTopRow {{
-                background: {COLORS['panel_bg']};
+                background: {COLORS['panel_bg_alt']};
                 border: 1px solid {COLORS['border_light']};
                 border-left: 4px solid {accent_color};
                 border-radius: 6px;
@@ -751,7 +751,7 @@ class SessionTop3Widget(QFrame):
                 border-radius: 10px;
                 border: 1px solid {COLORS['border']};
                 color: {COLORS['text']};
-                background: {COLORS['panel_bg']};
+                background: {COLORS['panel_bg_alt']};
                 font-size: 13px;
                 font-weight: 700;
             }}
@@ -771,7 +771,7 @@ class TrendChartWidget(QFrame):
         super().__init__(parent)
         self.setObjectName("dashboardCard")
         self.setStyleSheet(ui_style.get_dashboard_card_style())
-        self.setMinimumHeight(282)
+        self.setMinimumHeight(240)
         self._mode = "today"
         self._series: dict[str, list] = {"today": [], "7d": [], "30d": []}
         self._labels: dict[str, list[str]] = {"today": [], "7d": [], "30d": []}
@@ -804,7 +804,7 @@ class TrendChartWidget(QFrame):
                     border-radius: 6px;
                     border: 1px solid {COLORS['border']};
                     color: {COLORS['text_secondary']};
-                    background: {COLORS['panel_bg']};
+                    background: {COLORS['panel_bg_alt']};
                     font-size: 12px;
                 }}
                 QPushButton:checked {{
@@ -823,7 +823,7 @@ class TrendChartWidget(QFrame):
         root.addLayout(header)
 
         self.canvas = _TrendCanvas()
-        self.canvas.setMinimumHeight(208)
+        self.canvas.setMinimumHeight(160)
         root.addWidget(self.canvas, 1)
 
         cmp_color = COLORS["text_muted"]
@@ -1255,7 +1255,7 @@ class TopAppListWidget(QFrame):
         super().__init__(parent)
         self.setObjectName("dashboardCard")
         self.setStyleSheet(ui_style.get_dashboard_card_style())
-        self.setMinimumHeight(236)
+        self.setMinimumHeight(260)
         self._rows: list[tuple[QLabel, QLabel, QProgressBar, QLabel]] = []
 
         root = QVBoxLayout(self)
@@ -1267,7 +1267,7 @@ class TopAppListWidget(QFrame):
         root.addWidget(title)
 
         self.rows_container = QVBoxLayout()
-        self.rows_container.setSpacing(12)
+        self.rows_container.setSpacing(14)
         root.addLayout(self.rows_container)
         root.addStretch()
 
@@ -1286,8 +1286,8 @@ class TopAppListWidget(QFrame):
         layout.addWidget(rank_label)
 
         icon_label = QLabel("")
-        icon_label.setFixedSize(20, 20)
-        icon_label.setStyleSheet(f"background: {COLORS['panel_bg']}; border-radius: 5px;")
+        icon_label.setFixedSize(28, 28)
+        icon_label.setStyleSheet(f"background: {COLORS['panel_bg_alt']}; border-radius: 6px;")
         layout.addWidget(icon_label)
 
         name_label = QLabel("--")
@@ -1298,17 +1298,17 @@ class TopAppListWidget(QFrame):
         progress_bar = QProgressBar()
         progress_bar.setTextVisible(False)
         progress_bar.setRange(0, 100)
-        progress_bar.setFixedHeight(8)
+        progress_bar.setFixedHeight(10)
         progress_bar.setStyleSheet(
             f"""
             QProgressBar {{
-                background: {COLORS['panel_bg']};
+                background: {COLORS['panel_bg_alt']};
                 border: none;
-                border-radius: 3px;
+                border-radius: 5px;
             }}
             QProgressBar::chunk {{
                 background: {COLORS['primary']};
-                border-radius: 3px;
+                border-radius: 5px;
             }}
             """
         )
@@ -1327,7 +1327,7 @@ class TopAppListWidget(QFrame):
         for index in range(5):
             if index < len(items):
                 process_name, display_name, seconds, icon = items[index]
-                self._rows[index][0].setPixmap(icon.pixmap(18, 18) if icon else QIcon().pixmap(18, 18))
+                self._rows[index][0].setPixmap(icon.pixmap(26, 26) if icon else QIcon().pixmap(18, 18))
                 self._rows[index][1].setText(_compact_app_name(display_name))
                 self._rows[index][1].setToolTip(process_name if display_name != process_name else "")
                 self._rows[index][2].setValue(int(round((seconds / max_seconds) * 100)))
@@ -1379,7 +1379,7 @@ class DistributionLegend(QWidget):
             bar.setFixedHeight(8)
             bar.setStyleSheet(f"""
                 QProgressBar {{
-                    background: {COLORS['panel_bg']};
+                    background: {COLORS['panel_bg_alt']};
                     border: none;
                     border-radius: 4px;
                 }}

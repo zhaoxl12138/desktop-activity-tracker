@@ -13,14 +13,17 @@ description: Kill DayLens, rebuild with PyInstaller, deploy to release/, update 
 
 ```bash
 # 1. Kill
-taskkill /f /im DayLens.exe 2>/dev/null; sleep 1
+taskkill /f /im DayLens.exe 2>/dev/null; sleep 2
 
 # 2. Clean (retry if busy)
 rm -rf D:/OfficeSoftware/DayLens/release D:/OfficeSoftware/DayLens/build 2>/dev/null
 # If still busy: sleep 2 && retry rm -rf release build
 
-# 3. Build (always to release/)
+# 3. Build (if release/ is locked, build to _tmp then move)
 cd D:/OfficeSoftware/DayLens && python -m PyInstaller --noconfirm --clean --distpath release DayLens.spec
+# If COLLECT fails with PermissionError, fallback:
+#   python -m PyInstaller --noconfirm --clean --distpath _tmp DayLens.spec
+#   mkdir -p release/DayLens && cp -r _tmp/DayLens/* release/DayLens/ && rm -rf _tmp
 
 # 4. Copy config
 cp D:/OfficeSoftware/DayLens/config/config.yaml "D:/OfficeSoftware/DayLens/release/DayLens/config.yaml"

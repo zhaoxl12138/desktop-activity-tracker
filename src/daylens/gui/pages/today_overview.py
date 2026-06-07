@@ -68,16 +68,25 @@ class TodayOverviewPage(QWidget):
         self.time_stats_card = None
         self.time_stats_ratio_ring = None
         content_grid.addWidget(self.distribution_card, 0, 0, 1, 8)
-        self.trend_card = TrendChartWidget()
-        content_grid.addWidget(self.trend_card, 0, 8, 1, 4)
         content_grid.addWidget(self.focus_timeline_card, 1, 0, 1, 8)
+
+        # Right panel: trend chart + TOP5 in a single vertical layout
+        right_panel = QWidget()
+        right_panel.setStyleSheet("background: transparent;")
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(14)
+        self.trend_card = TrendChartWidget()
         self.top_app_card = TopAppListWidget()
-        content_grid.addWidget(self.top_app_card, 1, 8, 1, 4)
+        right_layout.addWidget(self.trend_card, 4)
+        right_layout.addWidget(self.top_app_card, 6)
+        content_grid.addWidget(right_panel, 0, 8, 2, 4)
 
         content_grid.setRowStretch(0, 4)
         content_grid.setRowStretch(1, 6)
-        for column in range(12):
+        for column in range(8):
             content_grid.setColumnStretch(column, 1)
+        content_grid.setColumnStretch(8, 4)
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._refresh_if_active)
@@ -160,7 +169,7 @@ class TodayOverviewPage(QWidget):
         card = QFrame()
         card.setObjectName("dashboardCard")
         card.setStyleSheet(ui_style.get_dashboard_card_style())
-        card.setMinimumHeight(282)
+        card.setMinimumHeight(260)
 
         layout = QVBoxLayout(card)
         layout.setContentsMargins(16, 14, 16, 12)
@@ -173,7 +182,7 @@ class TodayOverviewPage(QWidget):
         row = QHBoxLayout()
         row.setSpacing(16)
         self.donut_widget = DonutChartWidget()
-        self.donut_widget.setFixedWidth(158)
+        self.donut_widget.setFixedWidth(140)
         row.addWidget(self.donut_widget)
 
         self.legend_widget = DistributionLegend()
