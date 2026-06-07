@@ -318,9 +318,11 @@ class SessionTracker:
                              cat_key, cat_name, active_rule):
         """Grace period before confirming a cross-domain session switch.
 
-        - First detection → start 30s timer, keep ticking current as idle.
+        - First detection → start 30s timer, keep ticking current session.
         - Same target domain still active → check timer, confirm if expired.
         - Switched to yet another domain → reset timer to new target.
+        - Activity during grace period is credited as effective (user is
+          actively using the new app), not idle.
         """
         if self._pending_switch is None or self._pending_switch["domain"] != new_domain:
             self._pending_switch = {
@@ -333,19 +335,16 @@ class SessionTracker:
                 "cat_key": cat_key,
                 "cat_name": cat_name,
                 "active_rule": active_rule,
+                "effective_during_grace": 0,
+                "idle_during_grace": 0,
             }
-            # Still in grace — tick current as idle
-            self._current.end_time = now
-            self._current.duration_seconds += self.sample_interval
-            self._current.idle_seconds += self.sample_interval
+            self._tick_grace_current(now)
             return
 
+        # Always tick first so every second is accounted correctly
+        self._tick_grace_current(now)
         elapsed = (now - self._pending_switch["since"]).total_seconds()
         if elapsed < self.cross_group_grace:
-            # Still waiting — tick current as idle
-            self._current.end_time = now
-            self._current.duration_seconds += self.sample_interval
-            self._current.idle_seconds += self.sample_interval
             return
 
         # ── Grace period expired → confirm switch ──────────────────
@@ -354,6 +353,8 @@ class SessionTracker:
         self._current.switch_reason = "domain_change"
         self._emit_session()
 
+        eff = p["effective_during_grace"]
+        idle = p["idle_during_grace"]
         self._current = ActivitySession(
             session_id=uuid.uuid4().hex[:12],
             start_time=p["since"],   # backdate to switch point
@@ -367,12 +368,47 @@ class SessionTracker:
             category_name=p["cat_name"],
             active_rule=p["active_rule"],
             duration_seconds=int(elapsed),
-            idle_seconds=int(elapsed),   # grace period was idle
+            effective_seconds=eff,
+            idle_seconds=idle,
         )
         self._pending_switch = None
         self._persistent_idle = 0.0
         self._last_cursor_pos = None
         self._last_kb_state = None
+
+    def _tick_grace_current(self, now):
+        """Tick the current session during cross-domain grace period,
+        crediting effective vs idle based on actual activity detection.
+        """
+        self._current.end_time = now
+        self._current.duration_seconds += self.sample_interval
+
+        cursor_pos = _get_cursor_pos()
+        cursor_moved = (
+            self._last_cursor_pos is not None
+            and cursor_pos != self._last_cursor_pos
+        )
+        kb_state = _get_keyboard_snapshot()
+        kb_changed = (
+            self._last_kb_state is not None
+            and kb_state != self._last_kb_state
+        )
+        self._last_cursor_pos = cursor_pos
+        self._last_kb_state = kb_state
+
+        active = self._activity_from_hook or cursor_moved or kb_changed
+        self._activity_from_hook = False
+
+        if active:
+            self._current.effective_seconds += self.sample_interval
+            self._persistent_idle = 0.0
+        else:
+            self._current.idle_seconds += self.sample_interval
+
+        p = self._pending_switch
+        if p is not None:
+            p["effective_during_grace"] += self.sample_interval if active else 0
+            p["idle_during_grace"] += 0 if active else self.sample_interval
 
     # ── Internals ──────────────────────────────────────────────────
 

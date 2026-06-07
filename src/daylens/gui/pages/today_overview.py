@@ -645,8 +645,20 @@ class TodayOverviewPage(QWidget):
         for session in sessions:
             start = self._to_minute(session.get("start_time", ""))
             end = max(start, self._to_minute(session.get("end_time", "")))
+            total_min = end - start + 1
+            if total_min <= 0:
+                continue
+            effective_sec = int(session.get("effective_seconds", 0) or 0)
+            idle_sec = int(session.get("idle_seconds", 0) or 0)
+            total_sec = effective_sec + idle_sec
+            # Show effective portion in category color, leave idle as grey.
+            # Idle is assumed at the tail end of the session (user walks away).
+            if total_sec > 0 and idle_sec > 0:
+                effective_min = min(total_min, int(round(effective_sec / total_sec * total_min)))
+            else:
+                effective_min = total_min
             color = self._color_for_category(session.get("category_key") or "other", str(session.get("category_name", "") or ""))
-            for minute in range(max(0, start), min(1439, end) + 1):
+            for minute in range(max(0, start), min(1439, start + effective_min)):
                 colors[minute] = color
         return colors
 
