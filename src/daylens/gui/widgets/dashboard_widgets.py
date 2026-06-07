@@ -546,7 +546,7 @@ class TimelineWidget(QFrame):
 
 
 class SessionTop3Widget(QFrame):
-    """Compact top-3 sessions list with detail dialog."""
+    """Table-layout top sessions list with detail dialog."""
 
     RANKS = ["🥇", "🥈", "🥉"]
 
@@ -556,13 +556,18 @@ class SessionTop3Widget(QFrame):
         self.setStyleSheet("QFrame#dashboardCard { background: transparent; border: none; }")
         self._sessions: list[dict] = []
         self._display_name_mapping: dict = {}
+        self._row_frames: list[QFrame] = []
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(3)
+        root.setSpacing(0)
+
+        # Header row
+        header = self._build_header()
+        root.addWidget(header)
 
         self._rows_container = QVBoxLayout()
-        self._rows_container.setSpacing(4)
+        self._rows_container.setSpacing(0)
         root.addLayout(self._rows_container)
 
         self.more_btn = QPushButton()
@@ -576,7 +581,7 @@ class SessionTop3Widget(QFrame):
                 font-weight: 700;
                 border: none;
                 background: transparent;
-                padding: 4px 0 0 0;
+                padding: 6px 0 0 0;
             }}
             QPushButton:hover {{
                 color: {COLORS['primary_hover']};
@@ -585,6 +590,38 @@ class SessionTop3Widget(QFrame):
         )
         self.more_btn.clicked.connect(self._open_detail_dialog)
         root.addWidget(self.more_btn, 0, Qt.AlignHCenter)
+
+    def _build_header(self) -> QWidget:
+        hdr = QWidget()
+        hdr.setFixedHeight(30)
+        hdr.setStyleSheet(
+            f"background: transparent;"
+            f"border-bottom: 1px solid {COLORS['border']};"
+        )
+        layout = QHBoxLayout(hdr)
+        layout.setContentsMargins(10, 0, 12, 0)
+        layout.setSpacing(6)
+
+        header_specs = [
+            ("排名", 54),
+            ("应用程序", None),   # stretch
+            ("分类", 110),
+            ("开始", 80),
+            ("结束", 80),
+            ("时长", 90),
+        ]
+        for text, width in header_specs:
+            lbl = QLabel(text)
+            if width:
+                lbl.setFixedWidth(width)
+            lbl.setAlignment(Qt.AlignLeft if text == "应用程序" else Qt.AlignCenter)
+            lbl.setStyleSheet(
+                f"font-size: 11px; color: {COLORS['text_muted']}; font-weight: 700;"
+                f"border: none; background: transparent;"
+            )
+            layout.addWidget(lbl, 0 if width else 1)
+
+        return hdr
 
     def set_sessions(self, sessions: list[dict], display_name_mapping: dict | None = None) -> None:
         merged = TimelineWidget._merge_sessions(list(sessions or []))
@@ -603,117 +640,143 @@ class SessionTop3Widget(QFrame):
         self._render()
 
     def _render(self) -> None:
-        while self._rows_container.count():
-            item = self._rows_container.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        for f in self._row_frames:
+            self._rows_container.removeWidget(f)
+            f.deleteLater()
+        self._row_frames.clear()
 
-        top3 = self._sessions[:3]
+        top_n = self._sessions[:6]
 
-        if not top3:
-            placeholder = QLabel("暂无足够长的专注 Session")
+        if not top_n:
+            placeholder = QLabel(" 暂无足够长的专注 Session")
             placeholder.setStyleSheet(
-                f"font-size: 12px; color: {COLORS['text_muted']};"
+                f"font-size: 12px; color: {COLORS['text_muted']}; padding: 8px 0;"
             )
             self._rows_container.addWidget(placeholder)
+            self._row_frames.append(placeholder)
             self.more_btn.setVisible(False)
             return
 
-        for rank, session in enumerate(top3):
-            self._rows_container.addWidget(self._build_row(rank, session))
+        for rank, session in enumerate(top_n):
+            row = self._build_row(rank, session)
+            self._rows_container.addWidget(row)
+            self._row_frames.append(row)
 
         total = len(self._sessions)
         self.more_btn.setText(f"查看全部 Session ({total}) ↗")
-        self.more_btn.setVisible(total > 3)
+        self.more_btn.setVisible(total > 6)
 
-    def _build_row(self, rank: int, session: dict) -> QWidget:
+    def _build_row(self, rank: int, session: dict) -> QFrame:
         category_key = str(session.get("category_key", "") or "other")
         accent_color = get_category_color(category_key)
         category_name = str(session.get("category_name", "") or "其他")
 
-        card = QFrame()
-        card.setFixedHeight(42)
-        card.setStyleSheet(
+        row = QFrame()
+        row.setFixedHeight(50)
+        row.setObjectName("sessionTableRow")
+        row.setStyleSheet(
             f"""
-            QFrame#sessionTopRow {{
+            QFrame#sessionTableRow {{
+                background: transparent;
+                border-bottom: 1px solid {COLORS['border']};
+            }}
+            QFrame#sessionTableRow:hover {{
                 background: {COLORS['panel_bg_alt']};
-                border: 1px solid {COLORS['border_light']};
-                border-left: 4px solid {accent_color};
-                border-radius: 6px;
             }}
             """
         )
-        card.setObjectName("sessionTopRow")
+        # Enable hover style
+        row.setProperty("hover", True)
 
-        outer = QHBoxLayout(card)
-        outer.setContentsMargins(8, 0, 10, 0)
-        outer.setSpacing(6)
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(10, 0, 12, 0)
+        layout.setSpacing(6)
 
-        # Rank number — fixed
-        rank_label = QLabel(str(rank + 1))
-        rank_label.setFixedWidth(16)
+        # ── Rank ──
+        rank_text = self.RANKS[rank] if rank < 3 else str(rank + 1)
+        rank_label = QLabel(rank_text)
+        rank_label.setFixedWidth(54)
         rank_label.setAlignment(Qt.AlignCenter)
         rank_label.setStyleSheet(
-            f"font-size: 13px; color: {COLORS['text_muted']}; font-weight: 800;"
+            f"font-size: 15px; color: {COLORS['text']}; font-weight: 800;"
             f"border: none; background: transparent;"
         )
-        outer.addWidget(rank_label)
+        layout.addWidget(rank_label)
 
-        # App name + window title — stretch to fill
+        # ── App icon + name + window title ──
         process_name = str(session.get("process_name", "") or "")
-        display_name = self._display_name_mapping.get(process_name, process_name) or process_name
+        display_name = self._display_name_mapping.get(process_name, process_name) or process_name or "未知"
         window_title = str(session.get("normalized_title", "") or session.get("window_title", "") or "").strip()
         if window_title and window_title.lower() != display_name.lower():
-            full_name = f"{display_name} · {window_title}"
+            title_text = f"{display_name} ({_compact_app_name(window_title, limit=22)})"
         else:
-            full_name = display_name
+            title_text = display_name
 
-        name_label = QLabel(_compact_app_name(full_name, limit=36))
-        name_label.setStyleSheet(
-            f"font-size: 13px; color: {COLORS['text']}; font-weight: 700;"
+        app_label = QLabel(title_text)
+        app_label.setStyleSheet(
+            f"font-size: 13px; color: {COLORS['text']}; font-weight: 600;"
             f"border: none; background: transparent;"
         )
-        name_label.setToolTip(full_name)
-        outer.addWidget(name_label, 1)
+        app_label.setToolTip(f"{display_name} — {window_title}" if window_title else display_name)
+        layout.addWidget(app_label, 1)
 
-        # Category tag — fixed width
+        # ── Category with color dot ──
+        cat_widget = QWidget()
+        cat_widget.setFixedWidth(110)
+        cat_layout = QHBoxLayout(cat_widget)
+        cat_layout.setContentsMargins(0, 0, 0, 0)
+        cat_layout.setSpacing(6)
+        cat_layout.setAlignment(Qt.AlignCenter)
+
+        dot = QLabel("●")
+        dot.setStyleSheet(f"font-size: 10px; color: {accent_color}; border: none; background: transparent;")
+        cat_layout.addWidget(dot)
+
         cat_label = QLabel(category_name)
-        cat_label.setFixedWidth(52)
-        cat_label.setAlignment(Qt.AlignCenter)
         cat_label.setStyleSheet(
-            f"font-size: 10px; color: {accent_color}; font-weight: 700;"
-            f"padding: 1px 4px; border-radius: 4px;"
-            f"border: 1px solid {accent_color}; background: transparent;"
-        )
-        outer.addWidget(cat_label)
-
-        # Time range — fixed width
-        start = str(session.get("start_time", "") or "")
-        end = str(session.get("end_time", "") or "")
-        start_short = start[11:16] if len(start) >= 16 else start[-5:]
-        end_short = end[11:16] if len(end) >= 16 else end[-5:]
-        time_label = QLabel(f"{start_short} - {end_short}")
-        time_label.setFixedWidth(104)
-        time_label.setAlignment(Qt.AlignCenter)
-        time_label.setStyleSheet(
-            f"font-size: 11px; color: {COLORS['text_secondary']};"
+            f"font-size: 12px; color: {COLORS['text_secondary']}; font-weight: 600;"
             f"border: none; background: transparent;"
         )
-        outer.addWidget(time_label)
+        cat_layout.addWidget(cat_label)
+        layout.addWidget(cat_widget)
 
-        # Duration badge — fixed width
+        # ── Start time ──
+        start = str(session.get("start_time", "") or "")
+        start_short = start[11:16] if len(start) >= 16 else start[-5:]
+        start_label = QLabel(start_short)
+        start_label.setFixedWidth(80)
+        start_label.setAlignment(Qt.AlignCenter)
+        start_label.setStyleSheet(
+            f"font-size: 12px; color: {COLORS['text_secondary']};"
+            f"border: none; background: transparent;"
+        )
+        layout.addWidget(start_label)
+
+        # ── End time ──
+        end = str(session.get("end_time", "") or "")
+        end_short = end[11:16] if len(end) >= 16 else end[-5:]
+        end_label = QLabel(end_short)
+        end_label.setFixedWidth(80)
+        end_label.setAlignment(Qt.AlignCenter)
+        end_label.setStyleSheet(
+            f"font-size: 12px; color: {COLORS['text_secondary']};"
+            f"border: none; background: transparent;"
+        )
+        layout.addWidget(end_label)
+
+        # ── Duration capsule ──
         effective = int(session.get("effective_seconds", 0) or 0)
         dur_label = QLabel(fmt_seconds(effective))
-        dur_label.setFixedWidth(62)
+        dur_label.setFixedWidth(90)
         dur_label.setAlignment(Qt.AlignCenter)
         dur_label.setStyleSheet(
-            f"font-size: 11px; color: #fff; font-weight: 800;"
-            f"background: {accent_color}; border-radius: 4px;"
-            f"padding: 2px 4px;"
+            f"font-size: 12px; color: #fff; font-weight: 800;"
+            f"background: {accent_color}; border-radius: 6px;"
+            f"padding: 3px 0;"
         )
-        outer.addWidget(dur_label)
+        layout.addWidget(dur_label)
 
-        return card
+        return row
 
     def _open_detail_dialog(self) -> None:
         dialog = QDialog(self)
@@ -846,24 +909,27 @@ class TrendChartWidget(QFrame):
             self._apply_series()
             unit = "分钟" if mode in {"today", "7d"} else "小时"
             self._title_label.setText(f"时间趋势（{unit}）")
-            if mode == "today":
-                green = COLORS["coding_green"]
-                orange = COLORS["video_orange"]
-                self._cmp_legend.setText(
-                    f"<span style='color:{green}'>── 工作学习</span>  "
-                    f"<span style='color:{orange}'>── 娱乐休闲</span>"
-                )
-                self._cmp_legend.setVisible(True)
-            elif mode == "7d":
-                week_labels = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
-                parts = [
-                    f"<span style='color:{self.canvas._weekday_colors[idx]}'>── {label}</span>"
-                    for idx, label in enumerate(week_labels)
-                ]
-                self._cmp_legend.setText("  ".join(parts))
-                self._cmp_legend.setVisible(True)
-            else:
-                self._cmp_legend.setVisible(False)
+            self._update_legend()
+
+    def _update_legend(self) -> None:
+        if self._mode == "today":
+            green = COLORS["coding_green"]
+            orange = COLORS["video_orange"]
+            self._cmp_legend.setText(
+                f"<span style='color:{green}'>── 工作学习</span>  "
+                f"<span style='color:{orange}'>── 娱乐休闲</span>"
+            )
+            self._cmp_legend.setVisible(True)
+        elif self._mode == "7d":
+            week_labels = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+            parts = [
+                f"<span style='color:{self.canvas._weekday_colors[idx]}'>── {label}</span>"
+                for idx, label in enumerate(week_labels)
+            ]
+            self._cmp_legend.setText("  ".join(parts))
+            self._cmp_legend.setVisible(True)
+        else:
+            self._cmp_legend.setVisible(False)
 
     def _apply_series(self) -> None:
         compare = self._yesterday_today if self._mode in ("7d", "30d") else []
@@ -905,6 +971,7 @@ class TrendChartWidget(QFrame):
         self._weekday_indices["30d"] = []
 
         self._apply_series()
+        self._update_legend()
 
 
 class _TrendCanvas(QWidget):
@@ -1251,18 +1318,20 @@ class _TrendCanvas(QWidget):
 
 
 class TopAppListWidget(QFrame):
+    MAX_ROWS = 9
+
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("dashboardCard")
         self.setStyleSheet(ui_style.get_dashboard_card_style())
         self.setMinimumHeight(260)
-        self._rows: list[tuple[QLabel, QLabel, QProgressBar, QLabel]] = []
+        self._row_widgets: list[QWidget] = []
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 12, 16, 14)
         root.setSpacing(10)
 
-        title = QLabel("软件使用 TOP5")
+        title = QLabel("软件使用排行榜")
         title.setStyleSheet(f"font-size: 16px; font-weight: 800; color: {COLORS['text']};")
         root.addWidget(title)
 
@@ -1271,13 +1340,10 @@ class TopAppListWidget(QFrame):
         root.addLayout(self.rows_container)
         root.addStretch()
 
-        for rank in range(1, 6):
-            layout, icon_label, name_label, progress_bar, duration_label = self._build_row(rank)
-            self.rows_container.addLayout(layout)
-            self._rows.append((icon_label, name_label, progress_bar, duration_label))
-
     def _build_row(self, rank: int):
-        layout = QHBoxLayout()
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
         rank_label = QLabel(str(rank))
@@ -1320,23 +1386,30 @@ class TopAppListWidget(QFrame):
         duration_label.setStyleSheet(f"font-size: 13px; color: {COLORS['text_secondary']};")
         layout.addWidget(duration_label)
 
-        return layout, icon_label, name_label, progress_bar, duration_label
+        return row, icon_label, name_label, progress_bar, duration_label
 
     def set_items(self, items: list[tuple[str, str, int, QIcon | None]]) -> None:
-        max_seconds = max((seconds for _, _, seconds, _ in items), default=1)
-        for index in range(5):
-            if index < len(items):
-                process_name, display_name, seconds, icon = items[index]
-                self._rows[index][0].setPixmap(icon.pixmap(26, 26) if icon else QIcon().pixmap(18, 18))
-                self._rows[index][1].setText(_compact_app_name(display_name))
-                self._rows[index][1].setToolTip(process_name if display_name != process_name else "")
-                self._rows[index][2].setValue(int(round((seconds / max_seconds) * 100)))
-                self._rows[index][3].setText(fmt_seconds(seconds))
-            else:
-                self._rows[index][0].clear()
-                self._rows[index][1].setText("--")
-                self._rows[index][2].setValue(0)
-                self._rows[index][3].setText("--")
+        # Remove old rows
+        for w in self._row_widgets:
+            self.rows_container.removeWidget(w)
+            w.deleteLater()
+        self._row_widgets.clear()
+
+        n = min(len(items), self.MAX_ROWS)
+        if n == 0:
+            return
+
+        max_seconds = max((seconds for _, _, seconds, _ in items[:n]), default=1)
+        for index in range(n):
+            process_name, display_name, seconds, icon = items[index]
+            row, icon_lbl, name_lbl, bar, dur_lbl = self._build_row(index + 1)
+            icon_lbl.setPixmap(icon.pixmap(26, 26) if icon else QIcon().pixmap(18, 18))
+            name_lbl.setText(_compact_app_name(display_name))
+            name_lbl.setToolTip(process_name if display_name != process_name else "")
+            bar.setValue(int(round((seconds / max_seconds) * 100)))
+            dur_lbl.setText(fmt_seconds(seconds))
+            self.rows_container.addWidget(row)
+            self._row_widgets.append(row)
 
 
 class DistributionLegend(QWidget):

@@ -89,6 +89,29 @@ def normalize_window_title(process_name, window_title):
 # ── Session data class ──
 
 
+# ── Activity domains for session grouping ──────────────────────────
+# Sessions split only when the user crosses domain boundaries,
+# not within the same domain. This keeps work-tool hopping
+# (VS Code ↔ Obsidian ↔ Chrome) as one continuous session.
+
+_ACTIVITY_DOMAINS: dict[str, set[str]] = {
+    "work_study": {
+        "coding", "ai_tools", "reading", "creative", "tools",
+        "browser_general", "office",
+    },
+    "entertainment": {"video", "gaming"},
+    "social":       {"social"},
+}
+
+def _get_domain(category_key: str) -> str:
+    if not category_key:
+        return "idle"
+    for domain, keys in _ACTIVITY_DOMAINS.items():
+        if category_key in keys:
+            return domain
+    return "idle" if category_key in {"idle", "other"} else "work_study"
+
+
 @dataclass
 class ActivitySession:
     session_id: str
@@ -107,11 +130,6 @@ class ActivitySession:
     idle_seconds: int = 0
     switch_reason: str = ""
     _db_row_id: int = field(default=-1, repr=False)
-
-    @property
-    def session_key(self):
-        """Composite key used to detect window changes."""
-        return (self.process_name, self.normalized_title, self.category_key)
 
 
 # ── Session tracker state machine ──
@@ -136,8 +154,7 @@ class SessionTracker:
             config.get("idle_threshold_seconds", 60))
         self.min_session = tracker.get("min_session_seconds",
             config.get("min_session_seconds", 2))
-        self.idle_split_threshold = tracker.get("idle_split_seconds",
-            config.get("idle_split_seconds", 60))
+        self.cross_group_grace = tracker.get("cross_group_grace_seconds", 30)
 
         self.classifier = classifier
         self._on_session_end = on_session_end
@@ -145,19 +162,17 @@ class SessionTracker:
         self._audio_detector = audio_detector
 
         self._current: ActivitySession | None = None
+        self._pending_switch: dict | None = None  # cross-domain grace period state
         self._tick_count = 0
-        self._consecutive_win_failures = 0
         self._last_pid = None
         self._last_process_name = ""
         self._last_exe_path = ""
 
-        # Idle detection via cursor position + foreground window.
+        # Idle detection via cursor position + keyboard state.
         # Phantom HID events reset GetLastInputInfo() but don't move the
-        # mouse or change the foreground window, so we use those as the
-        # reliable "user is actually here" signal.
+        # mouse or press keys, so we track those directly.
         self._persistent_idle: float = 0.0
         self._last_cursor_pos: tuple[int, int] | None = None
-        self._last_hwnd: int | None = None
         self._last_kb_state: bytes | None = None
         self._activity_from_hook: bool = False  # set by pynput listener
         self._idle_corrected: bool = False  # back-correct threshold window once per idle period
@@ -186,7 +201,6 @@ class SessionTracker:
         self._idle_corrected = False
         self._last_cursor_pos = None
         self._last_kb_state = None
-        self._last_hwnd = None
         self._activity_from_hook = True
 
     # ── Tick ────────────────────────────────────────────────────────
@@ -194,7 +208,9 @@ class SessionTracker:
     def tick(self, idle_seconds, win_info):
         """Called every sample_interval by the worker loop.
 
-        Returns a dict with the latest sample snapshot for UI signals.
+        Session splitting uses activity domains instead of per-window keys:
+          - Same domain (e.g. VS Code → Obsidian) → continues one session
+          - Cross-domain (e.g. coding → video) → 30s grace period, then split
         """
 
         now = datetime.now()
@@ -224,8 +240,6 @@ class SessionTracker:
             cat_name = "空闲"
             active_rule = "interactive_required"
         else:
-            # DayLens self-window: running from source (python.exe / pythonw.exe)
-            # shows up as python, not DayLens.exe. Force tools category.
             if process_name in ("python.exe", "pythonw.exe") and "daylens" in raw_title.lower():
                 cat_key = "tools"
                 cat_name = "系统工具"
@@ -236,42 +250,46 @@ class SessionTracker:
                 cat_name = cat["category_name"]
                 active_rule = cat["active_rule"]
 
-        # Normalize title
         norm_title = normalize_window_title(process_name, raw_title)
-
-        # Detect window change
-        new_key = (process_name, norm_title, cat_key)
+        new_domain = _get_domain(cat_key)
 
         if self._current is not None:
-            # Cross-day check
+            current_domain = _get_domain(self._current.category_key)
+
+            # ── Cross-day ──────────────────────────────────────────
             if self._current.date != date_str:
                 self._current.end_time = now
                 self._current.switch_reason = "cross_day"
                 self._emit_session()
+                self._pending_switch = None
 
-            # Window change
-            elif self._current.session_key != new_key:
-                # Ignore single-frame detection failures
-                if win_info is None or not win_info.get("process_name"):
-                    self._consecutive_win_failures += 1
-                    if self._consecutive_win_failures < 2:
-                        # Continue ticking current session (add idle)
-                        self._tick_current(idle_seconds, now, hwnd)
-                        return self._make_snapshot(idle_seconds)
-                else:
-                    self._consecutive_win_failures = 0
+            # ── Cross-domain ───────────────────────────────────────
+            elif current_domain != new_domain:
+                self._handle_cross_domain(
+                    now, date_str, new_domain,
+                    process_name, exe_path, raw_title, norm_title,
+                    cat_key, cat_name, active_rule,
+                )
+                self._tick_count += 1
+                if self._tick_count % self.flush_interval == 0 and self._on_flush:
+                    self._on_flush(self._current)
+                return self._make_snapshot(idle_seconds)
 
-                self._current.end_time = now
-                self._current.switch_reason = "window_change"
-                self._emit_session()
+            # ── Same domain ────────────────────────────────────────
             else:
-                self._consecutive_win_failures = 0
+                self._pending_switch = None
+                self._current.process_name = process_name
+                self._current.window_title = raw_title
+                self._current.normalized_title = norm_title
+                self._current.category_key = cat_key
+                self._current.category_name = cat_name
+                self._current.active_rule = active_rule
 
         # Start new session if needed
         if self._current is None:
+            self._pending_switch = None
             self._persistent_idle = 0.0
             self._last_cursor_pos = None
-            self._last_hwnd = None
             self._last_kb_state = None
             self._current = ActivitySession(
                 session_id=uuid.uuid4().hex[:12],
@@ -287,15 +305,74 @@ class SessionTracker:
                 active_rule=active_rule,
             )
 
-        # Tick counters
         self._tick_current(idle_seconds, now, hwnd)
-
-        # Periodic flush
         self._tick_count += 1
         if self._tick_count % self.flush_interval == 0 and self._on_flush:
             self._on_flush(self._current)
-
         return self._make_snapshot(idle_seconds)
+
+    # ── Cross-domain grace period ────────────────────────────────────
+
+    def _handle_cross_domain(self, now, date_str, new_domain,
+                             process_name, exe_path, raw_title, norm_title,
+                             cat_key, cat_name, active_rule):
+        """Grace period before confirming a cross-domain session switch.
+
+        - First detection → start 30s timer, keep ticking current as idle.
+        - Same target domain still active → check timer, confirm if expired.
+        - Switched to yet another domain → reset timer to new target.
+        """
+        if self._pending_switch is None or self._pending_switch["domain"] != new_domain:
+            self._pending_switch = {
+                "domain": new_domain,
+                "since": now,
+                "process_name": process_name,
+                "exe_path": exe_path,
+                "raw_title": raw_title,
+                "norm_title": norm_title,
+                "cat_key": cat_key,
+                "cat_name": cat_name,
+                "active_rule": active_rule,
+            }
+            # Still in grace — tick current as idle
+            self._current.end_time = now
+            self._current.duration_seconds += self.sample_interval
+            self._current.idle_seconds += self.sample_interval
+            return
+
+        elapsed = (now - self._pending_switch["since"]).total_seconds()
+        if elapsed < self.cross_group_grace:
+            # Still waiting — tick current as idle
+            self._current.end_time = now
+            self._current.duration_seconds += self.sample_interval
+            self._current.idle_seconds += self.sample_interval
+            return
+
+        # ── Grace period expired → confirm switch ──────────────────
+        p = self._pending_switch
+        self._current.end_time = p["since"]
+        self._current.switch_reason = "domain_change"
+        self._emit_session()
+
+        self._current = ActivitySession(
+            session_id=uuid.uuid4().hex[:12],
+            start_time=p["since"],   # backdate to switch point
+            end_time=now,
+            date=date_str,
+            process_name=p["process_name"],
+            exe_path=p["exe_path"],
+            window_title=p["raw_title"],
+            normalized_title=p["norm_title"],
+            category_key=p["cat_key"],
+            category_name=p["cat_name"],
+            active_rule=p["active_rule"],
+            duration_seconds=int(elapsed),
+            idle_seconds=int(elapsed),   # grace period was idle
+        )
+        self._pending_switch = None
+        self._persistent_idle = 0.0
+        self._last_cursor_pos = None
+        self._last_kb_state = None
 
     # ── Internals ──────────────────────────────────────────────────
 
@@ -305,9 +382,10 @@ class SessionTracker:
         self._current.end_time = now
         self._current.duration_seconds += self.sample_interval
 
-        # ── Cursor / keyboard / window tracking (all categories) ─────
-        # Uses cursor pos, keyboard state, and foreground window — all
-        # immune to phantom HID events that reset GetLastInputInfo().
+        # ── Cursor / keyboard tracking ─────────────────────────────────
+        # Only cursor movement and real keystrokes count as user activity.
+        # Window handle changes are NOT used — system popups, notifications,
+        # and background processes can shift hwnd without user input.
         cursor_pos = _get_cursor_pos()
         cursor_moved = (
             self._last_cursor_pos is not None
@@ -318,16 +396,10 @@ class SessionTracker:
             self._last_kb_state is not None
             and kb_state != self._last_kb_state
         )
-        window_changed = (
-            self._last_hwnd is not None
-            and hwnd is not None
-            and hwnd != self._last_hwnd
-        )
         self._last_cursor_pos = cursor_pos
         self._last_kb_state = kb_state
-        self._last_hwnd = hwnd
 
-        if self._activity_from_hook or cursor_moved or kb_changed or window_changed:
+        if self._activity_from_hook or cursor_moved or kb_changed:
             self._persistent_idle = 0.0
             self._idle_corrected = False
             self._activity_from_hook = False
@@ -362,27 +434,9 @@ class SessionTracker:
                 self._idle_corrected = True
             self._current.idle_seconds += self.sample_interval
 
-            # Split session when idle exceeds split threshold (e.g. 120s),
-            # so the focus timeline shows idle gaps instead of one solid bar.
-            if self._persistent_idle >= self.idle_split_threshold:
-                self._current.switch_reason = "idle_timeout"
-                self._emit_session()
-                # Start a synthetic idle session to fill the gap on timeline
-                self._current = ActivitySession(
-                    session_id=str(uuid.uuid4()),
-                    start_time=now,
-                    end_time=now,
-                    date=date_str,
-                    process_name="system",
-                    exe_path="",
-                    window_title="idle/desktop",
-                    normalized_title="idle/desktop",
-                    category_key="idle",
-                    category_name="空闲",
-                    active_rule="interactive_required",
-                )
-                self._persistent_idle = 0.0
-                self._idle_corrected = False
+            # Idle time accumulates within the current session.
+            # The focus timeline naturally shows the idle gap because
+            # the session's effective_seconds stops growing while idle.
 
     def _emit_session(self):
         if self._current is None:
@@ -429,4 +483,9 @@ class SessionTracker:
             "audio_playing": audio_playing,
             "is_user_active": self._persistent_idle <= self.idle_threshold,
             "is_effective": is_eff,
+            "pending_switch_domain": self._pending_switch["domain"] if self._pending_switch else None,
+            "pending_switch_elapsed": (
+                int((datetime.now() - self._pending_switch["since"]).total_seconds())
+                if self._pending_switch else 0
+            ),
         }

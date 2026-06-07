@@ -7,7 +7,7 @@ build/
 release/
 build_temp/
 data/
-DayLens/
+/DayLens/
 *.egg-info/
 *.egg
 *.spec

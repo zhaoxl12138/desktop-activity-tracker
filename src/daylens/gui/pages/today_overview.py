@@ -230,6 +230,7 @@ class TodayOverviewPage(QWidget):
             ("work", "💼", "工作学习", ui_style.COLORS["coding_green"]),
             ("entertainment", "📺", "娱乐休闲", ui_style.COLORS["video_orange"]),
             ("social", "💬", "社交通讯", ui_style.COLORS["social_purple"]),
+            ("idle", "💤", "挂机时长", ui_style.COLORS["timeline_idle"]),
         ]:
             icon_label = QLabel(icon)
             icon_label.setStyleSheet(f"font-size: 14px; color: {color};")
@@ -448,29 +449,37 @@ class TodayOverviewPage(QWidget):
         self.idle_status_label.setText(f"挂机/空闲 {_compact_duration(idle_seconds)}")
 
         for key, label in self.distribution_cmp_labels.items():
-            item = snapshot["day_comparison"].get(key, {})
-            direction = str(item.get("direction", "empty"))
-            delta = int(item.get("delta_seconds", 0) or 0)
-            if direction == "empty":
-                label.setText("--")
+            if key == "idle":
+                # Idle time: show absolute value, not day-over-day comparison
+                idle_m = _compact_duration(idle_seconds)
+                label.setText(idle_m)
                 label.setStyleSheet(
-                    f"font-size: 13px; color: {ui_style.COLORS['text_muted']}; font-weight: 800;"
-                )
-            elif direction == "flat":
-                label.setText("≈ 0")
-                label.setStyleSheet(
-                    f"font-size: 13px; color: {ui_style.COLORS['text_muted']}; font-weight: 800;"
-                )
-            elif direction == "up":
-                label.setText(f"+{_compact_duration(delta)}")
-                label.setStyleSheet(
-                    f"font-size: 13px; color: {ui_style.COLORS['success_green']}; font-weight: 800;"
+                    f"font-size: 13px; color: {ui_style.COLORS['text']}; font-weight: 800;"
                 )
             else:
-                label.setText(f"-{_compact_duration(abs(delta))}")
-                label.setStyleSheet(
-                    f"font-size: 13px; color: {ui_style.COLORS['danger_red']}; font-weight: 800;"
-                )
+                item = snapshot["day_comparison"].get(key, {})
+                direction = str(item.get("direction", "empty"))
+                delta = int(item.get("delta_seconds", 0) or 0)
+                if direction == "empty":
+                    label.setText("--")
+                    label.setStyleSheet(
+                        f"font-size: 13px; color: {ui_style.COLORS['text_muted']}; font-weight: 800;"
+                    )
+                elif direction == "flat":
+                    label.setText("≈ 0")
+                    label.setStyleSheet(
+                        f"font-size: 13px; color: {ui_style.COLORS['text_muted']}; font-weight: 800;"
+                    )
+                elif direction == "up":
+                    label.setText(f"+{_compact_duration(delta)}")
+                    label.setStyleSheet(
+                        f"font-size: 13px; color: {ui_style.COLORS['success_green']}; font-weight: 800;"
+                    )
+                else:
+                    label.setText(f"-{_compact_duration(abs(delta))}")
+                    label.setStyleSheet(
+                        f"font-size: 13px; color: {ui_style.COLORS['danger_red']}; font-weight: 800;"
+                    )
 
         sessions = [
             {
