@@ -180,8 +180,8 @@ class TimelineWidget(QFrame):
         "视频娱乐": COLORS["video_orange"],
         "娱乐休闲": COLORS["video_orange"],
         "社交通讯": COLORS["social_purple"],
-        "浏览器": COLORS["tools_grey"],
-        "系统工具": COLORS["tools_grey"],
+        "浏览器": COLORS["browser_amber"],
+        "系统工具": COLORS["tools_cyan"],
         "挂机": COLORS["idle_gray"],
         "离开": COLORS["idle_gray"],
         "空闲": COLORS["idle_gray"],
@@ -297,7 +297,8 @@ class TimelineWidget(QFrame):
         self._expanded = len(self._sessions) > self._max_rows
         self._render_rows()
 
-    def _merge_sessions(self, sessions: list[dict]) -> list[dict]:
+    @staticmethod
+    def _merge_sessions(sessions: list[dict]) -> list[dict]:
         if len(sessions) <= 1:
             return sessions
         merged = []
@@ -544,6 +545,227 @@ class TimelineWidget(QFrame):
                 self.more_label.setText("收起 ↑" if self._expanded else "查看更多 ↓")
 
 
+class SessionTop3Widget(QFrame):
+    """Compact top-3 sessions list with detail dialog."""
+
+    RANKS = ["🥇", "🥈", "🥉"]
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("dashboardCard")
+        self.setStyleSheet("QFrame#dashboardCard { background: transparent; border: none; }")
+        self._sessions: list[dict] = []
+        self._display_name_mapping: dict = {}
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(3)
+
+        self._rows_container = QVBoxLayout()
+        self._rows_container.setSpacing(4)
+        root.addLayout(self._rows_container)
+
+        self.more_btn = QPushButton()
+        self.more_btn.setCursor(Qt.PointingHandCursor)
+        self.more_btn.setFlat(True)
+        self.more_btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                font-size: 13px;
+                color: {COLORS['primary']};
+                font-weight: 700;
+                border: none;
+                background: transparent;
+                padding: 4px 0 0 0;
+            }}
+            QPushButton:hover {{
+                color: {COLORS['primary_hover']};
+            }}
+            """
+        )
+        self.more_btn.clicked.connect(self._open_detail_dialog)
+        root.addWidget(self.more_btn, 0, Qt.AlignHCenter)
+
+    def set_sessions(self, sessions: list[dict], display_name_mapping: dict | None = None) -> None:
+        merged = TimelineWidget._merge_sessions(list(sessions or []))
+        filtered = [
+            s for s in merged
+            if (s.get("effective_seconds", 0) or 0) >= 300
+        ]
+        filtered.sort(
+            key=lambda s: (
+                -int(s.get("effective_seconds", 0) or 0),
+                str(s.get("end_time", "") or ""),
+            )
+        )
+        self._sessions = filtered
+        self._display_name_mapping = display_name_mapping or {}
+        self._render()
+
+    def _render(self) -> None:
+        while self._rows_container.count():
+            item = self._rows_container.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        top3 = self._sessions[:3]
+
+        if not top3:
+            placeholder = QLabel("暂无足够长的专注 Session")
+            placeholder.setStyleSheet(
+                f"font-size: 12px; color: {COLORS['text_muted']};"
+            )
+            self._rows_container.addWidget(placeholder)
+            self.more_btn.setVisible(False)
+            return
+
+        for rank, session in enumerate(top3):
+            self._rows_container.addWidget(self._build_row(rank, session))
+
+        total = len(self._sessions)
+        self.more_btn.setText(f"查看全部 Session ({total}) ↗")
+        self.more_btn.setVisible(total > 3)
+
+    def _build_row(self, rank: int, session: dict) -> QWidget:
+        category_key = str(session.get("category_key", "") or "other")
+        accent_color = get_category_color(category_key)
+        category_name = str(session.get("category_name", "") or "其他")
+
+        card = QFrame()
+        card.setFixedHeight(42)
+        card.setStyleSheet(
+            f"""
+            QFrame#sessionTopRow {{
+                background: {COLORS['panel_bg']};
+                border: 1px solid {COLORS['border_light']};
+                border-left: 4px solid {accent_color};
+                border-radius: 6px;
+            }}
+            """
+        )
+        card.setObjectName("sessionTopRow")
+
+        outer = QHBoxLayout(card)
+        outer.setContentsMargins(8, 0, 10, 0)
+        outer.setSpacing(6)
+
+        # Rank number — fixed
+        rank_label = QLabel(str(rank + 1))
+        rank_label.setFixedWidth(16)
+        rank_label.setAlignment(Qt.AlignCenter)
+        rank_label.setStyleSheet(
+            f"font-size: 13px; color: {COLORS['text_muted']}; font-weight: 800;"
+            f"border: none; background: transparent;"
+        )
+        outer.addWidget(rank_label)
+
+        # App name + window title — stretch to fill
+        process_name = str(session.get("process_name", "") or "")
+        display_name = self._display_name_mapping.get(process_name, process_name) or process_name
+        window_title = str(session.get("normalized_title", "") or session.get("window_title", "") or "").strip()
+        if window_title and window_title.lower() != display_name.lower():
+            full_name = f"{display_name} · {window_title}"
+        else:
+            full_name = display_name
+
+        name_label = QLabel(_compact_app_name(full_name, limit=36))
+        name_label.setStyleSheet(
+            f"font-size: 13px; color: {COLORS['text']}; font-weight: 700;"
+            f"border: none; background: transparent;"
+        )
+        name_label.setToolTip(full_name)
+        outer.addWidget(name_label, 1)
+
+        # Category tag — fixed width
+        cat_label = QLabel(category_name)
+        cat_label.setFixedWidth(52)
+        cat_label.setAlignment(Qt.AlignCenter)
+        cat_label.setStyleSheet(
+            f"font-size: 10px; color: {accent_color}; font-weight: 700;"
+            f"padding: 1px 4px; border-radius: 4px;"
+            f"border: 1px solid {accent_color}; background: transparent;"
+        )
+        outer.addWidget(cat_label)
+
+        # Time range — fixed width
+        start = str(session.get("start_time", "") or "")
+        end = str(session.get("end_time", "") or "")
+        start_short = start[11:16] if len(start) >= 16 else start[-5:]
+        end_short = end[11:16] if len(end) >= 16 else end[-5:]
+        time_label = QLabel(f"{start_short} - {end_short}")
+        time_label.setFixedWidth(104)
+        time_label.setAlignment(Qt.AlignCenter)
+        time_label.setStyleSheet(
+            f"font-size: 11px; color: {COLORS['text_secondary']};"
+            f"border: none; background: transparent;"
+        )
+        outer.addWidget(time_label)
+
+        # Duration badge — fixed width
+        effective = int(session.get("effective_seconds", 0) or 0)
+        dur_label = QLabel(fmt_seconds(effective))
+        dur_label.setFixedWidth(62)
+        dur_label.setAlignment(Qt.AlignCenter)
+        dur_label.setStyleSheet(
+            f"font-size: 11px; color: #fff; font-weight: 800;"
+            f"background: {accent_color}; border-radius: 4px;"
+            f"padding: 2px 4px;"
+        )
+        outer.addWidget(dur_label)
+
+        return card
+
+    def _open_detail_dialog(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("今日专注 Session")
+        dialog.setModal(True)
+        dialog.resize(980, 720)
+        dialog.setStyleSheet(f"QDialog {{ background: {COLORS['bg']}; }}")
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(10)
+
+        title = QLabel("今日专注 Session")
+        title.setStyleSheet(
+            f"font-size: 18px; font-weight: 800; color: {COLORS['text']};"
+        )
+        layout.addWidget(title)
+
+        detail_widget = TimelineWidget(
+            max_rows=max(len(self._sessions), 5),
+            show_title=False,
+            open_detail_on_more=False,
+            min_effective_seconds=0,
+            parent=dialog,
+        )
+        detail_widget.set_sessions(list(self._sessions), self._display_name_mapping)
+        detail_widget.more_label.setVisible(False)
+        layout.addWidget(detail_widget, 1)
+
+        close_button = QPushButton("关闭")
+        close_button.setCursor(Qt.PointingHandCursor)
+        close_button.setStyleSheet(
+            f"""
+            QPushButton {{
+                padding: 8px 18px;
+                border-radius: 10px;
+                border: 1px solid {COLORS['border']};
+                color: {COLORS['text']};
+                background: {COLORS['panel_bg']};
+                font-size: 13px;
+                font-weight: 700;
+            }}
+            QPushButton:hover {{
+                border-color: {COLORS['primary']};
+            }}
+            """
+        )
+        close_button.clicked.connect(dialog.accept)
+        layout.addWidget(close_button, 0, Qt.AlignRight)
+
+        dialog.show()
+
+
 class TrendChartWidget(QFrame):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -554,6 +776,9 @@ class TrendChartWidget(QFrame):
         self._series: dict[str, list] = {"today": [], "7d": [], "30d": []}
         self._labels: dict[str, list[str]] = {"today": [], "7d": [], "30d": []}
         self._weekday_indices: dict[str, list[int]] = {"today": [], "7d": [], "30d": []}
+        self._work_today: list = []
+        self._entertainment_today: list = []
+        self._yesterday_today: list = []
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 10, 16, 8)
@@ -622,12 +847,13 @@ class TrendChartWidget(QFrame):
             unit = "分钟" if mode in {"today", "7d"} else "小时"
             self._title_label.setText(f"时间趋势（{unit}）")
             if mode == "today":
-                cmp_color = COLORS["text_muted"]
+                green = COLORS["coding_green"]
+                orange = COLORS["video_orange"]
                 self._cmp_legend.setText(
-                    f"<span>── 今日</span>  "
-                    f"<span style='color:{cmp_color}'>- - 昨日</span>"
+                    f"<span style='color:{green}'>── 工作学习</span>  "
+                    f"<span style='color:{orange}'>── 娱乐休闲</span>"
                 )
-                self._cmp_legend.setVisible(bool(self._yesterday_today))
+                self._cmp_legend.setVisible(True)
             elif mode == "7d":
                 week_labels = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
                 parts = [
@@ -640,22 +866,28 @@ class TrendChartWidget(QFrame):
                 self._cmp_legend.setVisible(False)
 
     def _apply_series(self) -> None:
-        compare = self._yesterday_today if self._mode == "today" else []
+        compare = self._yesterday_today if self._mode in ("7d", "30d") else []
         self.canvas.set_series(
             self._series[self._mode],
             self._labels.get(self._mode, []),
             self._mode,
             compare,
             self._weekday_indices.get(self._mode, []),
+            work_points=self._work_today if self._mode == "today" else None,
+            entertainment_points=self._entertainment_today if self._mode == "today" else None,
         )
 
-    def set_data(self, today: list, yesterday_today: list, seven_days: list, thirty_days: list) -> None:
+    def set_data(self, today: list, yesterday_today: list, seven_days: list,
+                 thirty_days: list, work_today: list | None = None,
+                 entertainment_today: list | None = None) -> None:
         self._series["today"] = today
         self._series["7d"] = seven_days
         self._series["30d"] = thirty_days
         self._yesterday_today = yesterday_today or []
+        self._work_today = work_today or []
+        self._entertainment_today = entertainment_today or []
 
-        self._labels["today"] = ["0h", "", "2h", "", "4h", "", "6h", "", "8h", "", "10h", "", "12h", "", "14h", "", "16h", "", "18h", "", "20h", "", "22h", ""]
+        self._labels["today"] = ["0", "", "2", "", "4", "", "6", "", "8", "", "10", "", "12", "", "14", "", "16", "", "18", "", "20", "", "22", ""]
         self._labels["7d"] = list(self._labels["today"])
 
         today_date = date.today()
@@ -684,6 +916,9 @@ class _TrendCanvas(QWidget):
         self._compare_points: list[float] = []
         self._week_series: list[list[float]] = []
         self._weekday_indices: list[int] = []
+        self._work_points: list[float] = []
+        self._entertainment_points: list[float] = []
+        self.setMouseTracking(True)
         self._weekday_colors = [
             COLORS["weekday_mon"],
             COLORS["weekday_tue"],
@@ -701,6 +936,8 @@ class _TrendCanvas(QWidget):
         mode: str = "today",
         compare_points: list | None = None,
         weekday_indices: list[int] | None = None,
+        work_points: list | None = None,
+        entertainment_points: list | None = None,
     ) -> None:
         self._week_series = []
         if mode == "7d" and points and isinstance(points[0], (list, tuple)):
@@ -715,6 +952,8 @@ class _TrendCanvas(QWidget):
         self._mode = mode
         self._compare_points = [max(0.0, float(p)) for p in (compare_points or [])]
         self._weekday_indices = list(weekday_indices or [])
+        self._work_points = [max(0.0, float(p)) for p in (work_points or [])]
+        self._entertainment_points = [max(0.0, float(p)) for p in (entertainment_points or [])]
         self.update()
 
     def _series_state(self) -> str:
@@ -736,9 +975,14 @@ class _TrendCanvas(QWidget):
     def _compute_y_axis_max(self, max_value: float) -> float:
         if self._mode == "today":
             y_max = max_value * 1.25
-            if y_max < 1:
-                y_max = 1.0
-            return float(max(10, int(y_max) + 1))
+            if y_max <= 0:
+                return 10.0
+            if y_max <= 5:
+                return 5.0
+            if y_max <= 10:
+                return 10.0
+            step = 10 if y_max <= 60 else 15 if y_max <= 120 else 30
+            return float(((int(y_max) + step - 1) // step) * step)
         if self._mode == "7d":
             rounded = int((max_value + 29) // 30) * 30
             return float(max(30, rounded))
@@ -766,7 +1010,7 @@ class _TrendCanvas(QWidget):
             self._draw_empty(painter, r, "暂无趋势数据")
             return
         if state == "accumulating":
-            self._draw_empty(painter, r, "数据积累中\n使用一段时间后将显示趋势")
+            self._draw_empty(painter, r, "📊 数据积累中\n记录满30分钟后开始生成趋势图")
             return
 
         max_value = max(self._points)
@@ -800,7 +1044,89 @@ class _TrendCanvas(QWidget):
             self._draw_x_axis_labels(painter, chart_rect)
             return
 
-        # Compute chart points
+        if self._mode == "today" and self._work_points and self._entertainment_points:
+            self._draw_split_lines(painter, chart_rect, y_max)
+        else:
+            self._draw_single_line(painter, chart_rect, y_max)
+
+        self._draw_x_axis_labels(painter, chart_rect)
+
+    def _draw_split_lines(self, painter: QPainter, chart_rect: QRectF, y_max: float) -> None:
+        step = chart_rect.width() / max(len(self._points) - 1, 1)
+
+        def _make_points(values: list[float]) -> list[QPointF]:
+            pts = []
+            for idx, v in enumerate(values):
+                x = chart_rect.left() + idx * step
+                y = chart_rect.bottom() - (v / y_max) * chart_rect.height()
+                pts.append(QPointF(x, y))
+            return pts
+
+        ent_pts = _make_points(self._entertainment_points)
+        work_pts = _make_points(self._work_points)
+
+        # Entertainment area fill
+        if len(ent_pts) > 5:
+            fill = QPainterPath()
+            fill.moveTo(chart_rect.left(), chart_rect.bottom())
+            for pt in ent_pts:
+                fill.lineTo(pt)
+            fill.lineTo(chart_rect.right(), chart_rect.bottom())
+            fill.closeSubpath()
+            ent_fill = QColor(COLORS["video_orange"])
+            ent_fill.setAlpha(20)
+            painter.setBrush(ent_fill)
+            painter.setPen(Qt.NoPen)
+            painter.drawPath(fill)
+
+        # Entertainment line
+        ent_path = QPainterPath()
+        ent_path.moveTo(ent_pts[0])
+        for pt in ent_pts[1:]:
+            ent_path.lineTo(pt)
+        painter.setPen(QPen(QColor(COLORS["video_orange"]), 2))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawPath(ent_path)
+
+        # Work area fill
+        if len(work_pts) > 5:
+            fill = QPainterPath()
+            fill.moveTo(chart_rect.left(), chart_rect.bottom())
+            for pt in work_pts:
+                fill.lineTo(pt)
+            fill.lineTo(chart_rect.right(), chart_rect.bottom())
+            fill.closeSubpath()
+            work_fill = QColor(COLORS["coding_green"])
+            work_fill.setAlpha(25)
+            painter.setBrush(work_fill)
+            painter.setPen(Qt.NoPen)
+            painter.drawPath(fill)
+
+        # Work line
+        work_path = QPainterPath()
+        work_path.moveTo(work_pts[0])
+        for pt in work_pts[1:]:
+            work_path.lineTo(pt)
+        painter.setPen(QPen(QColor(COLORS["coding_green"]), 2))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawPath(work_path)
+
+        # Dots (entertainment)
+        dot_ent = QColor(COLORS["video_orange"])
+        dot_ent.setAlpha(200)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(dot_ent)
+        for pt in ent_pts:
+            painter.drawEllipse(pt, 2.5, 2.5)
+
+        # Dots (work)
+        dot_work = QColor(COLORS["coding_green"])
+        dot_work.setAlpha(220)
+        painter.setBrush(dot_work)
+        for pt in work_pts:
+            painter.drawEllipse(pt, 2.5, 2.5)
+
+    def _draw_single_line(self, painter: QPainter, chart_rect: QRectF, y_max: float) -> None:
         step = chart_rect.width() / max(len(self._points) - 1, 1)
         chart_points = []
         for index, value in enumerate(self._points):
@@ -808,7 +1134,6 @@ class _TrendCanvas(QWidget):
             y = chart_rect.bottom() - (value / y_max) * chart_rect.height()
             chart_points.append(QPointF(x, y))
 
-        # Area fill (only for > 5 points)
         if len(self._points) > 5:
             fill_path = QPainterPath()
             fill_path.moveTo(chart_rect.left(), chart_rect.bottom())
@@ -822,7 +1147,6 @@ class _TrendCanvas(QWidget):
             painter.setPen(Qt.NoPen)
             painter.drawPath(fill_path)
 
-        # Line
         line_path = QPainterPath()
         line_path.moveTo(chart_points[0])
         for pt in chart_points[1:]:
@@ -831,24 +1155,6 @@ class _TrendCanvas(QWidget):
         painter.setBrush(Qt.NoBrush)
         painter.drawPath(line_path)
 
-        # Yesterday comparison line (today mode only, dashed)
-        if self._mode == "today" and self._compare_points and len(self._compare_points) == len(self._points):
-            cmp_points = []
-            for index, value in enumerate(self._compare_points):
-                x = chart_rect.left() + index * step
-                y = chart_rect.bottom() - (value / y_max) * chart_rect.height()
-                cmp_points.append(QPointF(x, y))
-            cmp_path = QPainterPath()
-            cmp_path.moveTo(cmp_points[0])
-            for pt in cmp_points[1:]:
-                cmp_path.lineTo(pt)
-            cmp_pen = QPen(QColor(COLORS["text_muted"]), 1.5, Qt.DashLine)
-            cmp_pen.setDashPattern([6, 4])
-            painter.setPen(cmp_pen)
-            painter.setBrush(Qt.NoBrush)
-            painter.drawPath(cmp_path)
-
-        # Dots
         dot_color = QColor(COLORS["success_green"])
         dot_color.setAlpha(220)
         painter.setPen(Qt.NoPen)
@@ -856,7 +1162,41 @@ class _TrendCanvas(QWidget):
         for pt in chart_points:
             painter.drawEllipse(pt, 2.5, 2.5)
 
-        self._draw_x_axis_labels(painter, chart_rect)
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        from PySide6.QtWidgets import QToolTip
+
+        if self._mode != "today" or not self._work_points or not self._entertainment_points:
+            QToolTip.hideText()
+            super().mouseMoveEvent(event)
+            return
+
+        r = self.rect()
+        chart_rect = r.adjusted(42, 6, -14, -30)
+        pos = event.position() if hasattr(event, 'position') else event.pos()
+
+        if not chart_rect.contains(pos):
+            QToolTip.hideText()
+            super().mouseMoveEvent(event)
+            return
+
+        step = chart_rect.width() / max(len(self._points) - 1, 1)
+        hour = int((pos.x() - chart_rect.left()) / step + 0.5)
+        hour = max(0, min(23, hour))
+
+        work_m = int(self._work_points[hour]) if hour < len(self._work_points) else 0
+        ent_m = int(self._entertainment_points[hour]) if hour < len(self._entertainment_points) else 0
+        total_m = work_m + ent_m + max(0, int(self._points[hour]) - work_m - ent_m)
+        ratio = int(total_m / 60 * 100) if total_m > 0 else 0
+
+        QToolTip.showText(
+            event.globalPos(),
+            f"🕒 {hour:02d}:00 - {hour + 1:02d}:00\n"
+            f"💼 工作学习: {work_m}分钟\n"
+            f"📺 娱乐休闲: {ent_m}分钟\n"
+            f"📊 活跃占比: {ratio}%",
+            self,
+        )
+        super().mouseMoveEvent(event)
 
     def _draw_weekday_lines(self, painter: QPainter, chart_rect: QRectF, y_max: float) -> None:
         if not self._week_series:

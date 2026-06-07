@@ -136,6 +136,8 @@ class SessionTracker:
             config.get("idle_threshold_seconds", 60))
         self.min_session = tracker.get("min_session_seconds",
             config.get("min_session_seconds", 2))
+        self.idle_split_threshold = tracker.get("idle_split_seconds",
+            config.get("idle_split_seconds", 60))
 
         self.classifier = classifier
         self._on_session_end = on_session_end
@@ -218,7 +220,7 @@ class SessionTracker:
 
         # Classify
         if process_name == "system":
-            cat_key = "other"
+            cat_key = "idle"
             cat_name = "空闲"
             active_rule = "interactive_required"
         else:
@@ -359,6 +361,28 @@ class SessionTracker:
                 self._current.idle_seconds += correction
                 self._idle_corrected = True
             self._current.idle_seconds += self.sample_interval
+
+            # Split session when idle exceeds split threshold (e.g. 120s),
+            # so the focus timeline shows idle gaps instead of one solid bar.
+            if self._persistent_idle >= self.idle_split_threshold:
+                self._current.switch_reason = "idle_timeout"
+                self._emit_session()
+                # Start a synthetic idle session to fill the gap on timeline
+                self._current = ActivitySession(
+                    session_id=str(uuid.uuid4()),
+                    start_time=now,
+                    end_time=now,
+                    date=date_str,
+                    process_name="system",
+                    exe_path="",
+                    window_title="idle/desktop",
+                    normalized_title="idle/desktop",
+                    category_key="idle",
+                    category_name="空闲",
+                    active_rule="interactive_required",
+                )
+                self._persistent_idle = 0.0
+                self._idle_corrected = False
 
     def _emit_session(self):
         if self._current is None:

@@ -28,6 +28,7 @@ from ..widgets.dashboard_widgets import (
     DistributionLegend,
     DonutChartWidget,
     FocusTimelineBarWidget,
+    SessionTop3Widget,
     TimelineWidget,
     TopAppListWidget,
     TrendChartWidget,
@@ -408,18 +409,12 @@ class TodayOverviewPage(QWidget):
         self.consecutive_label = QLabel("")
         self.consecutive_label.setVisible(False)
 
-        section_title = QLabel("今日专注 Session")
+        section_title = QLabel("今日关键 Session")
         section_title.setStyleSheet(f"font-size: 14px; font-weight: 700; color: {ui_style.COLORS['text']};")
         layout.addWidget(section_title)
 
-        self.timeline_widget = TimelineWidget(
-            max_rows=5,
-            show_title=False,
-            open_detail_on_more=True,
-            min_effective_seconds=300,
-            sort_by_value=True,
-        )
-        layout.addWidget(self.timeline_widget, 1)
+        self.session_top3_widget = SessionTop3Widget()
+        layout.addWidget(self.session_top3_widget, 1)
         return card
 
     def refresh(self) -> None:
@@ -440,8 +435,8 @@ class TodayOverviewPage(QWidget):
         self.donut_widget.set_data(effective, distribution)
         self.legend_widget.set_items(distribution, effective)
 
-        self.active_status_label.setText(f"???? {active_ratio}%")
-        self.idle_status_label.setText(f"??/?? {_compact_duration(idle_seconds)}")
+        self.active_status_label.setText(f"活跃占比 {active_ratio}%")
+        self.idle_status_label.setText(f"挂机/空闲 {_compact_duration(idle_seconds)}")
 
         for key, label in self.distribution_cmp_labels.items():
             item = snapshot["day_comparison"].get(key, {})
@@ -453,7 +448,7 @@ class TodayOverviewPage(QWidget):
                     f"font-size: 13px; color: {ui_style.COLORS['text_muted']}; font-weight: 800;"
                 )
             elif direction == "flat":
-                label.setText("? 0")
+                label.setText("≈ 0")
                 label.setStyleSheet(
                     f"font-size: 13px; color: {ui_style.COLORS['text_muted']}; font-weight: 800;"
                 )
@@ -478,13 +473,10 @@ class TodayOverviewPage(QWidget):
             }
             for session in snapshot["sessions"]
         ]
-        session_cards = sorted(
-            sessions,
-            key=lambda session: (
-                -int(session.get("effective_seconds", 0) or 0),
-                str(session.get("end_time", "") or ""),
-            ),
-        )
+        sessions_with_icons = []
+        for session in sessions:
+            proc = str(session.get("process_name", ""))
+            sessions_with_icons.append({**session, "_icon": self._app_icon(proc)})
         timeline_sessions = sorted(
             sessions,
             key=lambda session: (
@@ -492,16 +484,23 @@ class TodayOverviewPage(QWidget):
                 str(session.get("end_time", "") or ""),
             ),
         )
-        self.timeline_widget.set_sessions(session_cards, self.display_name_mapping)
+        self.session_top3_widget.set_sessions(sessions_with_icons, self.display_name_mapping)
         self.focus_axis.set_minutes(self._build_focus_axis(timeline_sessions))
         trend = snapshot["trend"]
-        self.trend_card.set_data(trend["today"], trend["yesterday"], trend["seven_days"], trend["thirty_days"])
+        self.trend_card.set_data(
+            trend["today"],
+            trend["yesterday"],
+            trend["seven_days"],
+            trend["thirty_days"],
+            work_today=trend.get("today_work", []),
+            entertainment_today=trend.get("today_entertainment", []),
+        )
         focus_summary = str(snapshot["focus_summary"])
         self.focus_hint.setText(focus_summary)
-        self.focus_hint.setVisible("??" not in focus_summary and "???" not in focus_summary)
+        self.focus_hint.setVisible("暂未识别" not in focus_summary)
         consecutive_days = int(snapshot["consecutive_days"])
         self.last_consecutive_days = consecutive_days
-        self.consecutive_label.setText(f"???? ?{consecutive_days}?" if consecutive_days > 0 else "")
+        self.consecutive_label.setText(f"连续专注 {consecutive_days}天" if consecutive_days > 0 else "")
         self._update_top_apps(snapshot["top_app_rows"])
 
     def _update_top_apps(self, rows_data: list[dict[str, object]]) -> None:
@@ -628,7 +627,7 @@ class TodayOverviewPage(QWidget):
         for session in sessions:
             start = self._to_minute(session.get("start_time", ""))
             end = max(start, self._to_minute(session.get("end_time", "")))
-            color = self._color_for_category(session.get("category_key") or "other")
+            color = self._color_for_category(session.get("category_key") or "other", str(session.get("category_name", "") or ""))
             for minute in range(max(0, start), min(1439, end) + 1):
                 colors[minute] = color
         return colors
@@ -646,14 +645,16 @@ class TodayOverviewPage(QWidget):
         except Exception:
             return None
 
-    def _color_for_category(self, category_key: str) -> str:
+    def _color_for_category(self, category_key: str, category_name: str = "") -> str:
         if category_key in {"ai_tools", "coding", "reading", "creative"}:
             return ui_style.COLORS["coding_green"]
         if category_key == "video":
             return ui_style.COLORS["video_orange"]
         if category_key == "social":
             return ui_style.COLORS["social_purple"]
-        if category_key in {"idle", "idle_leave"}:
+        if category_key in {"idle", "idle_leave", "hangup"}:
+            return ui_style.COLORS["timeline_idle"]
+        if category_name in {"空闲", "挂机", "离开"}:
             return ui_style.COLORS["timeline_idle"]
         return ui_style.get_category_color("other")
 
