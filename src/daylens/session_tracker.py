@@ -4,7 +4,7 @@ import ctypes
 import re
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 # ── Input polling (cursor + keyboard, immune to phantom HID events) ──
@@ -178,6 +178,7 @@ class SessionTracker:
         self._last_kb_state: bytes | None = None
         self._activity_from_hook: bool = False  # set by pynput listener
         self._idle_corrected: bool = False  # back-correct threshold window once per idle period
+        self._awaiting_activity: bool = False  # don't create new session while idle after auto-close
 
     # ── Public API ──────────────────────────────────────────────────
 
@@ -204,6 +205,7 @@ class SessionTracker:
         self._last_cursor_pos = None
         self._last_kb_state = None
         self._activity_from_hook = True
+        self._awaiting_activity = False
 
     def _idle_limit(self) -> int:
         """Return the idle threshold for the current session category."""
@@ -292,6 +294,25 @@ class SessionTracker:
                 self._current.category_key = cat_key
                 self._current.category_name = cat_name
                 self._current.active_rule = active_rule
+
+        # If previous session was auto-closed due to entertainment idle,
+        # don't create a new session until the user is actually active.
+        if self._current is None and self._awaiting_activity:
+            cursor_pos = _get_cursor_pos()
+            cursor_moved = (
+                self._last_cursor_pos is not None
+                and cursor_pos != self._last_cursor_pos
+            )
+            kb_state = _get_keyboard_snapshot()
+            kb_changed = (
+                self._last_kb_state is not None
+                and kb_state != self._last_kb_state
+            )
+            self._last_cursor_pos = cursor_pos
+            self._last_kb_state = kb_state
+            if not (self._activity_from_hook or cursor_moved or kb_changed):
+                return self._make_snapshot(idle_seconds)
+            self._awaiting_activity = False
 
         # Start new session if needed
         if self._current is None:
@@ -478,9 +499,20 @@ class SessionTracker:
                 self._idle_corrected = True
             self._current.idle_seconds += self.sample_interval
 
-            # Idle time accumulates within the current session.
-            # The focus timeline naturally shows the idle gap because
-            # the session's effective_seconds stops growing while idle.
+            # Auto-close entertainment sessions when idle exceeds threshold.
+            # Prevents a 3-hour movie session from spanning 19:29-22:34
+            # when the user actually left at 20:00 and came back at 22:00.
+            if (self._current.category_key == "video"
+                    and self._persistent_idle > self._idle_limit()):
+                # Backdate end_time to when the user actually stopped
+                # (now minus the idle threshold window).
+                limit = self._idle_limit()
+                backdate = now - timedelta(seconds=limit)
+                self._current.end_time = backdate
+                self._current.duration_seconds -= self._persistent_idle
+                self._current.switch_reason = "entertainment_idle"
+                self._emit_session()
+                self._awaiting_activity = True
 
     def _emit_session(self):
         if self._current is None:
