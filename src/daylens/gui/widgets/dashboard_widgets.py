@@ -566,9 +566,13 @@ class SessionTop3Widget(QFrame):
         header = self._build_header()
         root.addWidget(header)
 
-        self._rows_container = QVBoxLayout()
-        self._rows_container.setSpacing(0)
-        root.addLayout(self._rows_container)
+        self._rows_container = QWidget()
+        self._rows_container.setStyleSheet("background: transparent;")
+        rows_layout = QVBoxLayout(self._rows_container)
+        rows_layout.setContentsMargins(0, 0, 0, 0)
+        rows_layout.setSpacing(0)
+        self._rows_layout = rows_layout
+        root.addWidget(self._rows_container)
 
         self.more_btn = QPushButton()
         self.more_btn.setCursor(Qt.PointingHandCursor)
@@ -591,32 +595,43 @@ class SessionTop3Widget(QFrame):
         self.more_btn.clicked.connect(self._open_detail_dialog)
         root.addWidget(self.more_btn, 0, Qt.AlignHCenter)
 
+    def _v_sep(self) -> QFrame:
+        """Thin vertical separator for table columns."""
+        sep = QFrame()
+        sep.setFixedWidth(3)
+        sep.setMinimumHeight(1)
+        sep.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        sep.setStyleSheet(f"background: {COLORS['border_light']}; border: none;")
+        return sep
+
     def _build_header(self) -> QWidget:
         hdr = QWidget()
-        hdr.setFixedHeight(30)
+        hdr.setFixedHeight(28)
         hdr.setStyleSheet(
-            f"background: transparent;"
-            f"border-bottom: 1px solid {COLORS['border']};"
+            f"background: {COLORS['panel_bg_alt']};"
+            f"border-bottom: 1px solid {COLORS['border_light']};"
         )
         layout = QHBoxLayout(hdr)
         layout.setContentsMargins(10, 0, 12, 0)
-        layout.setSpacing(6)
+        layout.setSpacing(0)
 
         header_specs = [
-            ("排名", 54),
+            ("排名", 44),
             ("应用程序", None),   # stretch
             ("分类", 110),
             ("开始", 80),
             ("结束", 80),
             ("时长", 90),
         ]
-        for text, width in header_specs:
+        for i, (text, width) in enumerate(header_specs):
+            if i > 0:
+                layout.addWidget(self._v_sep())
             lbl = QLabel(text)
             if width:
                 lbl.setFixedWidth(width)
-            lbl.setAlignment(Qt.AlignLeft if text == "应用程序" else Qt.AlignCenter)
+            lbl.setAlignment(Qt.AlignCenter)
             lbl.setStyleSheet(
-                f"font-size: 11px; color: {COLORS['text_muted']}; font-weight: 700;"
+                f"font-size: 12px; color: {COLORS['text_secondary']}; font-weight: 700;"
                 f"border: none; background: transparent;"
             )
             layout.addWidget(lbl, 0 if width else 1)
@@ -641,7 +656,7 @@ class SessionTop3Widget(QFrame):
 
     def _render(self) -> None:
         for f in self._row_frames:
-            self._rows_container.removeWidget(f)
+            self._rows_layout.removeWidget(f)
             f.deleteLater()
         self._row_frames.clear()
 
@@ -652,45 +667,64 @@ class SessionTop3Widget(QFrame):
             placeholder.setStyleSheet(
                 f"font-size: 12px; color: {COLORS['text_muted']}; padding: 8px 0;"
             )
-            self._rows_container.addWidget(placeholder)
+            self._rows_layout.addWidget(placeholder)
             self._row_frames.append(placeholder)
             self.more_btn.setVisible(False)
             return
 
         for rank, session in enumerate(top_n):
             row = self._build_row(rank, session)
-            self._rows_container.addWidget(row)
+            self._rows_layout.addWidget(row)
             self._row_frames.append(row)
 
         total = len(self._sessions)
         self.more_btn.setText(f"查看全部 Session ({total}) ↗")
         self.more_btn.setVisible(total > 6)
 
+    # Medal accent colors for top-3 podium rows
+    MEDAL_COLORS = ["#FFD700", "#C0C0C0", "#CD7F32"]  # gold, silver, bronze
+    MEDAL_BG = ["rgba(255,215,0,0.06)", "rgba(192,192,192,0.04)", "rgba(205,127,50,0.04)"]
+
     def _build_row(self, rank: int, session: dict) -> QFrame:
         category_key = str(session.get("category_key", "") or "other")
         accent_color = get_category_color(category_key)
         category_name = str(session.get("category_name", "") or "其他")
+        is_podium = rank < 3
 
         row = QFrame()
         row.setFixedHeight(50)
         row.setObjectName("sessionTableRow")
-        row.setStyleSheet(
-            f"""
-            QFrame#sessionTableRow {{
-                background: transparent;
-                border-bottom: 1px solid {COLORS['border']};
-            }}
-            QFrame#sessionTableRow:hover {{
-                background: {COLORS['panel_bg_alt']};
-            }}
-            """
-        )
-        # Enable hover style
-        row.setProperty("hover", True)
+        if is_podium:
+            medal = self.MEDAL_COLORS[rank]
+            medal_bg = self.MEDAL_BG[rank]
+            row.setStyleSheet(
+                f"""
+                QFrame#sessionTableRow {{
+                    background: {medal_bg};
+                    border-left: 3px solid {medal};
+                    border-bottom: 1px solid {COLORS['border']};
+                }}
+                QFrame#sessionTableRow:hover {{
+                    background: {COLORS['panel_bg_alt']};
+                }}
+                """
+            )
+        else:
+            row.setStyleSheet(
+                f"""
+                QFrame#sessionTableRow {{
+                    background: transparent;
+                    border-bottom: 1px solid {COLORS['border']};
+                }}
+                QFrame#sessionTableRow:hover {{
+                    background: {COLORS['panel_bg_alt']};
+                }}
+                """
+            )
 
         layout = QHBoxLayout(row)
         layout.setContentsMargins(10, 0, 12, 0)
-        layout.setSpacing(6)
+        layout.setSpacing(0)
 
         # ── Rank badge ──
         rank_text = self.RANKS[rank] if rank < 3 else str(rank + 1)
@@ -698,24 +732,23 @@ class SessionTop3Widget(QFrame):
         rank_badge.setFixedSize(28, 28)
         rank_badge.setAlignment(Qt.AlignCenter)
         if rank < 3:
-            # Medal emojis on transparent bg
             rank_badge.setStyleSheet(
                 f"font-size: 16px; border: none; background: transparent;"
             )
         else:
-            # Number in a subtle circle
             rank_badge.setStyleSheet(
                 f"font-size: 12px; color: {COLORS['text_secondary']}; font-weight: 700;"
                 f"border: 1.5px solid {COLORS['border']}; border-radius: 14px;"
                 f"background: {COLORS['panel_bg_alt']};"
             )
         rank_wrapper = QWidget()
-        rank_wrapper.setFixedWidth(54)
+        rank_wrapper.setFixedWidth(44)
         rank_w_layout = QHBoxLayout(rank_wrapper)
         rank_w_layout.setContentsMargins(0, 0, 0, 0)
         rank_w_layout.setAlignment(Qt.AlignCenter)
         rank_w_layout.addWidget(rank_badge)
         layout.addWidget(rank_wrapper)
+        layout.addWidget(self._v_sep())
 
         # ── App icon + name + window title ──
         process_name = str(session.get("process_name", "") or "")
@@ -726,13 +759,22 @@ class SessionTop3Widget(QFrame):
         else:
             title_text = display_name
 
+        if is_podium:
+            app_style = (
+                f"font-size: 13px; color: {COLORS['text']}; font-weight: 800;"
+                f"border: none; background: transparent;"
+            )
+        else:
+            app_style = (
+                f"font-size: 13px; color: {COLORS['text']}; font-weight: 600;"
+                f"border: none; background: transparent;"
+            )
         app_label = QLabel(title_text)
-        app_label.setStyleSheet(
-            f"font-size: 13px; color: {COLORS['text']}; font-weight: 600;"
-            f"border: none; background: transparent;"
-        )
+        app_label.setAlignment(Qt.AlignCenter)
+        app_label.setStyleSheet(app_style)
         app_label.setToolTip(f"{display_name} — {window_title}" if window_title else display_name)
         layout.addWidget(app_label, 1)
+        layout.addWidget(self._v_sep())
 
         # ── Category with color dot ──
         cat_widget = QWidget()
@@ -753,6 +795,7 @@ class SessionTop3Widget(QFrame):
         )
         cat_layout.addWidget(cat_label)
         layout.addWidget(cat_widget)
+        layout.addWidget(self._v_sep())
 
         # ── Start time ──
         start = str(session.get("start_time", "") or "")
@@ -765,6 +808,7 @@ class SessionTop3Widget(QFrame):
             f"border: none; background: transparent;"
         )
         layout.addWidget(start_label)
+        layout.addWidget(self._v_sep())
 
         # ── End time ──
         end = str(session.get("end_time", "") or "")
@@ -777,6 +821,7 @@ class SessionTop3Widget(QFrame):
             f"border: none; background: transparent;"
         )
         layout.addWidget(end_label)
+        layout.addWidget(self._v_sep())
 
         # ── Duration capsule ──
         effective = int(session.get("effective_seconds", 0) or 0)
@@ -929,9 +974,12 @@ class TrendChartWidget(QFrame):
         if self._mode == "today":
             green = COLORS["coding_green"]
             orange = COLORS["video_orange"]
+            muted = COLORS["text_muted"]
             self._cmp_legend.setText(
                 f"<span style='color:{green}'>── 工作学习</span>  "
-                f"<span style='color:{orange}'>── 娱乐休闲</span>"
+                f"<span style='color:{orange}'>── 娱乐休闲</span>  "
+                f"<span style='color:{green}'>- - 昨日工作</span>  "
+                f"<span style='color:{orange}'>- - 昨日娱乐</span>"
             )
             self._cmp_legend.setVisible(True)
         elif self._mode == "7d":
@@ -955,31 +1003,31 @@ class TrendChartWidget(QFrame):
             self._weekday_indices.get(self._mode, []),
             work_points=self._work_today if self._mode == "today" else None,
             entertainment_points=self._entertainment_today if self._mode == "today" else None,
-            ref_yesterday_work=getattr(self, '_ref_yesterday_work', 0),
-            ref_today_work=getattr(self, '_ref_today_work', 0),
+            yesterday_work=getattr(self, '_yesterday_work', []),
+            yesterday_entertainment=getattr(self, '_yesterday_entertainment', []),
         )
 
     def set_data(self, today: list, yesterday_today: list, seven_days: list,
                  thirty_days: list, work_today: list | None = None,
                  entertainment_today: list | None = None,
-                 ref_yesterday_work: float = 0.0,
-                 ref_today_work: float = 0.0) -> None:
+                 yesterday_work: list | None = None,
+                 yesterday_entertainment: list | None = None,
+                 seven_day_labels: list | None = None) -> None:
         self._series["today"] = today
         self._series["7d"] = seven_days
         self._series["30d"] = thirty_days
         self._yesterday_today = yesterday_today or []
         self._work_today = work_today or []
         self._entertainment_today = entertainment_today or []
-        self._ref_yesterday_work = ref_yesterday_work
-        self._ref_today_work = ref_today_work
 
         self._labels["today"] = ["0", "", "2", "", "4", "", "6", "", "8", "", "10", "", "12", "", "14", "", "16", "", "18", "", "20", "", "22", ""]
         self._labels["7d"] = list(self._labels["today"])
 
         today_date = date.today()
+        # Weekday indices for current-week data (Mon=0 to Sun=6)
+        days = seven_day_labels or [today_date.strftime("%Y-%m-%d")]
         self._weekday_indices["7d"] = [
-            (today_date - timedelta(days=6 - i)).weekday()
-            for i in range(7)
+            datetime.strptime(d, "%Y-%m-%d").weekday() for d in days
         ]
 
         markers = []
@@ -989,6 +1037,9 @@ class TrendChartWidget(QFrame):
         self._labels["30d"] = markers
         self._weekday_indices["today"] = []
         self._weekday_indices["30d"] = []
+
+        self._yesterday_work = yesterday_work or []
+        self._yesterday_entertainment = yesterday_entertainment or []
 
         self._apply_series()
         self._update_legend()
@@ -1005,8 +1056,8 @@ class _TrendCanvas(QWidget):
         self._weekday_indices: list[int] = []
         self._work_points: list[float] = []
         self._entertainment_points: list[float] = []
-        self._ref_yesterday_work: float = 0.0
-        self._ref_today_work: float = 0.0
+        self._yesterday_work_points: list[float] = []
+        self._yesterday_entertainment_points: list[float] = []
         self.setMouseTracking(True)
         self._weekday_colors = [
             COLORS["weekday_mon"],
@@ -1027,8 +1078,8 @@ class _TrendCanvas(QWidget):
         weekday_indices: list[int] | None = None,
         work_points: list | None = None,
         entertainment_points: list | None = None,
-        ref_yesterday_work: float = 0.0,
-        ref_today_work: float = 0.0,
+        yesterday_work: list | None = None,
+        yesterday_entertainment: list | None = None,
     ) -> None:
         self._week_series = []
         if mode == "7d" and points and isinstance(points[0], (list, tuple)):
@@ -1045,8 +1096,8 @@ class _TrendCanvas(QWidget):
         self._weekday_indices = list(weekday_indices or [])
         self._work_points = [max(0.0, float(p)) for p in (work_points or [])]
         self._entertainment_points = [max(0.0, float(p)) for p in (entertainment_points or [])]
-        self._ref_yesterday_work = float(ref_yesterday_work or 0)
-        self._ref_today_work = float(ref_today_work or 0)
+        self._yesterday_work_points = [max(0.0, float(p)) for p in (yesterday_work or [])]
+        self._yesterday_entertainment_points = [max(0.0, float(p)) for p in (yesterday_entertainment or [])]
         self.update()
 
     def _series_state(self) -> str:
@@ -1086,10 +1137,7 @@ class _TrendCanvas(QWidget):
         return max(1.0, y_max)
 
     def _weekday_line_style(self, weekday: int, active: bool) -> dict[str, float | int]:
-        is_monday = weekday == 0
         is_weekend = weekday in {5, 6}
-        if is_monday:
-            return {"width": 3.2 if active else 2.8, "alpha": 255, "dash": True}
         if is_weekend:
             return {"width": 2.6 if active else 2.2, "alpha": 255 if active else 220}
         return {"width": 2.0 if active else 1.5, "alpha": 210 if active else 150}
@@ -1145,8 +1193,8 @@ class _TrendCanvas(QWidget):
         else:
             self._draw_single_line(painter, chart_rect, y_max)
 
-        # Reference lines: yesterday / today work totals
-        self._draw_ref_lines(painter, chart_rect, y_max)
+        # Yesterday curves (dashed) for work/entertainment comparison
+        self._draw_yesterday_lines(painter, chart_rect, y_max)
 
         self._draw_x_axis_labels(painter, chart_rect)
 
@@ -1344,35 +1392,60 @@ class _TrendCanvas(QWidget):
                 painter.drawText(QRectF(x - 24, chart_rect.bottom() + 6, 48, 18),
                                  Qt.AlignCenter, label)
 
-    def _draw_ref_lines(self, painter: QPainter, chart_rect: QRectF, y_max: float) -> None:
-        """Draw dashed horizontal reference lines for yesterday/today work totals."""
+    def _draw_yesterday_lines(self, painter: QPainter, chart_rect: QRectF, y_max: float) -> None:
+        """Draw yesterday's work and entertainment as dashed curves for comparison."""
         if self._mode != "today":
             return
-        refs = [
-            (self._ref_yesterday_work, COLORS["text_muted"], "昨日"),
-            (self._ref_today_work, COLORS["coding_green"], "今日"),
-        ]
-        for ref_val, color, label in refs:
-            if ref_val <= 0 or y_max <= 0:
-                continue
-            y = chart_rect.bottom() - (ref_val / y_max) * chart_rect.height()
-            if y < chart_rect.top() or y > chart_rect.bottom():
-                continue
-            pen = QPen(QColor(color), 1, Qt.DashLine)
-            pen.setDashPattern([4, 6])
+        step = chart_rect.width() / max(len(self._points) - 1, 1)
+
+        def _make_points(values: list[float]) -> list[QPointF]:
+            pts = []
+            for idx, v in enumerate(values):
+                x = chart_rect.left() + idx * step
+                y = chart_rect.bottom() - (v / y_max) * chart_rect.height()
+                pts.append(QPointF(x, y))
+            return pts
+
+        # Yesterday work — dashed green
+        yw = self._yesterday_work_points
+        if yw and sum(yw) > 0:
+            yw_pts = _make_points(yw)
+            pen = QPen(QColor(COLORS["coding_green"]), 1.5, Qt.DashLine)
+            pen.setDashPattern([6, 4])
             painter.setPen(pen)
-            painter.drawLine(QPointF(chart_rect.left(), y), QPointF(chart_rect.right(), y))
-            # Label at right side
-            font = painter.font()
-            font.setPixelSize(9)
-            painter.setFont(font)
-            painter.setPen(QColor(color))
-            label_text = f"{label} {int(ref_val)}分"
-            painter.drawText(
-                QRectF(chart_rect.right() - 50, y - 14, 50, 14),
-                Qt.AlignRight | Qt.AlignBottom,
-                label_text,
-            )
+            painter.setBrush(Qt.NoBrush)
+            yw_path = QPainterPath()
+            yw_path.moveTo(yw_pts[0])
+            for pt in yw_pts[1:]:
+                yw_path.lineTo(pt)
+            painter.drawPath(yw_path)
+            # Small hollow dots
+            dot_color = QColor(COLORS["coding_green"])
+            dot_color.setAlpha(160)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(dot_color)
+            for pt in yw_pts:
+                painter.drawEllipse(pt, 2.0, 2.0)
+
+        # Yesterday entertainment — dashed orange
+        ye = self._yesterday_entertainment_points
+        if ye and sum(ye) > 0:
+            ye_pts = _make_points(ye)
+            pen = QPen(QColor(COLORS["video_orange"]), 1.5, Qt.DashLine)
+            pen.setDashPattern([6, 4])
+            painter.setPen(pen)
+            painter.setBrush(Qt.NoBrush)
+            ye_path = QPainterPath()
+            ye_path.moveTo(ye_pts[0])
+            for pt in ye_pts[1:]:
+                ye_path.lineTo(pt)
+            painter.drawPath(ye_path)
+            dot_color = QColor(COLORS["video_orange"])
+            dot_color.setAlpha(160)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(dot_color)
+            for pt in ye_pts:
+                painter.drawEllipse(pt, 2.0, 2.0)
 
     def _draw_empty(self, painter: QPainter, rect: QRectF, text: str) -> None:
         painter.setPen(QColor(COLORS["text_muted"]))

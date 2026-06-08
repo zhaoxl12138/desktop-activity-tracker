@@ -358,17 +358,19 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
     yesterday_sessions = database.query_today_sessions(db_path, yesterday_str)
 
     today_date = date.today()
-    seven_days = [(today_date - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(6, -1, -1)]
+    monday_offset = today_date.weekday()  # 0=Mon → 0 offset, 6=Sun → 6 offset
+    # Current week: Monday → today (not rolling 7 days)
+    week_days = [(today_date - timedelta(days=monday_offset - i)).strftime("%Y-%m-%d")
+                 for i in range(monday_offset + 1)]
     thirty_days = [(today_date - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(29, -1, -1)]
-    seven_day_sessions = [database.query_today_sessions(db_path, day_str) for day_str in seven_days]
-    seven_day_stats = database.query_date_range_stats(db_path, seven_days)
     thirty_day_stats = database.query_date_range_stats(db_path, thirty_days)
+    week_day_sessions = [database.query_today_sessions(db_path, day_str) for day_str in week_days]
 
     focus_summary, consecutive_days = build_focus_summary(db_path, today_str)
     distribution_sections = build_distribution_sections(stats, effective_seconds)
     day_comparison = build_day_over_day_comparison(stats, yesterday_stats)
     split_today = build_hourly_series_split(sessions)
-    yesterday_cat = category_seconds(yesterday_stats)
+    split_yesterday = build_hourly_series_split(yesterday_sessions)
     return {
         "today": today_str,
         "stats": stats,
@@ -389,13 +391,14 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
             "today_work": split_today["work"],
             "today_entertainment": split_today["entertainment"],
             "yesterday": build_hourly_series(yesterday_sessions),
-            "seven_days": [build_hourly_series(day_sessions) for day_sessions in seven_day_sessions],
+            "yesterday_work": split_yesterday["work"],
+            "yesterday_entertainment": split_yesterday["entertainment"],
+            "seven_days": [build_hourly_series(day_sessions) for day_sessions in week_day_sessions],
+            "seven_day_labels": week_days,
             "thirty_days": [
                 round((item.get("effective_seconds", 0) or 0) / 3600.0, 1)
                 for item in thirty_day_stats.get("daily", [])
             ],
-            "yesterday_work_min": int(yesterday_cat["work"] / 60),
-            "today_work_min": int(sum(split_today["work"])),
         },
     }
 
