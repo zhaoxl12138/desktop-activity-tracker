@@ -11,7 +11,7 @@ from . import get_app_root
 CONFIG_FILENAME = "config/config.yaml"
 REPORTS_DIRNAME = "reports"
 RELEASE_DIRNAME = "release"
-RELEASE_EXE_NAME = "DayLens/DayLens.exe"
+RELEASE_EXE_NAME = "DayLens.exe"
 
 
 def resolve_config_path() -> str:
