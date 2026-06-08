@@ -692,16 +692,30 @@ class SessionTop3Widget(QFrame):
         layout.setContentsMargins(10, 0, 12, 0)
         layout.setSpacing(6)
 
-        # ── Rank ──
+        # ── Rank badge ──
         rank_text = self.RANKS[rank] if rank < 3 else str(rank + 1)
-        rank_label = QLabel(rank_text)
-        rank_label.setFixedWidth(54)
-        rank_label.setAlignment(Qt.AlignCenter)
-        rank_label.setStyleSheet(
-            f"font-size: 15px; color: {COLORS['text']}; font-weight: 800;"
-            f"border: none; background: transparent;"
-        )
-        layout.addWidget(rank_label)
+        rank_badge = QLabel(rank_text)
+        rank_badge.setFixedSize(28, 28)
+        rank_badge.setAlignment(Qt.AlignCenter)
+        if rank < 3:
+            # Medal emojis on transparent bg
+            rank_badge.setStyleSheet(
+                f"font-size: 16px; border: none; background: transparent;"
+            )
+        else:
+            # Number in a subtle circle
+            rank_badge.setStyleSheet(
+                f"font-size: 12px; color: {COLORS['text_secondary']}; font-weight: 700;"
+                f"border: 1.5px solid {COLORS['border']}; border-radius: 14px;"
+                f"background: {COLORS['panel_bg_alt']};"
+            )
+        rank_wrapper = QWidget()
+        rank_wrapper.setFixedWidth(54)
+        rank_w_layout = QHBoxLayout(rank_wrapper)
+        rank_w_layout.setContentsMargins(0, 0, 0, 0)
+        rank_w_layout.setAlignment(Qt.AlignCenter)
+        rank_w_layout.addWidget(rank_badge)
+        layout.addWidget(rank_wrapper)
 
         # ── App icon + name + window title ──
         process_name = str(session.get("process_name", "") or "")
@@ -941,17 +955,23 @@ class TrendChartWidget(QFrame):
             self._weekday_indices.get(self._mode, []),
             work_points=self._work_today if self._mode == "today" else None,
             entertainment_points=self._entertainment_today if self._mode == "today" else None,
+            ref_yesterday_work=getattr(self, '_ref_yesterday_work', 0),
+            ref_today_work=getattr(self, '_ref_today_work', 0),
         )
 
     def set_data(self, today: list, yesterday_today: list, seven_days: list,
                  thirty_days: list, work_today: list | None = None,
-                 entertainment_today: list | None = None) -> None:
+                 entertainment_today: list | None = None,
+                 ref_yesterday_work: float = 0.0,
+                 ref_today_work: float = 0.0) -> None:
         self._series["today"] = today
         self._series["7d"] = seven_days
         self._series["30d"] = thirty_days
         self._yesterday_today = yesterday_today or []
         self._work_today = work_today or []
         self._entertainment_today = entertainment_today or []
+        self._ref_yesterday_work = ref_yesterday_work
+        self._ref_today_work = ref_today_work
 
         self._labels["today"] = ["0", "", "2", "", "4", "", "6", "", "8", "", "10", "", "12", "", "14", "", "16", "", "18", "", "20", "", "22", ""]
         self._labels["7d"] = list(self._labels["today"])
@@ -985,6 +1005,8 @@ class _TrendCanvas(QWidget):
         self._weekday_indices: list[int] = []
         self._work_points: list[float] = []
         self._entertainment_points: list[float] = []
+        self._ref_yesterday_work: float = 0.0
+        self._ref_today_work: float = 0.0
         self.setMouseTracking(True)
         self._weekday_colors = [
             COLORS["weekday_mon"],
@@ -1005,6 +1027,8 @@ class _TrendCanvas(QWidget):
         weekday_indices: list[int] | None = None,
         work_points: list | None = None,
         entertainment_points: list | None = None,
+        ref_yesterday_work: float = 0.0,
+        ref_today_work: float = 0.0,
     ) -> None:
         self._week_series = []
         if mode == "7d" and points and isinstance(points[0], (list, tuple)):
@@ -1021,6 +1045,8 @@ class _TrendCanvas(QWidget):
         self._weekday_indices = list(weekday_indices or [])
         self._work_points = [max(0.0, float(p)) for p in (work_points or [])]
         self._entertainment_points = [max(0.0, float(p)) for p in (entertainment_points or [])]
+        self._ref_yesterday_work = float(ref_yesterday_work or 0)
+        self._ref_today_work = float(ref_today_work or 0)
         self.update()
 
     def _series_state(self) -> str:
@@ -1060,7 +1086,10 @@ class _TrendCanvas(QWidget):
         return max(1.0, y_max)
 
     def _weekday_line_style(self, weekday: int, active: bool) -> dict[str, float | int]:
+        is_monday = weekday == 0
         is_weekend = weekday in {5, 6}
+        if is_monday:
+            return {"width": 3.2 if active else 2.8, "alpha": 255, "dash": True}
         if is_weekend:
             return {"width": 2.6 if active else 2.2, "alpha": 255 if active else 220}
         return {"width": 2.0 if active else 1.5, "alpha": 210 if active else 150}
@@ -1115,6 +1144,9 @@ class _TrendCanvas(QWidget):
             self._draw_split_lines(painter, chart_rect, y_max)
         else:
             self._draw_single_line(painter, chart_rect, y_max)
+
+        # Reference lines: yesterday / today work totals
+        self._draw_ref_lines(painter, chart_rect, y_max)
 
         self._draw_x_axis_labels(painter, chart_rect)
 
@@ -1286,6 +1318,9 @@ class _TrendCanvas(QWidget):
             for pt in points[1:]:
                 path.lineTo(pt)
             pen = QPen(color, float(style["width"]))
+            if style.get("dash"):
+                pen.setStyle(Qt.DashLine)
+                pen.setDashPattern([8, 4])
             painter.setPen(pen)
             painter.setBrush(Qt.NoBrush)
             painter.drawPath(path)
@@ -1308,6 +1343,36 @@ class _TrendCanvas(QWidget):
                 x = chart_rect.left() + index * step
                 painter.drawText(QRectF(x - 24, chart_rect.bottom() + 6, 48, 18),
                                  Qt.AlignCenter, label)
+
+    def _draw_ref_lines(self, painter: QPainter, chart_rect: QRectF, y_max: float) -> None:
+        """Draw dashed horizontal reference lines for yesterday/today work totals."""
+        if self._mode != "today":
+            return
+        refs = [
+            (self._ref_yesterday_work, COLORS["text_muted"], "昨日"),
+            (self._ref_today_work, COLORS["coding_green"], "今日"),
+        ]
+        for ref_val, color, label in refs:
+            if ref_val <= 0 or y_max <= 0:
+                continue
+            y = chart_rect.bottom() - (ref_val / y_max) * chart_rect.height()
+            if y < chart_rect.top() or y > chart_rect.bottom():
+                continue
+            pen = QPen(QColor(color), 1, Qt.DashLine)
+            pen.setDashPattern([4, 6])
+            painter.setPen(pen)
+            painter.drawLine(QPointF(chart_rect.left(), y), QPointF(chart_rect.right(), y))
+            # Label at right side
+            font = painter.font()
+            font.setPixelSize(9)
+            painter.setFont(font)
+            painter.setPen(QColor(color))
+            label_text = f"{label} {int(ref_val)}分"
+            painter.drawText(
+                QRectF(chart_rect.right() - 50, y - 14, 50, 14),
+                Qt.AlignRight | Qt.AlignBottom,
+                label_text,
+            )
 
     def _draw_empty(self, painter: QPainter, rect: QRectF, text: str) -> None:
         painter.setPen(QColor(COLORS["text_muted"]))

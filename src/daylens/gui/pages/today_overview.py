@@ -512,6 +512,8 @@ class TodayOverviewPage(QWidget):
             trend["thirty_days"],
             work_today=trend.get("today_work", []),
             entertainment_today=trend.get("today_entertainment", []),
+            ref_yesterday_work=float(trend.get("yesterday_work_min", 0)),
+            ref_today_work=float(trend.get("today_work_min", 0)),
         )
         focus_summary = str(snapshot["focus_summary"])
         self.focus_hint.setText(focus_summary)
