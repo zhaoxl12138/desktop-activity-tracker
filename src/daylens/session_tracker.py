@@ -158,12 +158,6 @@ class SessionTracker:
             config.get("min_session_seconds", 2))
         self.cross_group_grace = tracker.get("cross_group_grace_seconds", 30)
 
-    def _idle_limit(self) -> int:
-        """Return the idle threshold for the current session category."""
-        if self._current is not None and self._current.category_key == "video":
-            return self.entertainment_idle_threshold
-        return self.idle_threshold
-
         self.classifier = classifier
         self._on_session_end = on_session_end
         self._on_flush = on_flush
@@ -210,6 +204,12 @@ class SessionTracker:
         self._last_cursor_pos = None
         self._last_kb_state = None
         self._activity_from_hook = True
+
+    def _idle_limit(self) -> int:
+        """Return the idle threshold for the current session category."""
+        if self._current is not None and self._current.category_key == "video":
+            return self.entertainment_idle_threshold
+        return self.idle_threshold
 
     # ── Tick ────────────────────────────────────────────────────────
 
