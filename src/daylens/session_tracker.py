@@ -152,9 +152,17 @@ class SessionTracker:
             config.get("flush_interval_seconds", 5))
         self.idle_threshold = tracker.get("idle_threshold_seconds",
             config.get("idle_threshold_seconds", 60))
+        self.entertainment_idle_threshold = tracker.get(
+            "entertainment_idle_threshold_seconds", 300)
         self.min_session = tracker.get("min_session_seconds",
             config.get("min_session_seconds", 2))
         self.cross_group_grace = tracker.get("cross_group_grace_seconds", 30)
+
+    def _idle_limit(self) -> int:
+        """Return the idle threshold for the current session category."""
+        if self._current is not None and self._current.category_key == "video":
+            return self.entertainment_idle_threshold
+        return self.idle_threshold
 
         self.classifier = classifier
         self._on_session_end = on_session_end
@@ -456,7 +464,7 @@ class SessionTracker:
             self._current.effective_seconds += self.sample_interval
             return
 
-        if self._persistent_idle <= self.idle_threshold:
+        if self._persistent_idle <= self._idle_limit():
             self._current.effective_seconds += self.sample_interval
         else:
             if not self._idle_corrected:
@@ -464,7 +472,7 @@ class SessionTracker:
                 # was counted as effective while pending confirmation.
                 # Move it from effective → idle so the last app doesn't get
                 # credit for time the user was already away.
-                correction = min(self.idle_threshold, self._current.effective_seconds)
+                correction = min(self._idle_limit(), self._current.effective_seconds)
                 self._current.effective_seconds -= correction
                 self._current.idle_seconds += correction
                 self._idle_corrected = True
@@ -494,7 +502,7 @@ class SessionTracker:
                 is_ent and self._audio_detector is not None
                 and self._audio_detector.is_any_playing()
             )
-            is_eff = audio_playing or (self._persistent_idle <= self.idle_threshold)
+            is_eff = audio_playing or (self._persistent_idle <= self._idle_limit())
         else:
             cat_key = ""
             audio_playing = False
@@ -517,7 +525,7 @@ class SessionTracker:
             "session_idle_seconds": s.idle_seconds if s else 0,
             "persistent_idle": self._persistent_idle,
             "audio_playing": audio_playing,
-            "is_user_active": self._persistent_idle <= self.idle_threshold,
+            "is_user_active": self._persistent_idle <= self._idle_limit(),
             "is_effective": is_eff,
             "pending_switch_domain": self._pending_switch["domain"] if self._pending_switch else None,
             "pending_switch_elapsed": (
