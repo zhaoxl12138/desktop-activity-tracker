@@ -1,0 +1,199 @@
+"""Connection and schema helpers split from the legacy database module."""
+
+from __future__ import annotations
+
+import os
+import sqlite3
+
+WAL_CHECKPOINT_INTERVAL = 100
+
+_shared_read_conn = None
+_shared_read_db_path = None
+
+
+class TrackedConnection(sqlite3.Connection):
+    """SQLite connection subclass that can keep lightweight runtime state."""
+
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS activity_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    date TEXT NOT NULL,
+    process_name TEXT,
+    exe_path TEXT,
+    window_title TEXT,
+    category_key TEXT,
+    category_name TEXT,
+    active_rule TEXT,
+    is_user_active INTEGER,
+    is_effective INTEGER,
+    idle_seconds REAL,
+    duration_seconds INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS activity_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    start_time TEXT NOT NULL,
+    end_time TEXT NOT NULL,
+    date TEXT NOT NULL,
+    process_name TEXT,
+    exe_path TEXT,
+    window_title TEXT,
+    normalized_title TEXT,
+    category_key TEXT,
+    category_name TEXT,
+    active_rule TEXT,
+    duration_seconds INTEGER DEFAULT 0,
+    effective_seconds INTEGER DEFAULT 0,
+    idle_seconds INTEGER DEFAULT 0,
+    switch_reason TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS daily_summary (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    category_key TEXT,
+    category_name TEXT,
+    process_name TEXT,
+    total_seconds INTEGER,
+    effective_seconds INTEGER,
+    idle_seconds INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_date ON activity_logs(date);
+CREATE INDEX IF NOT EXISTS idx_activity_category ON activity_logs(category_key);
+CREATE INDEX IF NOT EXISTS idx_sessions_date ON activity_sessions(date);
+CREATE INDEX IF NOT EXISTS idx_sessions_category ON activity_sessions(category_key);
+CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON activity_sessions(session_id);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS custom_rules (
+    category_key TEXT PRIMARY KEY,
+    display_name TEXT,
+    active_rule TEXT,
+    process_names TEXT,
+    title_keywords TEXT
+);
+
+CREATE TABLE IF NOT EXISTS poetry_lines (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    author TEXT NOT NULL,
+    content TEXT NOT NULL UNIQUE,
+    origin TEXT,
+    category TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_poetry_author ON poetry_lines(author);
+"""
+
+
+class ReadConnectionContext:
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        self.conn = None
+        self.own = False
+
+    def __enter__(self):
+        global _shared_read_conn, _shared_read_db_path
+        if _shared_read_conn is not None and _shared_read_db_path == self.db_path:
+            self.conn = _shared_read_conn
+        else:
+            self.conn = sqlite3.connect(self.db_path)
+            self.conn.row_factory = sqlite3.Row
+            self.own = True
+        return self.conn
+
+    def __exit__(self, *args):
+        if self.own and self.conn is not None:
+            self.conn.close()
+        return False
+
+
+def init_shared_read_conn(db_path: str) -> None:
+    global _shared_read_conn, _shared_read_db_path
+    if _shared_read_conn is not None and _shared_read_db_path != db_path:
+        _shared_read_conn.close()
+        _shared_read_conn = None
+    if _shared_read_conn is None:
+        _shared_read_conn = sqlite3.connect(db_path)
+        _shared_read_conn.row_factory = sqlite3.Row
+        _shared_read_conn.execute("PRAGMA journal_mode=WAL")
+        _shared_read_db_path = db_path
+
+
+def close_shared_read_conn() -> None:
+    global _shared_read_conn, _shared_read_db_path
+    if _shared_read_conn:
+        _shared_read_conn.close()
+        _shared_read_conn = None
+        _shared_read_db_path = None
+
+
+def read_conn(db_path: str) -> ReadConnectionContext:
+    return ReadConnectionContext(db_path)
+
+
+def wal_checkpoint(conn) -> None:
+    try:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except sqlite3.OperationalError:
+        pass
+
+
+def maybe_checkpoint(conn) -> None:
+    conn._commit_count = getattr(conn, "_commit_count", 0) + 1
+    if conn._commit_count % WAL_CHECKPOINT_INTERVAL == 0:
+        wal_checkpoint(conn)
+
+
+def recover_stale_wal(db_path: str) -> None:
+    wal_path = db_path + "-wal"
+    if not os.path.exists(wal_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.execute("PRAGMA journal_mode=WAL")
+        rows = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        if rows:
+            busy, _, _ = rows
+            if busy == 0:
+                conn.close()
+    except sqlite3.OperationalError:
+        pass
+    finally:
+        try:
+            if conn is not None:
+                conn.close()
+        except Exception:
+            pass
+
+
+def init_db(db_path: str):
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    recover_stale_wal(db_path)
+    conn = sqlite3.connect(db_path, factory=TrackedConnection)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.executescript(SCHEMA)
+    conn.commit()
+    conn._commit_count = 0
+    return conn
+
+
+def close_db(conn) -> None:
+    if conn is None:
+        return
+    try:
+        wal_checkpoint(conn)
+        conn.close()
+    except Exception:
+        pass
+

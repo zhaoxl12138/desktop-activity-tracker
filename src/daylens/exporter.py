@@ -322,7 +322,6 @@ def sync_to_obsidian(filepath, obsidian_output_path):
 def _week_dates(year, week_number):
     """Return list of 7 date strings (Mon-Sun) for an ISO week number."""
     from datetime import date, timedelta
-    # Find the Monday of the given ISO week
     jan4 = date(year, 1, 4)
     monday = jan4 - timedelta(days=jan4.isoweekday() - 1) + timedelta(weeks=week_number - 1)
     return [(monday + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
@@ -350,6 +349,252 @@ def _sparkline(values, width=20, max_val=None):
     return "".join(result)
 
 
+def _delta_text(curr, prev):
+    """Return comparison text like '↑12%' or '↓15%' or '新增' or '-'.
+
+    Values are in seconds.
+    """
+    if prev == 0:
+        return "新增" if curr > 0 else "-"
+    if curr == 0:
+        return "-"
+    diff_pct = round((curr - prev) / prev * 100)
+    if diff_pct == 0:
+        return "持平"
+    direction = "↑" if diff_pct > 0 else "↓"
+    return f"{direction}{abs(diff_pct)}%"
+
+
+def _query_prev_period(read_conn, db_path, dates, period_type):
+    """Query previous period (week or month) stats for comparison.
+
+    Returns dict with keys: effective_seconds, work_seconds, video_seconds, active_days
+    """
+    from datetime import date, timedelta
+    first = date.fromisoformat(dates[0])
+    last = date.fromisoformat(dates[-1])
+    if period_type == "week":
+        prev_last = first - timedelta(days=1)
+        prev_first = prev_last - timedelta(days=6)
+    else:  # month
+        prev_last = first - timedelta(days=1)
+        prev_first = date(prev_last.year, prev_last.month, 1)
+    prev_dates = []
+    d = prev_first
+    while d <= prev_last:
+        prev_dates.append(d.strftime("%Y-%m-%d"))
+        d += timedelta(days=1)
+
+    with read_conn(db_path) as conn:
+        placeholders = ",".join("?" * len(prev_dates))
+        row = conn.execute(
+            f"""
+            SELECT SUM(effective_seconds) as eff,
+                   SUM(CASE WHEN category_key IN ('ai_tools','coding','reading','creative')
+                       THEN effective_seconds ELSE 0 END) as work,
+                   SUM(CASE WHEN category_key IN ('video','gaming')
+                       THEN effective_seconds ELSE 0 END) as entertain,
+                   COUNT(DISTINCT date) as days
+            FROM activity_sessions
+            WHERE date IN ({placeholders})
+            """,
+            prev_dates,
+        ).fetchone()
+    return {
+        "effective_seconds": row["eff"] or 0,
+        "work_seconds": row["work"] or 0,
+        "video_seconds": row["entertain"] or 0,
+        "active_days": row["days"] or 0,
+    }
+
+
+def _query_best_days(read_conn, db_path, dates, n=3):
+    """Return top N days by work learning seconds: [(date, work_seconds, effective_seconds), ...]"""
+    with read_conn(db_path) as conn:
+        placeholders = ",".join("?" * len(dates))
+        rows = conn.execute(
+            f"""
+            SELECT date,
+                   SUM(CASE WHEN category_key IN ('ai_tools','coding','reading','creative')
+                       THEN effective_seconds ELSE 0 END) as work_seconds,
+                   SUM(effective_seconds) as effective_seconds
+            FROM activity_sessions
+            WHERE date IN ({placeholders})
+            GROUP BY date
+            ORDER BY work_seconds DESC
+            LIMIT ?
+            """,
+            dates + [n],
+        ).fetchall()
+    return [(r["date"], r["work_seconds"], r["effective_seconds"]) for r in rows]
+
+
+def _query_biggest_sink(read_conn, db_path, dates):
+    """Return the top entertainment app: (process_name, effective_seconds, category_key) or None."""
+    with read_conn(db_path) as conn:
+        placeholders = ",".join("?" * len(dates))
+        row = conn.execute(
+            f"""
+            SELECT process_name, category_key,
+                   SUM(effective_seconds) as effective_seconds
+            FROM activity_sessions
+            WHERE date IN ({placeholders})
+              AND category_key IN ('video', 'gaming')
+            GROUP BY process_name
+            ORDER BY effective_seconds DESC
+            LIMIT 1
+            """,
+            dates,
+        ).fetchone()
+    if row and row["effective_seconds"]:
+        return (row["process_name"], row["effective_seconds"], row["category_key"])
+    return None
+
+
+def _query_peak_hours(read_conn, db_path, dates):
+    """Return the top 2 most active hour ranges like ['10:00-12:00', '14:00-16:00']."""
+    with read_conn(db_path) as conn:
+        placeholders = ",".join("?" * len(dates))
+        rows = conn.execute(
+            f"""
+            SELECT CAST(substr(start_time, 12, 2) AS INTEGER) as hour,
+                   SUM(effective_seconds) as effective_seconds
+            FROM activity_sessions
+            WHERE date IN ({placeholders})
+              AND effective_seconds > 0
+            GROUP BY hour
+            ORDER BY effective_seconds DESC
+            """,
+            dates,
+        ).fetchall()
+
+    if not rows:
+        return []
+
+    # Merge adjacent hours into ranges
+    hours_sorted = sorted([(r["hour"], r["effective_seconds"]) for r in rows],
+                          key=lambda x: -x[1])
+    ranges = []
+    used = set()
+    for h, _ in hours_sorted[:4]:
+        if h in used:
+            continue
+        # Find if this hour is part of a cluster
+        cluster = [h]
+        for offset in [1, -1]:
+            nh = h + offset
+            while 0 <= nh <= 23 and nh in {r[0] for r in hours_sorted} and nh not in used:
+                cluster.append(nh)
+                used.add(nh)
+                nh += offset
+        used.add(h)
+        cluster.sort()
+        ranges.append(f"{cluster[0]:02d}:00-{cluster[-1]+1:02d}:00")
+        if len(ranges) >= 2:
+            break
+    return ranges
+
+
+def _query_keywords(read_conn, db_path, dates, n=8):
+    """Extract top keywords from app names and window titles."""
+    import re
+    with read_conn(db_path) as conn:
+        placeholders = ",".join("?" * len(dates))
+        rows = conn.execute(
+            f"""
+            SELECT process_name, normalized_title
+            FROM activity_sessions
+            WHERE date IN ({placeholders})
+              AND effective_seconds > 0
+            """,
+            dates,
+        ).fetchall()
+
+    # Collect word frequencies
+    word_freq = {}
+    stop_words = {"exe", "com", "www", "http", "https", "the", "and", "for", "app",
+                  "window", "page", "文件", "页面", "新建", "编辑", "查看"}
+
+    for row in rows:
+        proc = (row["process_name"] or "").replace(".exe", "")
+        title = row["normalized_title"] or ""
+
+        tokens = []
+        # Extract meaningful tokens from process_name
+        for token in re.split(r'[^a-zA-Z一-鿿㐀-䶿0-9]+', proc):
+            token = token.strip()
+            if len(token) >= 2 and token.lower() not in stop_words:
+                tokens.append(token)
+
+        # Extract meaningful tokens from window title
+        for token in re.split(r'[\s\-—|/]+', title):
+            token = token.strip()
+            if len(token) >= 2 and token.lower() not in stop_words:
+                tokens.append(token)
+
+        for token in tokens:
+            word_freq[token] = word_freq.get(token, 0) + 1
+
+    # Return top N
+    sorted_words = sorted(word_freq.items(), key=lambda x: -x[1])
+    return [w for w, _ in sorted_words[:n]]
+
+
+def _query_top_work_apps(read_conn, db_path, dates, n=3):
+    """Return top N work-category apps by effective_seconds."""
+    with read_conn(db_path) as conn:
+        placeholders = ",".join("?" * len(dates))
+        rows = conn.execute(
+            f"""
+            SELECT process_name,
+                   SUM(effective_seconds) as effective_seconds
+            FROM activity_sessions
+            WHERE date IN ({placeholders})
+              AND category_key IN ('ai_tools','coding','reading','creative')
+            GROUP BY process_name
+            ORDER BY effective_seconds DESC
+            LIMIT ?
+            """,
+            dates + [n],
+        ).fetchall()
+    return [(r["process_name"], r["effective_seconds"]) for r in rows]
+
+
+def _query_month_heatmap(read_conn, db_path, year, month):
+    """Return list of (day, weekday, effective_seconds, work_seconds) for heatmap."""
+    import calendar
+    from datetime import date
+    days_in_month = calendar.monthrange(year, month)[1]
+    first = date(year, month, 1)
+
+    with read_conn(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT date,
+                   SUM(effective_seconds) as effective_seconds,
+                   SUM(CASE WHEN category_key IN ('ai_tools','coding','reading','creative')
+                       THEN effective_seconds ELSE 0 END) as work_seconds
+            FROM activity_sessions
+            WHERE date >= ? AND date <= ?
+            GROUP BY date
+            ORDER BY date
+            """,
+            (first.strftime("%Y-%m-%d"), date(year, month, days_in_month).strftime("%Y-%m-%d")),
+        ).fetchall()
+
+    by_date = {}
+    for r in rows:
+        by_date[r["date"]] = (r["effective_seconds"] or 0, r["work_seconds"] or 0)
+
+    result = []
+    for day in range(1, days_in_month + 1):
+        d = date(year, month, day)
+        date_str = d.strftime("%Y-%m-%d")
+        eff, work = by_date.get(date_str, (0, 0))
+        result.append((day, d.weekday(), eff, work))
+    return result
+
+
 def _calculate_weekly_efficiency(daily):
     """Return 0-100 score and grade for the week."""
     work_total = sum(d["work_seconds"] for d in daily)
@@ -374,21 +619,133 @@ def _calculate_weekly_efficiency(daily):
     return score, grade
 
 
+def _efficiency_grade(work_pct):
+    """Return letter grade based on work percentage."""
+    if work_pct >= 60:
+        return "A"
+    elif work_pct >= 50:
+        return "B+"
+    elif work_pct >= 40:
+        return "B"
+    elif work_pct >= 30:
+        return "C"
+    else:
+        return "D"
+
+
+def _gen_weekly_summary(stats, prev, best_days, peak_hours, sink, days_with_data):
+    """Generate a natural-language weekly summary from data."""
+    totals = stats["totals"]
+    eff = totals["effective_seconds"]
+    work = totals["work_seconds"]
+    video = totals["video_seconds"]
+    work_pct = round(work / eff * 100) if eff > 0 else 0
+    grade = _efficiency_grade(work_pct)
+
+    parts = []
+
+    # Overall
+    parts.append(f"本周总活跃{fmt_seconds(eff)}。")
+    parts.append(f"工作学习占比{work_pct}%")
+
+    # Week-over-week comparison
+    if prev["effective_seconds"] > 0:
+        work_delta = _delta_text(work, prev["work_seconds"])
+        video_delta = _delta_text(video, prev["video_seconds"])
+        if "↑" in work_delta or "↓" in work_delta:
+            parts.append(f"，较上周{work_delta}")
+        if "↑" in video_delta or "↓" in video_delta:
+            parts.append(f"，娱乐{video_delta}")
+
+    parts.append("。")
+
+    # Peak hours
+    if peak_hours:
+        parts.append(f"最专注时段集中在{'、'.join(peak_hours)}。")
+
+    # Top work apps for productivity mention
+    work_keys = {"ai_tools", "coding", "reading", "creative"}
+    work_apps = [a for a in stats["by_app"] if a.get("category_key") in work_keys][:3]
+    if work_apps:
+        app_names = [a["process_name"].replace(".exe", "") for a in work_apps]
+        parts.append(f"{'、'.join(app_names)}是本周主要生产力工具。")
+
+    # Entertainment
+    if sink:
+        sink_name, sink_sec, _ = sink
+        sink_name = sink_name.replace(".exe", "")
+        ent_total = video
+        sink_pct = round(sink_sec / ent_total * 100) if ent_total > 0 else 0
+        parts.append(f"娱乐时间主要集中在{sink_name}（{fmt_seconds(sink_sec)}，占娱乐{sink_pct}%）。")
+
+    # Suggestion
+    if work_pct < 30:
+        parts.append("建议下周增加工作学习投入时间。")
+    elif work_pct >= 50:
+        parts.append("继续保持，下周争取更上一层楼。")
+
+    parts.append(f"整体效率评分：{grade}。")
+
+    return "".join(parts)
+
+
+def _gen_monthly_summary(stats, prev, best_day, top_work_apps, days_with_data, total_days):
+    """Generate a natural-language monthly summary from data."""
+    totals = stats["totals"]
+    eff = totals["effective_seconds"]
+    work = totals["work_seconds"]
+    video = totals["video_seconds"]
+    work_pct = round(work / eff * 100) if eff > 0 else 0
+    grade = _efficiency_grade(work_pct)
+
+    parts = []
+    parts.append(f"本月总活跃{fmt_seconds(eff)}。")
+    parts.append(f"工作学习占比{work_pct}%")
+
+    if prev["effective_seconds"] > 0:
+        work_delta = _delta_text(work, prev["work_seconds"])
+        if "↑" in work_delta or "↓" in work_delta:
+            parts.append(f"，较上月{work_delta}")
+
+    parts.append(f"。活跃天数{days_with_data}/{total_days}。")
+
+    # Best day
+    if best_day:
+        date_str, best_work, _ = best_day
+        parts.append(f"本月最专注一天是{date_str[-5:]}，工作学习{fmt_seconds(best_work)}。")
+
+    # Top work apps
+    if top_work_apps:
+        app_names = [a[0].replace(".exe", "") for a in top_work_apps[:3]]
+        parts.append(f"{'、'.join(app_names)}成为本月核心生产力工具。")
+
+    # Entertainment
+    ent_pct = round(video / eff * 100) if eff > 0 else 0
+    if ent_pct > 20:
+        parts.append(f"娱乐休闲占比{ent_pct}%，")
+        if ent_pct > 40:
+            parts.append("偏高，下月建议控制。")
+        else:
+            parts.append("在合理范围内。")
+
+    parts.append(f"整体效率评分：{grade}。")
+
+    return "".join(parts)
+
+
 def export_weekly_report(db_path, year, week_number, output_dir):
-    """Generate a weekly summary Markdown report.
+    """Generate a comparison-driven weekly Markdown report.
 
-    Args:
-        db_path: path to SQLite database
-        year: ISO year (e.g. 2026)
-        week_number: ISO week number (1-53)
-        output_dir: directory to write the .md file
-
-    Returns path to the generated report file.
+    Focus: how does this week compare to last week? Trends, insights, suggestions.
     """
     dates = _week_dates(year, week_number)
     stats = database.query_date_range_stats(db_path, dates)
     daily = stats["daily"]
     totals = stats["totals"]
+    prev = _query_prev_period(database.read_conn, db_path, dates, "week")
+    best_days = _query_best_days(database.read_conn, db_path, dates, 3)
+    sink = _query_biggest_sink(database.read_conn, db_path, dates)
+    peak_hours = _query_peak_hours(database.read_conn, db_path, dates)
     os.makedirs(output_dir, exist_ok=True)
 
     start_date = dates[0]
@@ -396,8 +753,24 @@ def export_weekly_report(db_path, year, week_number, output_dir):
     filename = f"{start_date}_{end_date}_weekly.md"
     filepath = os.path.join(output_dir, filename)
 
-    score, grade = _calculate_weekly_efficiency(daily)
     days_with_data = sum(1 for d in daily if d["effective_seconds"] > 0)
+    eff = totals["effective_seconds"]
+    work = totals["work_seconds"]
+    video = totals["video_seconds"]
+    work_pct = round(work / eff * 100) if eff > 0 else 0
+    activity_pct = round(eff / (eff + totals["idle_seconds"]) * 100) if eff > 0 else 0
+
+    if days_with_data == 0:
+        lines = [
+            f"# {year}年第{week_number}周 个人数字行为周报",
+            "",
+            f"**{start_date} ~ {end_date}**",
+            "",
+            "数据不足，请保持记录以获取分析报告。",
+        ]
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+        return filepath
 
     lines = []
     lines.append(f"# {year}年第{week_number}周 个人数字行为周报")
@@ -405,74 +778,91 @@ def export_weekly_report(db_path, year, week_number, output_dir):
     lines.append(f"**{start_date} ~ {end_date}** | 有效天数: {days_with_data}/7")
     lines.append("")
 
-    # ── 总览 ──
-    lines.append("## 总览")
+    # ── 1. Overview with week-over-week comparison ──
+    lines.append("## 📊 本周概览")
     lines.append("")
-    lines.append(f"- 总电脑使用：{fmt_seconds(totals['total_seconds'])}")
-    lines.append(f"- 活跃时间：{fmt_seconds(totals['effective_seconds'])}")
-    lines.append(f"- 工作学习：{fmt_seconds(totals['work_seconds'])}")
-    lines.append(f"- 娱乐休闲：{fmt_seconds(totals['video_seconds'])}")
-    lines.append(f"- 日均有效：{fmt_seconds(totals['effective_seconds'] // max(days_with_data, 1))}")
+    lines.append("| 指标 | 本周 | 环比 |")
+    lines.append("|---|---|---|")
+    lines.append(f"| 总活跃 | {fmt_seconds(eff)} | {_delta_text(eff, prev['effective_seconds'])} |")
+    lines.append(f"| 工作学习 | {fmt_seconds(work)} | {_delta_text(work, prev['work_seconds'])} |")
+    lines.append(f"| 娱乐休闲 | {fmt_seconds(video)} | {_delta_text(video, prev['video_seconds'])} |")
+    lines.append(f"| 活跃占比 | {activity_pct}% | {_delta_text(eff, prev['effective_seconds'])} |")
     lines.append("")
 
-    if score is not None:
-        lines.append(f"**周效率评分: {score}/100 ({grade})**")
-        lines.append("")
-
-    # ── 每日趋势 ──
-    lines.append("## 每日趋势")
+    # ── 2. Daily trend ──
+    lines.append("## 📈 本周趋势")
     lines.append("")
-    lines.append("| 日期 | 有效时长 | 工作学习 | 娱乐休闲 | 日效率 |")
-    lines.append("|---|---:|---:|---:|---:|")
-    work_spark = []
-    video_spark = []
+    weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+    lines.append("| " + " | ".join(weekdays) + " |")
+    lines.append("|" + "|".join([":---:"] * 7) + "|")
+
+    # Work sparkline row
+    work_spark = [d["work_seconds"] for d in daily]
+    video_spark = [d["video_seconds"] for d in daily]
+    max_val = max(max(work_spark), max(video_spark)) or 1
+
+    work_cells = []
+    video_cells = []
+    for w, v in zip(work_spark, video_spark):
+        work_bar = _sparkline([w], width=4, max_val=max_val)
+        video_bar = _sparkline([v], width=4, max_val=max_val)
+        work_cells.append(f"工作 {work_bar}")
+        video_cells.append(f"娱乐 {video_bar}")
+    lines.append("| " + " | ".join(work_cells) + " |")
+    lines.append("| " + " | ".join(video_cells) + " |")
+
+    # Daily values row
+    day_values = []
     for d in daily:
-        date_label = d["date"][-5:]  # MM-DD
-        eff = d["effective_seconds"]
         w = d["work_seconds"]
         v = d["video_seconds"]
-        day_score = round(w / eff * 100) if eff > 0 else 0
-        lines.append(f"| {date_label} | {fmt_seconds(eff)} | {fmt_seconds(w)} | {fmt_seconds(v)} | {day_score}% |")
-        work_spark.append(w)
-        video_spark.append(v)
+        if w > 0 or v > 0:
+            day_values.append(f"工{fmt_seconds(w)} 娱{fmt_seconds(v)}")
+        else:
+            day_values.append("—")
+    lines.append("| " + " | ".join(day_values) + " |")
     lines.append("")
 
-    # Sparklines
-    max_val = max(max(work_spark), max(video_spark)) or 1
-    lines.append(f"工作学习趋势: `{_sparkline(work_spark, width=14, max_val=max_val)}`")
-    lines.append(f"娱乐休闲趋势: `{_sparkline(video_spark, width=14, max_val=max_val)}`")
+    # ── 3. Best 3 days ──
+    lines.append("## 🏆 最专注的三天")
+    lines.append("")
+    medals = ["🥇", "🥈", "🥉"]
+    for i, bd in enumerate(best_days):
+        date_str, work_sec, _ = bd
+        from datetime import date as dt_date
+        d_obj = dt_date.fromisoformat(date_str)
+        day_name = weekdays[d_obj.weekday()]
+        lines.append(f"{medals[i]} **{day_name}** {date_str[-5:]}  {fmt_seconds(work_sec)}")
+    if not best_days:
+        lines.append("数据不足")
     lines.append("")
 
-    # ── 分类统计 ──
-    lines.append("## 分类统计")
+    # ── 4. Top 10 apps ──
+    lines.append("## 💻 本周软件 TOP 10")
     lines.append("")
-    lines.append("| 分类 | 有效时长 | 日均 |")
-    lines.append("|---|---:|---:|")
-    for cat in stats["by_category"]:
-        daily_avg = (cat["effective_seconds"] or 0) // max(days_with_data, 1)
-        lines.append(f"| {normalize_category_display_name(cat.get('category_key', ''), cat['category_name'])} | {fmt_seconds(cat['effective_seconds'])} | {fmt_seconds(daily_avg)} |")
+    for i, app in enumerate(stats["by_app"][:10]):
+        proc = (app["process_name"] or "").replace(".exe", "")
+        lines.append(f"{i+1}. **{proc}**  {fmt_seconds(app['effective_seconds'])}")
     lines.append("")
 
-    # ── 软件排行 ──
-    lines.append("## 软件排行 (本周 TOP 10)")
+    # ── 5. Biggest time sink ──
+    lines.append("## 🕳️ 本周最大时间黑洞")
     lines.append("")
-    for app in stats["by_app"][:10]:
-        lines.append(f"- **{app['process_name']}**：{fmt_seconds(app['effective_seconds'])}")
+    if sink:
+        sink_name, sink_sec, sink_cat = sink
+        sink_name_clean = sink_name.replace(".exe", "")
+        ent_total = video
+        sink_pct = round(sink_sec / ent_total * 100) if ent_total > 0 else 0
+        emoji = "📺" if sink_cat == "video" else "🎮"
+        lines.append(f"{emoji} **{sink_name_clean}**  累计 {fmt_seconds(sink_sec)}  （占娱乐 {sink_pct}%）")
+    else:
+        lines.append("本周没有明显的娱乐消费，很好！")
     lines.append("")
 
-    # ── 建议 ──
-    lines.append("## 建议")
+    # ── 6. AI summary ──
+    lines.append("## 🤖 本周总结")
     lines.append("")
-    video_days = sum(1 for d in daily if d["video_seconds"] > 5400)
-    work_days = sum(1 for d in daily if d["work_seconds"] > 7200)
-    if video_days >= 4:
-        lines.append(f"- 本周有 {video_days} 天娱乐休闲时间超过90分钟，建议下周控制")
-    if work_days < 3 and days_with_data >= 5:
-        lines.append(f"- 本周仅 {work_days} 天工作学习时间超过2小时，建议增加投入")
-    if days_with_data < 5:
-        lines.append(f"- 本周仅 {days_with_data} 天有有效记录，建议提高电脑利用率")
-    if not totals["video_seconds"] and not totals["work_seconds"]:
-        lines.append("- 数据不足，请保持记录以获取分析建议")
+    lines.append(_gen_weekly_summary(stats, prev, best_days, peak_hours, sink, days_with_data))
     lines.append("")
 
     with open(filepath, "w", encoding="utf-8") as f:
@@ -482,20 +872,22 @@ def export_weekly_report(db_path, year, week_number, output_dir):
 
 
 def export_monthly_report(db_path, year, month, output_dir):
-    """Generate a monthly summary Markdown report.
+    """Generate a comparison-driven monthly Markdown report.
 
-    Args:
-        db_path: path to SQLite database
-        year: year (e.g. 2026)
-        month: month (1-12)
-        output_dir: directory to write the .md file
-
-    Returns path to the generated report file.
+    Focus: growth, habits, changes over the month. Heatmap, keywords, trends.
     """
+    import calendar as cal_mod
+    from datetime import date as dt_date
+
     dates = _month_dates(year, month)
     stats = database.query_date_range_stats(db_path, dates)
     daily = stats["daily"]
     totals = stats["totals"]
+    prev = _query_prev_period(database.read_conn, db_path, dates, "month")
+    heatmap = _query_month_heatmap(database.read_conn, db_path, year, month)
+    keywords = _query_keywords(database.read_conn, db_path, dates, 8)
+    best_days = _query_best_days(database.read_conn, db_path, dates, 1)
+    top_work_apps = _query_top_work_apps(database.read_conn, db_path, dates, 3)
     os.makedirs(output_dir, exist_ok=True)
 
     filename = f"{year}-{month:02d}_monthly.md"
@@ -503,14 +895,22 @@ def export_monthly_report(db_path, year, month, output_dir):
 
     days_with_data = sum(1 for d in daily if d["effective_seconds"] > 0)
     total_days = len(dates)
-    daily_effective = [d["effective_seconds"] for d in daily if d["effective_seconds"] > 0]
-    avg_daily_eff = sum(daily_effective) // max(len(daily_effective), 1)
+    eff = totals["effective_seconds"]
+    work = totals["work_seconds"]
+    video = totals["video_seconds"]
+    work_pct = round(work / eff * 100) if eff > 0 else 0
 
-    # Efficiency
-    work_total = totals["work_seconds"]
-    video_total = totals["video_seconds"]
-    eff_total = totals["effective_seconds"]
-    score, grade = _calculate_weekly_efficiency(daily)  # same logic works for month
+    if days_with_data == 0:
+        lines = [
+            f"# {year}年{month}月 个人数字行为月报",
+            "",
+            f"**{dates[0]} ~ {dates[-1]}**",
+            "",
+            "数据不足，请保持记录以获取分析报告。",
+        ]
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+        return filepath
 
     lines = []
     lines.append(f"# {year}年{month}月 个人数字行为月报")
@@ -518,76 +918,143 @@ def export_monthly_report(db_path, year, month, output_dir):
     lines.append(f"**{dates[0]} ~ {dates[-1]}** | 有效天数: {days_with_data}/{total_days}")
     lines.append("")
 
-    # ── 总览 ──
-    lines.append("## 总览")
+    # ── 1. Monthly overview with comparison ──
+    lines.append("## 📊 月度总览")
     lines.append("")
-    lines.append(f"- 总电脑使用：{fmt_seconds(totals['total_seconds'])}")
-    lines.append(f"- 活跃时间：{fmt_seconds(eff_total)}")
-    lines.append(f"- 工作学习：{fmt_seconds(work_total)}")
-    lines.append(f"- 娱乐休闲：{fmt_seconds(video_total)}")
-    lines.append(f"- 日均有效：{fmt_seconds(avg_daily_eff)}")
-    lines.append(f"- 日均工作学习：{fmt_seconds(work_total // max(days_with_data, 1))}")
-    lines.append(f"- 日均娱乐休闲：{fmt_seconds(video_total // max(days_with_data, 1))}")
-    lines.append("")
-
-    if score is not None:
-        lines.append(f"**月效率评分: {score}/100 ({grade})**")
-        lines.append("")
-
-    # ── 每周趋势 ──
-    lines.append("## 每周趋势")
-    lines.append("")
-    # Group days by ISO week
-    from collections import defaultdict
-    weeks = defaultdict(lambda: {"work": 0, "video": 0, "eff": 0, "days": 0})
-    for d in daily:
-        from datetime import date as dt_date
-        d_obj = dt_date.fromisoformat(d["date"])
-        iso_year, iso_week, _ = d_obj.isocalendar()
-        wkey = f"{iso_year}-W{iso_week:02d}"
-        weeks[wkey]["work"] += d["work_seconds"]
-        weeks[wkey]["video"] += d["video_seconds"]
-        weeks[wkey]["eff"] += d["effective_seconds"]
-        weeks[wkey]["days"] += 1
-
-    lines.append("| 周 | 有效时长 | 工作学习 | 娱乐休闲 | 周效率 |")
-    lines.append("|---|---:|---:|---:|---:|")
-    for wkey in sorted(weeks.keys()):
-        w = weeks[wkey]
-        w_score = round(w["work"] / w["eff"] * 100) if w["eff"] > 0 else 0
-        lines.append(f"| {wkey} | {fmt_seconds(w['eff'])} | {fmt_seconds(w['work'])} | {fmt_seconds(w['video'])} | {w_score}% |")
+    lines.append("| 指标 | 本月 | 环比 |")
+    lines.append("|---|---|---|")
+    lines.append(f"| 总活跃 | {fmt_seconds(eff)} | {_delta_text(eff, prev['effective_seconds'])} |")
+    lines.append(f"| 工作学习 | {fmt_seconds(work)} | {_delta_text(work, prev['work_seconds'])} |")
+    lines.append(f"| 娱乐休闲 | {fmt_seconds(video)} | {_delta_text(video, prev['video_seconds'])} |")
+    lines.append(f"| 活跃天数 | {days_with_data}/{total_days} | — |")
     lines.append("")
 
-    # ── 分类统计 ──
-    lines.append("## 分类统计")
+    # ── 2. Heatmap ──
+    lines.append("## 🔥 月度热力图")
     lines.append("")
-    lines.append("| 分类 | 有效时长 | 日均 | 占比 |")
-    lines.append("|---|---:|---:|---:|")
+
+    # GitHub-style heatmap
+    # Group by weeks
+    weeks = []
+    current_week = []
+    for day, wday, eff_sec, _ in heatmap:
+        current_week.append((day, wday, eff_sec))
+        if wday == 6 or day == total_days:  # Sunday or last day
+            weeks.append(current_week)
+            current_week = []
+
+    # Char mapping for intensity levels
+    def heat_char(sec):
+        if sec <= 0:
+            return "·"
+        elif sec < 1800:  # < 30min
+            return "░"
+        elif sec < 3600:  # 30-60min
+            return "▒"
+        elif sec < 7200:  # 1-2h
+            return "▓"
+        elif sec < 14400:  # 2-4h
+            return "█"
+        else:  # 4h+
+            return "⬛"
+
+    # Header row
+    headers = ["一", "二", "三", "四", "五", "六", "日"]
+    lines.append("```")
+    lines.append("   " + " ".join(f"{h:>3}" for h in headers))
+    for wk in weeks:
+        cells = []
+        for day, wday, eff_sec in wk:
+            ch = heat_char(eff_sec)
+            cells.append(f"{day:02d}{ch}")
+        # Pad incomplete weeks
+        row = " ".join(f"{c:>3}" for c in cells)
+        lines.append(f"   {row}")
+    lines.append("```")
+    lines.append("*颜色越深越专注  ·无数据 ░<0.5h ▒0.5-1h ▓1-2h █2-4h ⬛>4h*")
+    lines.append("")
+
+    # ── 3. Best day ──
+    lines.append("## ⭐ 月度最佳状态")
+    lines.append("")
+    if best_days:
+        date_str, work_sec, _ = best_days[0]
+        d_obj = dt_date.fromisoformat(date_str)
+        weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+        day_name = weekdays[d_obj.weekday()]
+        lines.append(f"**{date_str}** {day_name}")
+        lines.append(f"工作学习 **{fmt_seconds(work_sec)}**")
+    else:
+        lines.append("数据不足")
+    lines.append("")
+
+    # ── 4. Top 3 work apps ──
+    lines.append("## 🏆 月度最强软件")
+    lines.append("")
+    if top_work_apps:
+        for i, (proc, sec) in enumerate(top_work_apps):
+            emoji = ["🥇", "🥈", "🥉"][i]
+            proc_clean = proc.replace(".exe", "")
+            lines.append(f"{emoji} **{proc_clean}**  {fmt_seconds(sec)}")
+    else:
+        lines.append("数据不足")
+    lines.append("")
+
+    # ── 5. Time distribution ──
+    lines.append("## 📦 时间去向")
+    lines.append("")
+    # Aggregate into major groups
+    work_keys = {"ai_tools", "coding", "reading", "creative"}
+    entertainment_keys = {"video", "gaming"}
+    system_keys = {"system", "tools", "browser_general", "other"}
+
+    work_total = 0
+    ent_total = 0
+    sys_total = 0
     for cat in stats["by_category"]:
-        daily_avg = (cat["effective_seconds"] or 0) // max(days_with_data, 1)
-        pct = round(cat["effective_seconds"] / eff_total * 100) if eff_total > 0 else 0
-        lines.append(f"| {normalize_category_display_name(cat.get('category_key', ''), cat['category_name'])} | {fmt_seconds(cat['effective_seconds'])} | {fmt_seconds(daily_avg)} | {pct}% |")
+        ck = cat.get("category_key", "")
+        sec = cat.get("effective_seconds", 0) or 0
+        if ck in work_keys:
+            work_total += sec
+        elif ck in entertainment_keys:
+            ent_total += sec
+        else:
+            sys_total += sec
+
+    total = work_total + ent_total + sys_total
+    bar_width = 20
+
+    def _pct_bar(label, sec, pct):
+        filled = round(pct / 100 * bar_width)
+        bar = "█" * filled + "░" * (bar_width - filled)
+        return f"| {label} | {pct}% | {bar} |"
+
+    if total > 0:
+        lines.append("| 类型 | 占比 | 分布 |")
+        lines.append("|---|---|---|")
+        work_pct_all = round(work_total / total * 100)
+        ent_pct_all = round(ent_total / total * 100)
+        sys_pct_all = 100 - work_pct_all - ent_pct_all
+        lines.append(_pct_bar("工作学习", work_total, work_pct_all))
+        lines.append(_pct_bar("娱乐休闲", ent_total, ent_pct_all))
+        lines.append(_pct_bar("系统/其他", sys_total, sys_pct_all))
+        lines.append(f"| **合计** | — | {fmt_seconds(total)} |")
     lines.append("")
 
-    # ── 软件排行 ──
-    lines.append("## 软件排行 (本月 TOP 15)")
+    # ── 6. Keywords ──
+    lines.append("## 🏷️ 本月关键词")
     lines.append("")
-    for app in stats["by_app"][:15]:
-        pct = round(app["effective_seconds"] / eff_total * 100) if eff_total > 0 else 0
-        lines.append(f"- **{app['process_name']}**：{fmt_seconds(app['effective_seconds'])} ({pct}%)")
+    if keywords:
+        lines.append(" · ".join(keywords))
+    else:
+        lines.append("数据不足")
     lines.append("")
 
-    # ── 建议 ──
-    lines.append("## 建议")
+    # ── 7. AI summary ──
+    lines.append("## 🤖 月度总结")
     lines.append("")
-    if days_with_data < 15:
-        lines.append(f"- 本月仅 {days_with_data} 天有记录，建议保持每日开机记录习惯")
-    if video_total > 5400 * 30:
-        lines.append("- 本月娱乐休闲时间偏高，建议每月控制在 45 小时以内")
-    if work_total > 0 and work_total / max(eff_total, 1) < 0.4:
-        lines.append("- 本月工作学习占比偏低 (<40%)，下月可以设定目标")
-    if not totals["video_seconds"] and not totals["work_seconds"]:
-        lines.append("- 数据不足，请保持记录以获取分析建议")
+    best_day = best_days[0] if best_days else None
+    lines.append(_gen_monthly_summary(stats, prev, best_day, top_work_apps, days_with_data, total_days))
     lines.append("")
 
     with open(filepath, "w", encoding="utf-8") as f:

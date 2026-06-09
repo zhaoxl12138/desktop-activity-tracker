@@ -1321,7 +1321,8 @@ class _TrendCanvas(QWidget):
         chart_rect = r.adjusted(42, 6, -14, -30)
         pos = event.position() if hasattr(event, 'position') else event.pos()
 
-        if not chart_rect.contains(pos):
+        ipos = pos.toPoint()
+        if not chart_rect.contains(ipos):
             QToolTip.hideText()
             super().mouseMoveEvent(event)
             return

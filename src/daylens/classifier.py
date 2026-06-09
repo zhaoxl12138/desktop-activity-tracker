@@ -54,8 +54,12 @@ class Classifier:
                 "active_rule": best[1]["active_rule"],
             }
 
-        # Second pass: for browsers, match by title_keywords only (website-level classification)
-        browser_procs = {"chrome.exe", "msedge.exe", "iexplore.exe", "firefox.exe"}
+        # Second pass: for browsers/WebView2, match by title_keywords only
+        # msedgewebview2.exe is the Edge WebView2 runtime embedded by
+        # desktop apps (Tencent Video, iQiyi, etc.). Treat it like a
+        # browser so title-based classification works.
+        browser_procs = {"chrome.exe", "msedge.exe", "iexplore.exe", "firefox.exe",
+                         "msedgewebview2.exe"}
         if process_name in browser_procs:
             title_only_matches = []
             for key, cat in self.categories.items():

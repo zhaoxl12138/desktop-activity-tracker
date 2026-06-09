@@ -1,0 +1,56 @@
+"""Helpers for the software stats page."""
+
+from __future__ import annotations
+
+import os
+from datetime import datetime
+
+from .. import database, exporter
+from ..utils import fmt_seconds, normalize_category_bucket_key, normalize_category_display_name
+
+
+def load_software_rows(db_path: str, display_name_mapping: dict[str, str]) -> list[dict[str, str]]:
+    today = datetime.now().strftime("%Y-%m-%d")
+    stats = database.query_date_stats(db_path, today)
+    details = stats.get("by_app_detail", [])
+    total_eff = stats.get("totals", {}).get("effective_seconds", 0) or 1
+    by_app = stats.get("by_app", [])
+
+    rows: list[dict[str, str]] = []
+    for app in details:
+        process_name = app.get("process_name", "")
+        display_name = display_name_mapping.get(process_name, process_name)
+        title = (app.get("window_title", "") or "-")[:60]
+        category_name = ""
+        category_key = ""
+        for category_app in by_app:
+            if category_app["process_name"] == process_name:
+                raw_category_name = str(category_app.get("category_name", "") or "")
+                raw_category_key = str(category_app.get("category_key", "") or "")
+                category_name = normalize_category_display_name(raw_category_key, raw_category_name)
+                category_key = normalize_category_bucket_key(raw_category_key, raw_category_name)
+                break
+        seconds = app.get("effective_seconds", 0) or 0
+        rows.append(
+            {
+                "software": display_name,
+                "title": title,
+                "category_name": category_name,
+                "category_key": category_key,
+                "duration": fmt_seconds(seconds),
+                "percent": f"{round(seconds / total_eff * 100)}%" if total_eff > 0 else "0%",
+            }
+        )
+    return rows
+
+
+def export_software_csv(db_path: str, target_path: str) -> str:
+    today = datetime.now().strftime("%Y-%m-%d")
+    exporter.export_csv(db_path, today, os.path.dirname(target_path))
+    return os.path.basename(target_path)
+
+
+def export_software_markdown(db_path: str, target_path: str) -> str:
+    today = datetime.now().strftime("%Y-%m-%d")
+    exporter.export_markdown(db_path, today, os.path.dirname(target_path))
+    return os.path.basename(target_path)

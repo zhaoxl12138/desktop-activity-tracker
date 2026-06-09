@@ -42,7 +42,7 @@ BROWSER_SUFFIXES = [
     " - Internet Explorer", " - Chromium",
 ]
 
-_BROWSER_PROCS = {"chrome.exe", "msedge.exe", "iexplore.exe", "firefox.exe", "chromium.exe"}
+_BROWSER_PROCS = {"chrome.exe", "msedge.exe", "msedgewebview2.exe", "iexplore.exe", "firefox.exe", "chromium.exe"}
 
 _NUMERIC_PARENTHESIS = re.compile(r'\(\d+\)')
 _DYNAMIC_TITLE_PREFIX = re.compile(r'^[\u2800-\u28ff\u25e0-\u25ff\u2600-\u27bf]+\s+')
@@ -84,6 +84,45 @@ def normalize_window_title(process_name, window_title):
     title = _NUMERIC_PARENTHESIS.sub('', title).strip()
 
     return title
+
+
+# ── Transient window title filter ──────────────────────────────────
+# Video players briefly expose internal widget class names (e.g.
+# "QyWindow.GroupName.QyPlayerApp-Shadow") during buffering, ad
+# breaks, or overlay transitions. These are code identifiers, not
+# real content titles, and should never trigger a title_change split.
+#
+# Strategy: detect structural traits of internal window class names
+# rather than hardcoding vendor-specific strings. Works across all
+# players (iQiyi, Tencent Video, PotPlayer, VLC, etc.).
+
+# Dot-separated CamelCase namespace: "Foo.Bar.Baz-Suffix"
+_INTERNAL_CLASS_PATH = re.compile(r'\w+\.\w+(?:\.\w+)*')
+
+# Internal window class name suffixes
+_INTERNAL_WND_SUFFIX = re.compile(
+    r'(?:Wnd|Dlg|Ctrl|Shadow|Overlay|Popup|Child|Host|Panel'
+    r'|Container|Widget|Window|Frame)$'
+)
+
+
+def _is_transient_title(title: str) -> bool:
+    """Return True if title is a transient/internal player window title."""
+    if not title:
+        return True
+    # Real content titles always contain natural language
+    # (spaces for word separation, or CJK characters).
+    has_spaces = ' ' in title
+    has_cjk = any('一' <= c <= '鿿' for c in title)
+    if has_spaces or has_cjk:
+        return False
+    # Dot-separated class path → internal Qt/UI framework name
+    if _INTERNAL_CLASS_PATH.search(title):
+        return True
+    # Common internal window class name suffixes
+    if _INTERNAL_WND_SUFFIX.search(title):
+        return True
+    return False
 
 
 # ── Session data class ──
@@ -129,6 +168,7 @@ class ActivitySession:
     effective_seconds: int = 0
     idle_seconds: int = 0
     switch_reason: str = ""
+    initial_title: str = ""
     _db_row_id: int = field(default=-1, repr=False)
 
 
@@ -287,13 +327,28 @@ class SessionTracker:
 
             # ── Same domain ────────────────────────────────────────
             else:
-                self._pending_switch = None
-                self._current.process_name = process_name
-                self._current.window_title = raw_title
-                self._current.normalized_title = norm_title
-                self._current.category_key = cat_key
-                self._current.category_name = cat_name
-                self._current.active_rule = active_rule
+                # For video sessions, detect title changes (e.g. episode switch)
+                # and split into a new session.
+                title_changed = (
+                    cat_key == "video" and norm_title
+                    and self._current.initial_title
+                    and norm_title != self._current.initial_title
+                )
+                if title_changed and not _is_transient_title(norm_title):
+                    self._current.end_time = now
+                    self._current.switch_reason = "title_change"
+                    self._emit_session()
+                    self._pending_switch = None
+                else:
+                    self._pending_switch = None
+                    self._current.process_name = process_name
+                    self._current.window_title = raw_title
+                    # Don't overwrite title with transient/internal window names
+                    if not _is_transient_title(norm_title):
+                        self._current.normalized_title = norm_title
+                    self._current.category_key = cat_key
+                    self._current.category_name = cat_name
+                    self._current.active_rule = active_rule
 
         # If previous session was auto-closed due to entertainment idle,
         # don't create a new session until the user is actually active.
@@ -332,6 +387,7 @@ class SessionTracker:
                 category_key=cat_key,
                 category_name=cat_name,
                 active_rule=active_rule,
+                initial_title=norm_title,
             )
 
         self._tick_current(idle_seconds, now, hwnd)
@@ -352,7 +408,35 @@ class SessionTracker:
         - Switched to yet another domain → reset timer to new target.
         - Activity during grace period is credited as effective (user is
           actively using the new app), not idle.
+
+        Entertainment (video/gaming) is exempt from the grace period —
+        the user intentionally opened a video player, no need to wait.
         """
+        # Entertainment: switch immediately, no grace period
+        if new_domain == "entertainment":
+            self._current.end_time = now
+            self._current.switch_reason = "domain_change"
+            self._emit_session()
+            self._persistent_idle = 0.0
+            self._last_cursor_pos = None
+            self._last_kb_state = None
+            self._current = ActivitySession(
+                session_id=uuid.uuid4().hex[:12],
+                start_time=now,
+                end_time=now,
+                date=date_str,
+                process_name=process_name,
+                exe_path=exe_path,
+                window_title=raw_title,
+                normalized_title=norm_title,
+                category_key=cat_key,
+                category_name=cat_name,
+                active_rule=active_rule,
+                initial_title=norm_title,
+            )
+            self._pending_switch = None
+            return
+
         if self._pending_switch is None or self._pending_switch["domain"] != new_domain:
             self._pending_switch = {
                 "domain": new_domain,
@@ -399,6 +483,7 @@ class SessionTracker:
             duration_seconds=int(elapsed),
             effective_seconds=eff,
             idle_seconds=idle,
+            initial_title=p["norm_title"],
         )
         self._pending_switch = None
         self._persistent_idle = 0.0
@@ -525,18 +610,36 @@ class SessionTracker:
         self._current = None
 
     def _make_snapshot(self, idle_seconds):
-        """Build a UI-compatible snapshot dict for the sample_updated signal."""
+        """Build a UI-compatible snapshot dict for the sample_updated signal.
+
+        When a cross-domain switch is pending (grace period), display
+        the pending target's category so the real-time monitor reflects
+        what the user is actually doing right now. Session persistence
+        still waits for the grace period to complete.
+        """
         s = self._current
+        p = self._pending_switch
+
         if s:
             cat_key = s.category_key or ""
-            is_ent = cat_key == "video"
-            audio_playing = (
-                is_ent and self._audio_detector is not None
-                and self._audio_detector.is_any_playing()
-            )
-            is_eff = audio_playing or (self._persistent_idle <= self._idle_limit())
+            cat_name = s.category_name or ""
         else:
             cat_key = ""
+            cat_name = ""
+
+        # Use pending switch target for real-time display
+        if p:
+            cat_key = p.get("cat_key", cat_key)
+            cat_name = p.get("cat_name", cat_name)
+
+        is_ent = cat_key == "video"
+        audio_playing = (
+            is_ent and self._audio_detector is not None
+            and self._audio_detector.is_any_playing()
+        )
+        idle_limit = self.entertainment_idle_threshold if is_ent else self.idle_threshold
+        is_eff = audio_playing or (self._persistent_idle <= idle_limit)
+        if s is None and not p:
             audio_playing = False
             is_eff = False
 
@@ -544,13 +647,13 @@ class SessionTracker:
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "date": s.date if s else datetime.now().strftime("%Y-%m-%d"),
             "session_id": s.session_id if s else "",
-            "process_name": s.process_name if s else "",
-            "exe_path": s.exe_path if s else "",
-            "window_title": s.window_title if s else "",
-            "normalized_title": s.normalized_title if s else "",
+            "process_name": (p.get("process_name", s.process_name if s else "") if p else (s.process_name if s else "")),
+            "exe_path": (p.get("exe_path", s.exe_path if s else "") if p else (s.exe_path if s else "")),
+            "window_title": (p.get("raw_title", s.window_title if s else "") if p else (s.window_title if s else "")),
+            "normalized_title": (p.get("norm_title", s.normalized_title if s else "") if p else (s.normalized_title if s else "")),
             "category_key": cat_key,
-            "category_name": s.category_name if s else "",
-            "active_rule": s.active_rule if s else "",
+            "category_name": cat_name,
+            "active_rule": (p.get("active_rule", s.active_rule if s else "") if p else (s.active_rule if s else "")),
             "duration_seconds": s.duration_seconds if s else 0,
             "effective_seconds": s.effective_seconds if s else 0,
             "idle_seconds": idle_seconds,

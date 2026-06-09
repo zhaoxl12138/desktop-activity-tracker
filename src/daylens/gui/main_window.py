@@ -27,6 +27,13 @@ from PySide6.QtWidgets import (
 
 from ..utils import fmt_seconds
 from ..services.shell_service import generate_daily_report, load_poetry_hint, load_shell_summary
+from ..services.reports_service import (
+    auto_generate_current_reports,
+    should_generate_weekly,
+    should_generate_monthly,
+    weekly_report_exists,
+    monthly_report_exists,
+)
 from .pages.category_stats import CategoryStatsPage
 from .pages.live_monitor import LiveMonitorPage
 from .pages.reports import ReportsPage
@@ -108,6 +115,12 @@ class MainWindow(QMainWindow):
         self.refresh_timer = QTimer(self)
         self.refresh_timer.timeout.connect(self._update_top_bar)
         self.refresh_timer.start(5000)
+
+        # Auto-generate weekly/monthly reports
+        QTimer.singleShot(5000, self._check_report_schedule)
+        self.report_schedule_timer = QTimer(self)
+        self.report_schedule_timer.timeout.connect(self._check_report_schedule)
+        self.report_schedule_timer.start(300000)  # every 5 minutes
 
     def _init_pages(self) -> None:
         """Create page widgets once. Reused across theme toggles."""
@@ -598,6 +611,37 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "生成成功", f"日报已保存到\n{path}")
         except Exception as exc:
             QMessageBox.warning(self, "生成失败", str(exc))
+
+    def _check_report_schedule(self):
+        """Periodically check if weekly/monthly reports should be auto-generated."""
+        try:
+            now = __import__("time").time()
+            last = getattr(self, '_last_report_gen', 0)
+            # Debounce: don't regenerate within 5 minutes
+            if now - last < 290:
+                return
+
+            needs_weekly = should_generate_weekly() or not weekly_report_exists(self.reports_dir)
+            needs_monthly = should_generate_monthly() or not monthly_report_exists(self.reports_dir)
+
+            if not needs_weekly and not needs_monthly:
+                return
+
+            self._last_report_gen = now
+            generated = auto_generate_current_reports(self.db_path, self.reports_dir)
+            if generated:
+                obsidian_path = self._live_obsidian_path()
+                if obsidian_path:
+                    from ..exporter import sync_to_obsidian
+                    for filepath in generated:
+                        sync_to_obsidian(filepath, obsidian_path)
+                import sys
+                for fp in generated:
+                    print(f"[AutoReport] Generated: {fp}", file=sys.stderr)
+        except Exception as e:
+            import sys, traceback
+            print(f"[AutoReport] Error: {e}", file=sys.stderr)
+            traceback.print_exc()
 
     def _live_obsidian_path(self) -> str:
         """Return obsidian_output_path from in-memory config (merged with DB on startup)."""
