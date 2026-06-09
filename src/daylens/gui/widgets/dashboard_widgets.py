@@ -642,7 +642,7 @@ class SessionTop3Widget(QFrame):
         merged = TimelineWidget._merge_sessions(list(sessions or []))
         filtered = [
             s for s in merged
-            if (s.get("effective_seconds", 0) or 0) >= 300
+            if (s.get("effective_seconds", 0) or 0) >= 600
         ]
         filtered.sort(
             key=lambda s: (
