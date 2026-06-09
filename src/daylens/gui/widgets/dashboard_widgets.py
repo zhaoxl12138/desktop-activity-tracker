@@ -991,7 +991,10 @@ class TrendChartWidget(QFrame):
             self._cmp_legend.setText("  ".join(parts))
             self._cmp_legend.setVisible(True)
         else:
-            self._cmp_legend.setVisible(False)
+            self._cmp_legend.setText(
+                f"<span style='color:{COLORS["coding_green"]}'>每日活跃时间</span>"
+            )
+            self._cmp_legend.setVisible(True)
 
     def _apply_series(self) -> None:
         compare = self._yesterday_today if self._mode in ("7d", "30d") else []
@@ -1030,10 +1033,17 @@ class TrendChartWidget(QFrame):
             datetime.strptime(d, "%Y-%m-%d").weekday() for d in days
         ]
 
+        # 30-day labels: from 1st of current month to today
+        month_start = today_date.replace(day=1)
+        days_in_month = (today_date - month_start).days + 1
         markers = []
-        for i in range(30):
-            d = today_date - timedelta(days=29-i)
-            markers.append(f"{d.month}/{d.day}" if i % 3 == 0 else "")
+        for i in range(days_in_month):
+            d = month_start + timedelta(days=i)
+            # Show day-of-month label, highlight 1st and every 5 days
+            if i == 0 or d.day % 5 == 1 or d == today_date:
+                markers.append(f"{d.month}/{d.day}")
+            else:
+                markers.append("")
         self._labels["30d"] = markers
         self._weekday_indices["today"] = []
         self._weekday_indices["30d"] = []

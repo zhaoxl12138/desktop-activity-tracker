@@ -362,7 +362,10 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
     # Current week: Monday → today (not rolling 7 days)
     week_days = [(today_date - timedelta(days=monday_offset - i)).strftime("%Y-%m-%d")
                  for i in range(monday_offset + 1)]
-    thirty_days = [(today_date - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(29, -1, -1)]
+    # 30-day chart: from 1st of current month → today
+    month_start = today_date.replace(day=1)
+    days_in_month = (today_date - month_start).days + 1
+    thirty_days = [(month_start + timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(days_in_month)]
     thirty_day_stats = database.query_date_range_stats(db_path, thirty_days)
     week_day_sessions = [database.query_today_sessions(db_path, day_str) for day_str in week_days]
 
