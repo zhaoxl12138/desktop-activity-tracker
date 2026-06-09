@@ -358,6 +358,7 @@ categories:
       - YoudaoTranslate.exe
       - Zotero.exe
       title_keywords:
+      # ── 阅读/知识工具 ──
       - Anki
       - Calibre
       - Kindle
@@ -374,6 +375,228 @@ categories:
       - 微信读书
       - 得到
       - 极客时间
+      # ── 通用学习信号 ──
+      - 教程
+      - 入门
+      - 实战
+      - 原理
+      - 源码
+      - 框架
+      - 面试
+      - 考研
+      - 公开课
+      - 讲义
+      - 习题
+      - 笔记
+      - Lecture
+      - Tutorial
+      - Course
+      # ── AI / 大模型 ──
+      - ChatGPT
+      - Claude
+      - DeepSeek
+      - Gemini
+      - Copilot
+      - Codex
+      - Cursor
+      - LLM
+      - Agent
+      - RAG
+      - Prompt
+      - Transformer
+      - Embedding
+      - Fine-tuning
+      - LoRA
+      - RLHF
+      - GPT
+      - Qwen
+      - Llama
+      # ── AI 视觉 ──
+      - YOLO
+      - YOLOv8
+      - YOLO11
+      - OpenCV
+      - TensorRT
+      - TensorFlow
+      - ONNX
+      - NCNN
+      - PyTorch
+      - 机器学习
+      - 深度学习
+      - 目标检测
+      - 图像分类
+      - 语义分割
+      - 关键点检测
+      - 计算机视觉
+      - 推理
+      - 模型训练
+      - 模型部署
+      - 模型量化
+      - 模型剪枝
+      - RKNN
+      - NPU
+      # ── Linux ──
+      - Linux
+      - Ubuntu
+      - Debian
+      - CentOS
+      - Shell
+      - Bash
+      - Zsh
+      - 内核
+      - Kernel
+      - 驱动
+      - 设备树
+      - Docker
+      - Kubernetes
+      - K8S
+      - FFmpeg
+      - RTSP
+      - RTMP
+      - GStreamer
+      - Makefile
+      - CMake
+      - 交叉编译
+      # ── 嵌入式 ──
+      - 嵌入式
+      - 单片机
+      - STM32
+      - STM32F103
+      - STM32H7
+      - ARM
+      - Cortex-M
+      - Cortex-A
+      - RTOS
+      - FreeRTOS
+      - ThreadX
+      - Bootloader
+      - Uboot
+      - UART
+      - SPI
+      - I2C
+      - CAN
+      - DMA
+      - GPIO
+      - ADC
+      - PWM
+      - 中断
+      - 字符设备
+      - 块设备
+      - 根文件系统
+      - Buildroot
+      - Yocto
+      # ── Camera / ISP ──
+      - Camera
+      - 摄像头
+      - Sensor
+      - MIPI
+      - CSI
+      - ISP
+      - IMX415
+      - 图像传感器
+      - V4L2
+      - v4l2-ctl
+      - media-ctl
+      - RKISP
+      - rkisp
+      - 3A
+      - AE
+      - AWB
+      - AF
+      - Bayer
+      - HDR
+      - 图像处理
+      # ── Rockchip ──
+      - RK3568
+      - RK3588
+      - RK3566
+      - Rockchip
+      - 瑞芯微
+      - RKNN
+      - RKMedia
+      - MPP
+      - RGA
+      - DRM
+      - VPU
+      - NPU
+      # ── 工具链 ──
+      - WSL
+      - GDB
+      - GCC
+      - OpenOCD
+      - JTAG
+      - Toolchain
+      # ── 通用技术 ──
+      - 数据结构
+      - 算法
+      - 计算机网络
+      - 操作系统
+      - 编译原理
+      - LeetCode
+      - 系统设计
+      # ── 英语学习 ──
+      - 英语
+      - English
+      - 英语口语
+      - 英语听力
+      - 英语阅读
+      - 英语写作
+      - 英语语法
+      - 英语单词
+      - 英语词汇
+      - 英语发音
+      - 音标
+      - 自然拼读
+      - Phonics
+      - Vocabulary
+      - Grammar
+      - Listening
+      - Speaking
+      - Reading
+      - Writing
+      - Pronunciation
+      # ── 英语考试 ──
+      - 四六级
+      - 四级
+      - 六级
+      - 专四
+      - 专八
+      - TOEFL
+      - 托福
+      - IELTS
+      - 雅思
+      - GRE
+      - SAT
+      - GMAT
+      - BEC
+      - PET
+      - KET
+      # ── 英语课程 ──
+      - 新概念英语
+      - 新概念
+      - TED英语
+      - BBC English
+      - VOA
+      - EnglishPod
+      - 每日英语
+      # ── 英语学习行为 ──
+      - 背单词
+      - 单词
+      - 词根词缀
+      - 长难句
+      - 翻译
+      - 精读
+      - 泛读
+      - 跟读
+      - Shadowing
+      title_patterns:
+      - 第\d+讲
+      - 第\d+课
+      - 第\d+章
+      - 第\d+集
+      - 第\d+节
+      - Lesson\s*\d+
+      - P\d+
   # ── 视频与游戏 ──
   video:
     display_name: 视频与游戏

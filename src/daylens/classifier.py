@@ -1,9 +1,23 @@
 """Classify foreground window into categories based on config.yaml rules."""
 
 import os
+import re
 import yaml
 
 from . import get_app_root
+
+# Categories that represent productive work — when they compete with
+# video/entertainment, they win (content-is-king principle).
+_LEARNING_CATEGORIES = {"reading", "coding", "ai_tools", "office", "creative"}
+
+
+def _match_title(title_lower, match_rules, compiled_patterns=None):
+    """Return (matched_keywords, matched_patterns) for title against rules."""
+    kws = [k.lower() for k in match_rules.get("title_keywords", [])]
+    matched_kws = [kw for kw in kws if kw in title_lower]
+    patterns = compiled_patterns or []
+    matched_pats = [p.pattern for p in patterns if p.search(title_lower)]
+    return matched_kws, matched_pats
 
 
 class Classifier:
@@ -22,6 +36,13 @@ class Classifier:
 
         self.idle_threshold = self.config.get("idle_threshold_seconds", 60)
 
+        # Precompile regex patterns once at startup (avoid re.compile per tick)
+        self._compiled_patterns: dict[str, list[re.Pattern]] = {}
+        for key, cat in self.categories.items():
+            patterns = cat.get("match", {}).get("title_patterns", []) or []
+            if patterns:
+                self._compiled_patterns[key] = [re.compile(p) for p in patterns]
+
     def classify(self, process_name, window_title):
         """Return dict with category_key, category_name, active_rule, or fallback to 'other'."""
         if not process_name and not window_title:
@@ -38,23 +59,24 @@ class Classifier:
                 continue
             match_rules = cat.get("match", {})
             proc_list = [p.lower() for p in match_rules.get("process_names", [])]
-            title_kws = [k.lower() for k in match_rules.get("title_keywords", [])]
 
-            if proc_list and title_kws and process_name in proc_list:
-                matched_kws = [kw for kw in title_kws if kw in title_lower]
-                if matched_kws:
-                    title_matches.append((key, cat, matched_kws))
+            if proc_list and process_name in proc_list:
+                compiled = self._compiled_patterns.get(key, [])
+                matched_kws, matched_pats = _match_title(title_lower, match_rules, compiled)
+                if matched_kws or matched_pats:
+                    score = len(matched_kws) + len(matched_pats) * 2  # patterns weigh more
+                    title_matches.append((key, cat, matched_kws, matched_pats, score))
 
         if title_matches:
-            title_matches.sort(key=lambda x: (len(x[2]), max(len(kw) for kw in x[2])), reverse=True)
-            best = title_matches[0]
+            title_matches.sort(key=lambda x: x[4], reverse=True)
+            best = self._apply_learning_priority(title_matches[0], title_matches)
             return {
                 "category_key": best[0],
                 "category_name": best[1]["display_name"],
                 "active_rule": best[1]["active_rule"],
             }
 
-        # Second pass: for browsers/WebView2, match by title_keywords only
+        # Second pass: for browsers/WebView2, match by title_keywords/patterns only
         # msedgewebview2.exe is the Edge WebView2 runtime embedded by
         # desktop apps (Tencent Video, iQiyi, etc.). Treat it like a
         # browser so title-based classification works.
@@ -65,13 +87,14 @@ class Classifier:
             for key, cat in self.categories.items():
                 if key in ("other", "browser_general"):
                     continue
-                title_kws = [k.lower() for k in cat.get("match", {}).get("title_keywords", [])]
-                matched_kws = [kw for kw in title_kws if kw in title_lower]
-                if matched_kws:
-                    title_only_matches.append((key, cat, matched_kws))
+                compiled = self._compiled_patterns.get(key, [])
+                matched_kws, matched_pats = _match_title(title_lower, cat.get("match", {}), compiled)
+                if matched_kws or matched_pats:
+                    score = len(matched_kws) + len(matched_pats) * 2
+                    title_only_matches.append((key, cat, matched_kws, matched_pats, score))
             if title_only_matches:
-                title_only_matches.sort(key=lambda x: (len(x[2]), max(len(kw) for kw in x[2])), reverse=True)
-                best = title_only_matches[0]
+                title_only_matches.sort(key=lambda x: x[4], reverse=True)
+                best = self._apply_learning_priority(title_only_matches[0], title_only_matches)
                 return {
                     "category_key": best[0],
                     "category_name": best[1]["display_name"],
@@ -88,7 +111,17 @@ class Classifier:
                 proc_only_matches.append((key, cat))
 
         if proc_only_matches:
+            # Check if a video desktop app's title has learning content
             best = proc_only_matches[0]
+            if best[0] == "video":
+                for key, cat in self.categories.items():
+                    if key not in _LEARNING_CATEGORIES:
+                        continue
+                    compiled = self._compiled_patterns.get(key, [])
+                    matched_kws, matched_pats = _match_title(title_lower, cat.get("match", {}), compiled)
+                    if matched_kws or matched_pats:
+                        best = (key, cat)
+                        break
             return {
                 "category_key": best[0],
                 "category_name": best[1]["display_name"],
@@ -106,6 +139,18 @@ class Classifier:
             }
 
         return self._fallback()
+
+    def _apply_learning_priority(self, best, all_matches):
+        """If best match is video but a learning category also matched, prefer learning.
+
+        Content-is-king: watching a tutorial on Bilibili is learning, not entertainment.
+        """
+        if best[0] != "video":
+            return best
+        for m in all_matches:
+            if m[0] in _LEARNING_CATEGORIES:
+                return m
+        return best
 
     def _fallback(self):
         other = self.categories.get("other", {})
