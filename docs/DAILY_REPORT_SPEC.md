@@ -2,7 +2,7 @@
 
 ## 文件格式
 
-- 文件名：`YYYY-MM-DD.md`（如 `2026-06-01.md`）
+- 路径：`reports/daily/YYYY/YYYY-MM/YYYY-MM-DD.md`（如 `reports/daily/2026/2026-06/2026-06-01.md`）
 - 编码：UTF-8
 - 格式：Markdown
 

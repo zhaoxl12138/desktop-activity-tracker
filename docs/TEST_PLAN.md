@@ -193,7 +193,7 @@ GUI：PySide6
 
 步骤：点击「生成日报」。
 
-预期结果：生成 `reports/daily/YYYY-MM-DD.md`，内容包含总时长 / 分类统计 / 软件排行 / 30 分钟时间线 / 专注时段 / 碎片化情况。
+预期结果：生成 `reports/daily/YYYY/YYYY-MM/YYYY-MM-DD.md`，内容包含总时长 / 分类统计 / 软件排行 / 30 分钟时间线 / 专注时段 / 碎片化情况。
 
 结果：`PASS / FAIL`
 

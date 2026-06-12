@@ -1,21 +1,13 @@
-# DayLens 配置文件
-
-# ── 记录器配置 ──
 tracker:
   sample_interval_seconds: 1
   flush_interval_seconds: 5
   idle_threshold_seconds: 60
   min_session_seconds: 2
-
-# ── 基础配置 ──
-sample_interval_seconds: 5
+sample_interval_seconds: 1
 idle_threshold_seconds: 60
 db_path: D:\OfficeSoftware\DayLens\data\usage.db
-obsidian_output_path: ''
-
-# ── 分类规则 ──
+obsidian_output_path: E:\obsidian_github\Daylog\时间追踪\桌面活动日报
 categories:
-  # ── AI 工具 ──
   ai_tools:
     display_name: AI工具
     active_rule: interactive_required
@@ -59,7 +51,6 @@ categories:
       - 讯飞
       - 豆包
       - 通义千问
-  # ── 编程开发 ──
   coding:
     display_name: 编程开发
     active_rule: interactive_required
@@ -130,13 +121,11 @@ categories:
       - VS Code
       - WebStorm
       - WinSCP
-  # ── 办公套件 ──
   office:
     display_name: 办公套件
     active_rule: interactive_required
     match:
       process_names:
-      # Microsoft Office
       - excel.exe
       - winword.exe
       - powerpnt.exe
@@ -151,7 +140,6 @@ categories:
       - msosync.exe
       - officehub.exe
       - officeapp.exe
-      # WPS Office
       - wps.exe
       - wpspdf.exe
       - wpp.exe
@@ -160,7 +148,6 @@ categories:
       - wpscenter.exe
       - wpsnotify.exe
       - wpshelper.exe
-      # PDF 阅读/编辑
       - Acrobat.exe
       - AcroRd32.exe
       - AcrobatDC.exe
@@ -176,7 +163,6 @@ categories:
       - pdf24.exe
       - ABBYYFineReader.exe
       - FineReader.exe
-      # 即时通讯 / 协作
       - feishu.exe
       - Feishu.exe
       - lark.exe
@@ -206,7 +192,6 @@ categories:
       - gotomeeting.exe
       - bluejeans.exe
       - chime.exe
-      # 邮件客户端
       - foxmail.exe
       - Foxmail.exe
       - thunderbird.exe
@@ -217,7 +202,6 @@ categories:
       - sparkmail.exe
       - edm.exe
       - outlook.exe
-      # 云盘 / 同步
       - aliyunpan.exe
       - aDrive.exe
       - OneDrive.exe
@@ -239,7 +223,6 @@ categories:
       - nextcloud.exe
       - seafile.exe
       - resilio sync.exe
-      # ERP / 财务软件
       - K3.exe
       - KIS.exe
       - kdmain.exe
@@ -292,7 +275,6 @@ categories:
       - qlikview.exe
       - qliksense.exe
       - microsoftbi.exe
-      # OA / 审批
       - dingoa.exe
       - fxiaoke.exe
       - mingdao.exe
@@ -302,7 +284,6 @@ categories:
       - jira.exe
       - confluence.exe
       - notion.exe
-      # 打印机 / 扫描
       - fsviewer.exe
       - scanwizard.exe
       - vuescan.exe
@@ -332,7 +313,6 @@ categories:
       - 进销存
       - 工资
       - 报表
-  # ── 阅读学习 ──
   reading:
     display_name: 阅读学习
     active_rule: interactive_required
@@ -358,7 +338,6 @@ categories:
       - YoudaoTranslate.exe
       - Zotero.exe
       title_keywords:
-      # ── 阅读/知识工具 ──
       - Anki
       - Calibre
       - Kindle
@@ -375,7 +354,6 @@ categories:
       - 微信读书
       - 得到
       - 极客时间
-      # ── 通用学习信号 ──
       - 教程
       - 入门
       - 实战
@@ -391,7 +369,6 @@ categories:
       - Lecture
       - Tutorial
       - Course
-      # ── AI / 大模型 ──
       - ChatGPT
       - Claude
       - DeepSeek
@@ -411,7 +388,6 @@ categories:
       - GPT
       - Qwen
       - Llama
-      # ── AI 视觉 ──
       - YOLO
       - YOLOv8
       - YOLO11
@@ -435,7 +411,6 @@ categories:
       - 模型剪枝
       - RKNN
       - NPU
-      # ── Linux ──
       - Linux
       - Ubuntu
       - Debian
@@ -457,7 +432,6 @@ categories:
       - Makefile
       - CMake
       - 交叉编译
-      # ── 嵌入式 ──
       - 嵌入式
       - 单片机
       - STM32
@@ -485,7 +459,6 @@ categories:
       - 根文件系统
       - Buildroot
       - Yocto
-      # ── Camera / ISP ──
       - Camera
       - 摄像头
       - Sensor
@@ -506,7 +479,6 @@ categories:
       - Bayer
       - HDR
       - 图像处理
-      # ── Rockchip ──
       - RK3568
       - RK3588
       - RK3566
@@ -519,14 +491,12 @@ categories:
       - DRM
       - VPU
       - NPU
-      # ── 工具链 ──
       - WSL
       - GDB
       - GCC
       - OpenOCD
       - JTAG
       - Toolchain
-      # ── 通用技术 ──
       - 数据结构
       - 算法
       - 计算机网络
@@ -534,7 +504,6 @@ categories:
       - 编译原理
       - LeetCode
       - 系统设计
-      # ── 英语学习 ──
       - 英语
       - English
       - 英语口语
@@ -555,7 +524,6 @@ categories:
       - Reading
       - Writing
       - Pronunciation
-      # ── 英语考试 ──
       - 四六级
       - 四级
       - 六级
@@ -571,7 +539,6 @@ categories:
       - BEC
       - PET
       - KET
-      # ── 英语课程 ──
       - 新概念英语
       - 新概念
       - TED英语
@@ -579,7 +546,6 @@ categories:
       - VOA
       - EnglishPod
       - 每日英语
-      # ── 英语学习行为 ──
       - 背单词
       - 单词
       - 词根词缀
@@ -597,7 +563,6 @@ categories:
       - 第\d+节
       - Lesson\s*\d+
       - P\d+
-  # ── 视频与游戏 ──
   video:
     display_name: 视频与游戏
     active_rule: passive_allowed
@@ -660,7 +625,6 @@ categories:
       - 爱奇艺
       - 王者荣耀
       - 绝区零
-  # ── 创作工具 ──
   creative:
     display_name: 创作工具
     active_rule: interactive_required
@@ -727,7 +691,6 @@ categories:
       - 稿定设计
       - 美图秀秀
       - 醒图
-  # ── 社交通讯 ──
   social:
     display_name: 社交通讯
     active_rule: passive_allowed
@@ -774,7 +737,6 @@ categories:
       - 抖音
       - 微博
       - 百度贴吧
-  # ── 系统工具 ──
   tools:
     display_name: 系统工具
     active_rule: interactive_required
@@ -855,7 +817,6 @@ categories:
       - Rufus
       - TeamViewer
       - VMware
-  # ── 浏览器兜底 ──
   browser_general:
     display_name: 浏览器其他
     active_rule: interactive_required
@@ -867,14 +828,12 @@ categories:
       - iexplore.exe
       - msedge.exe
       title_keywords: []
-  # ── 兜底 ──
   other:
     display_name: 其他
     active_rule: interactive_required
     match:
       process_names: []
       title_keywords: []
-  # ── 挂机（用户离开时自动创建） ──
   idle_leave:
     display_name: 挂机
     active_rule: passive_allowed
@@ -882,3 +841,7 @@ categories:
       process_names: []
       title_keywords: []
 theme: dark
+flush_interval_seconds: 5
+min_session_seconds: 2
+startup_enabled: true
+wizard_completed: 'true'

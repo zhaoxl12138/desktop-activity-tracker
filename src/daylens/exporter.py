@@ -9,6 +9,13 @@ from . import timeline
 from .utils import fmt_seconds, normalize_category_display_name
 
 
+def daily_report_path(output_dir: str, date_str: str) -> str:
+    """Nested path: reports/daily/YYYY/YYYY-MM/YYYY-MM-DD.md"""
+    year = date_str[:4]
+    month = date_str[:7]
+    return os.path.join(output_dir, year, month, f"{date_str}.md")
+
+
 def _top_titles_by_category(db_path, date_str, limit=3):
     """Return {category_key: [title1, title2, title3]} of top window titles."""
     return database.query_top_titles_by_category(db_path, date_str, limit)
@@ -65,8 +72,8 @@ def _generate_suggestions(db_path, today_date, stats):
 
 def export_csv(db_path, date_str, output_dir):
     stats = database.query_date_stats(db_path, date_str)
-    os.makedirs(output_dir, exist_ok=True)
-    filepath = os.path.join(output_dir, f"usage_{date_str}.csv")
+    filepath = daily_report_path(output_dir, date_str).replace(".md", ".csv")
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
 
     with open(filepath, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f)
@@ -108,8 +115,8 @@ def export_csv(db_path, date_str, output_dir):
 def export_markdown(db_path, date_str, output_dir):
     stats = database.query_date_stats(db_path, date_str)
     totals = stats["totals"]
-    os.makedirs(output_dir, exist_ok=True)
-    filepath = os.path.join(output_dir, f"{date_str}.md")
+    filepath = daily_report_path(output_dir, date_str)
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
 
     effective_sec = totals.get("effective_seconds", 0) or 0
     idle_sec = totals.get("idle_seconds", 0) or 0

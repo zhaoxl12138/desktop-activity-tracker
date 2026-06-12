@@ -11,7 +11,7 @@ from .. import exporter
 
 def list_report_rows(reports_dir: str, subdir: str, limit: int = 50) -> list[tuple[str, str, str]]:
     directory = os.path.join(reports_dir, subdir)
-    files = sorted(glob.glob(os.path.join(directory, "*.md")), reverse=True)[:limit]
+    files = sorted(glob.glob(os.path.join(directory, "**", "*.md"), recursive=True), reverse=True)[:limit]
     rows = []
     for file_path in files:
         filename = os.path.basename(file_path)
@@ -44,7 +44,7 @@ def sync_report_to_obsidian(filepath: str, obsidian_path: str) -> None:
 
 def today_report_path(reports_dir: str) -> str:
     today = datetime.now().strftime("%Y-%m-%d")
-    return os.path.join(reports_dir, "daily", f"{today}.md")
+    return exporter.daily_report_path(os.path.join(reports_dir, "daily"), today)
 
 
 def weekly_report_path(reports_dir: str, year: int = None, week_number: int = None) -> str:

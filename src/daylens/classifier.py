@@ -111,9 +111,12 @@ class Classifier:
                 proc_only_matches.append((key, cat))
 
         if proc_only_matches:
-            # Check if a video desktop app's title has learning content
             best = proc_only_matches[0]
-            if best[0] == "video":
+            # Content-is-king override: only for browsers. Desktop video
+            # apps (iQiyi, Tencent Video) MUST NOT be reclassified by
+            # title — their episode titles (第\d+集) collide with
+            # learning patterns.
+            if best[0] == "video" and process_name in browser_procs:
                 for key, cat in self.categories.items():
                     if key not in _LEARNING_CATEGORIES:
                         continue
