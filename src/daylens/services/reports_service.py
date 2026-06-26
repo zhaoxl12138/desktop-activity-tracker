@@ -4,21 +4,103 @@ from __future__ import annotations
 
 import glob
 import os
+import shutil
 from datetime import date, datetime
 
 from .. import exporter
 
 
-def list_report_rows(reports_dir: str, subdir: str, limit: int = 50) -> list[tuple[str, str, str]]:
+_REPORT_TYPE_NAMES = {
+    "daily": "日报",
+    "weekly": "周报",
+    "monthly": "月报",
+}
+
+
+def list_report_rows(reports_dir: str, subdir: str, limit: int = 50) -> list[dict]:
     directory = os.path.join(reports_dir, subdir)
     files = sorted(glob.glob(os.path.join(directory, "**", "*.md"), recursive=True), reverse=True)[:limit]
     rows = []
     for file_path in files:
         filename = os.path.basename(file_path)
         label = filename.replace(".md", "").replace("_weekly", "").replace("_monthly", "")
-        size_kb = os.path.getsize(file_path) // 1024 if os.path.exists(file_path) else 0
-        rows.append((label, filename, f"{size_kb} KB"))
+        size_bytes = os.path.getsize(file_path)
+        size_kb = max(1, (size_bytes + 1023) // 1024)
+        modified_text = datetime.fromtimestamp(os.path.getmtime(file_path)).strftime("%Y-%m-%d %H:%M")
+        rows.append(
+            {
+                "label": label,
+                "filename": filename,
+                "size_text": f"{size_kb} KB",
+                "file_path": os.path.abspath(file_path),
+                "modified_text": modified_text,
+                "report_type": _REPORT_TYPE_NAMES.get(subdir, "报告"),
+            }
+        )
     return rows
+
+
+def download_report(source_path: str, destination_path: str) -> str:
+    source = os.path.abspath(source_path)
+    destination = os.path.abspath(destination_path)
+    if not os.path.isfile(source):
+        raise FileNotFoundError(f"报告文件不存在：{source}")
+    if os.path.normcase(source) == os.path.normcase(destination):
+        return destination
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
+    shutil.copy2(source, destination)
+    return destination
+
+
+def download_reports(source_paths: list[str], destination_dir: str) -> dict:
+    destination = os.path.abspath(destination_dir)
+    os.makedirs(destination, exist_ok=True)
+    saved_paths = []
+    failures = []
+    renamed_count = 0
+
+    for source_path in source_paths:
+        source = os.path.abspath(source_path)
+        if not os.path.isfile(source):
+            failures.append(
+                {
+                    "source_path": source_path,
+                    "error": f"报告文件不存在：{source}",
+                }
+            )
+            continue
+
+        filename = os.path.basename(source)
+        stem, extension = os.path.splitext(filename)
+        target = os.path.join(destination, filename)
+        suffix = 1
+        while os.path.exists(target):
+            target = os.path.join(destination, f"{stem} ({suffix}){extension}")
+            suffix += 1
+        if target != os.path.join(destination, filename):
+            renamed_count += 1
+
+        try:
+            shutil.copy2(source, target)
+            saved_paths.append(target)
+        except Exception as exc:
+            failures.append({"source_path": source_path, "error": str(exc)})
+
+    return {
+        "success_count": len(saved_paths),
+        "renamed_count": renamed_count,
+        "failure_count": len(failures),
+        "saved_paths": saved_paths,
+        "failures": failures,
+        "destination_dir": destination,
+    }
+
+
+def open_report(file_path: str) -> None:
+    path = os.path.abspath(file_path)
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"报告文件不存在：{path}")
+    os.startfile(path)
 
 
 def generate_daily_report(db_path: str, reports_dir: str) -> str:
@@ -121,4 +203,3 @@ def auto_generate_current_reports(db_path: str, reports_dir: str) -> list[str]:
             print(f"[AutoReport] Monthly generation failed: {e}", file=sys.stderr)
 
     return generated
-

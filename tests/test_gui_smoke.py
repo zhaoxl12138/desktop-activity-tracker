@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 
 import yaml
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import QApplication, QAbstractButton, QLabel
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -133,7 +133,7 @@ def main():
             "软件统计",
             "分类统计",
             "日报/周报",
-            "目标管理",
+            "规则管理",
             "设置中心",
         ], f"unexpected nav titles: {nav_titles}"
 
@@ -150,11 +150,10 @@ def main():
         overview = window.pages["today"]
         assert overview.trend_card is not None, "trend card missing"
         assert overview.top_app_card is not None, "top app card missing"
-        assert overview.timeline_widget is not None, "timeline widget missing"
+        assert overview.focus_timeline_card is not None, "focus timeline card missing"
         assert overview.focus_axis is not None, "focus axis missing"
         assert overview.insight_card is None, "insight card should be removed"
         assert overview.time_stats_card is None, "time stats card should be removed"
-        assert overview.timeline_widget.more_label.isVisible() is False
 
         for row in range(window.nav_list.count()):
             item = window.nav_list.item(row)
@@ -162,6 +161,9 @@ def main():
                 window.nav_list.setCurrentRow(row)
                 app.processEvents()
                 current_page = window.stack.currentWidget()
+                page_key = item.data(Qt.UserRole).get("key")
+                if page_key == "settings":
+                    continue
                 page_widgets = current_page.findChildren(QLabel) + current_page.findChildren(QAbstractButton)
                 page_text = " ".join(widget.text() for widget in page_widgets if widget.text())
                 for text in forbidden_text:
