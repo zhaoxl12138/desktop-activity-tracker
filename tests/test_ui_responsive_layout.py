@@ -61,6 +61,7 @@ def test_main_window_allows_resize_and_sidebar_scroll(tmp_path):
     assert window.minimumSize().width() <= 1100
     assert window.minimumSize().height() <= 700
     assert window.maximumSize().width() > 1100
+    assert window.windowFlags() & Qt.WindowMaximizeButtonHint
     assert window.nav_list.verticalScrollBarPolicy() == Qt.ScrollBarAsNeeded
 
     window.resize(1100, 700)

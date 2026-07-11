@@ -101,6 +101,7 @@ class MainWindow(QMainWindow):
         self.setWindowFlags(
             Qt.Window
             | Qt.WindowMinimizeButtonHint
+            | Qt.WindowMaximizeButtonHint
             | Qt.WindowCloseButtonHint
         )
         self._init_pages()
