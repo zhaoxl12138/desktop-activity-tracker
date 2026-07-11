@@ -135,6 +135,7 @@ class MainWindow(QMainWindow):
             "rules": RuleConfigPage(self.config_path, self.db_path, self.worker),
             "settings": SettingsPage(self.config_path, self.db_path, self.reports_dir, self.worker),
         }
+        self.pages["settings"].config_saved.connect(self._apply_saved_config)
         self.pages["settings"].restart_requested.connect(self._restart_app)
         for _, key, _ in NAV_ITEMS:
             self.stack.addWidget(self.pages[key])
@@ -643,6 +644,16 @@ class MainWindow(QMainWindow):
         """Return obsidian_output_path from in-memory config (merged with DB on startup)."""
         return self.config.get("obsidian_output_path", "").strip()
 
+    def _apply_saved_config(self, config: dict) -> None:
+        self.config = config
+        obsidian_path = config.get("obsidian_output_path", "").strip()
+        reports_page = self.pages.get("reports")
+        if reports_page is not None:
+            reports_page.obsidian_path = obsidian_path
+        tray = getattr(self, "tray", None)
+        if tray is not None:
+            tray.config = config
+
     def _restart_app(self) -> None:
         try:
             schedule_restart(current_launch_command())
@@ -719,6 +730,7 @@ class MainWindow(QMainWindow):
             "rules": RuleConfigPage(self.config_path, self.db_path, self.worker),
             "settings": SettingsPage(self.config_path, self.db_path, self.reports_dir, self.worker),
         }
+        self.pages["settings"].config_saved.connect(self._apply_saved_config)
         self.pages["settings"].restart_requested.connect(self._restart_app)
         for _, key, _ in NAV_ITEMS:
             self.stack.addWidget(self.pages[key])

@@ -53,6 +53,7 @@ def build_browse_btn_style() -> str:
 
 class SettingsPage(QWidget):
     restart_requested = Signal()
+    config_saved = Signal(dict)
 
     def __init__(self, config_path, db_path, reports_dir, worker=None):
         super().__init__()
@@ -238,6 +239,8 @@ class SettingsPage(QWidget):
         except Exception as exc:
             QMessageBox.warning(self, "保存失败", str(exc))
             return
+
+        self.config_saved.emit(self.config)
 
         if requires_restart:
             QMessageBox.information(

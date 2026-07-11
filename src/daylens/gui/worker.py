@@ -131,6 +131,7 @@ class RecordingWorker(QThread):
 
     def update_settings(self, config):
         """Hot-reload settings from config without restart."""
+        self.config = config
         tracker_cfg = config.get("tracker", {})
         self.sample_interval = tracker_cfg.get("sample_interval_seconds",
             config.get("sample_interval_seconds", 1))

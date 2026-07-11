@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from daylens.gui.pages.settings import SettingsPage
+from daylens.gui.main_window import MainWindow
 from daylens.services import settings_service
 
 
@@ -29,7 +31,11 @@ def _build_page(tmp_path, monkeypatch):
     monkeypatch.setattr(
         settings_service,
         "save_page_config",
-        lambda **kwargs: {**config, "db_path": kwargs["new_db_path"]},
+        lambda **kwargs: {
+            **config,
+            "db_path": kwargs["new_db_path"],
+            "obsidian_output_path": kwargs["obsidian_output_path"],
+        },
     )
     monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: None)
     app = QApplication.instance() or QApplication([])
@@ -104,3 +110,29 @@ def test_failed_startup_shortcut_is_saved_as_disabled(tmp_path, monkeypatch):
     assert captured["startup_enabled"] is False
     assert page.chk_startup.isChecked() is False
     page.deleteLater()
+
+
+def test_successful_save_emits_complete_saved_config(tmp_path, monkeypatch):
+    app, page, _worker, _old_db = _build_page(tmp_path, monkeypatch)
+    saved = []
+    page.config_saved.connect(saved.append)
+    page.edit_obsidian.setText("E:/vault/reports")
+
+    page._save_all()
+    app.processEvents()
+
+    assert saved[0]["obsidian_output_path"] == "E:/vault/reports"
+    page.deleteLater()
+
+
+def test_main_window_propagates_saved_config_to_live_consumers():
+    reports_page = SimpleNamespace(obsidian_path="old")
+    tray = SimpleNamespace(config={"obsidian_output_path": "old"})
+    holder = SimpleNamespace(config={}, pages={"reports": reports_page}, tray=tray)
+    config = {"obsidian_output_path": "E:/vault/reports"}
+
+    MainWindow._apply_saved_config(holder, config)
+
+    assert holder.config is config
+    assert reports_page.obsidian_path == "E:/vault/reports"
+    assert tray.config is config
