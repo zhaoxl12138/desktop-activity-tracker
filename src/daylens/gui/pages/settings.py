@@ -163,7 +163,10 @@ class SettingsPage(QWidget):
             btn.setFixedWidth(36)
             btn.setStyleSheet(build_browse_btn_style())
             btn.setCursor(Qt.PointingHandCursor)
-            btn.clicked.connect(lambda checked, e=edit: self._browse_dir(e))
+            if attr == "edit_db":
+                btn.clicked.connect(self._browse_database)
+            else:
+                btn.clicked.connect(lambda checked, e=edit: self._browse_dir(e))
             h.addWidget(btn)
             g2l.addLayout(h)
 
@@ -209,24 +212,32 @@ class SettingsPage(QWidget):
     def _save_all(self):
         sample_interval = self.spin_interval.value()
         idle_threshold = self.spin_idle.value()
-        requested_db_path = self.edit_db.text().strip()
+        try:
+            requested_db_path = settings_service.normalize_database_path(self.edit_db.text())
+        except Exception as exc:
+            QMessageBox.warning(self, "保存失败", str(exc))
+            return
         requires_restart = database_path_changed(self.db_path, requested_db_path)
 
         # Reload config to pick up any external changes
         self._load_config()
 
-        startup_enabled = self.chk_startup.isChecked()
-        self._toggle_startup(startup_enabled)
-        self.config = settings_service.save_page_config(
-            config_path=self.config_path,
-            db_path=self.db_path,
-            config=self.config,
-            sample_interval=sample_interval,
-            idle_threshold=idle_threshold,
-            startup_enabled=startup_enabled,
-            new_db_path=requested_db_path,
-            obsidian_output_path=self.edit_obsidian.text().strip(),
-        )
+        try:
+            startup_enabled = self._toggle_startup(self.chk_startup.isChecked())
+            self.chk_startup.setChecked(startup_enabled)
+            self.config = settings_service.save_page_config(
+                config_path=self.config_path,
+                db_path=self.db_path,
+                config=self.config,
+                sample_interval=sample_interval,
+                idle_threshold=idle_threshold,
+                startup_enabled=startup_enabled,
+                new_db_path=requested_db_path,
+                obsidian_output_path=self.edit_obsidian.text().strip(),
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "保存失败", str(exc))
+            return
 
         if requires_restart:
             QMessageBox.information(
@@ -254,7 +265,7 @@ class SettingsPage(QWidget):
             return sys.executable
         return settings_service.get_release_exe_path()
 
-    def _toggle_startup(self, enable: bool) -> None:
+    def _toggle_startup(self, enable: bool) -> bool:
         link_path = self._get_startup_link_path()
         if enable:
             exe_path = self._get_exe_path()
@@ -262,15 +273,30 @@ class SettingsPage(QWidget):
                 QMessageBox.warning(self, "提示",
                     f"未找到 DayLens.exe，请先打包程序。\n\n预期路径: {exe_path}")
                 self.chk_startup.setChecked(False)
-                return
+                return False
             try:
                 settings_service.toggle_startup_shortcut(True, exe_path, link_path)
+                return True
             except Exception as e:
                 print(f"[SettingsPage] shortcut creation error: {e}")
                 QMessageBox.warning(self, "失败", f"创建开机启动快捷方式失败:\n{e}")
                 self.chk_startup.setChecked(False)
+                return False
         else:
             settings_service.toggle_startup_shortcut(False, "", link_path)
+            return False
+
+    def _browse_database(self) -> None:
+        selected, _ = QFileDialog.getSaveFileName(
+            self,
+            "选择数据库文件",
+            self.edit_db.text().strip(),
+            "SQLite 数据库 (*.db);;所有文件 (*)",
+        )
+        if selected:
+            if not os.path.splitext(selected)[1]:
+                selected += ".db"
+            self.edit_db.setText(selected)
 
     def _browse_dir(self, edit):
         d = QFileDialog.getExistingDirectory(self, "选择目录")

@@ -4,7 +4,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from daylens.gui.pages.settings import SettingsPage
 from daylens.services import settings_service
@@ -40,7 +40,7 @@ def _build_page(tmp_path, monkeypatch):
         str(tmp_path / "reports"),
         worker,
     )
-    monkeypatch.setattr(page, "_toggle_startup", lambda _enabled: None)
+    monkeypatch.setattr(page, "_toggle_startup", lambda enabled: bool(enabled))
     return app, page, worker, old_db
 
 
@@ -69,4 +69,38 @@ def test_equivalent_database_path_keeps_hot_reload(tmp_path, monkeypatch):
 
     assert emissions == []
     assert worker.settings_updated is True
+    page.deleteLater()
+
+
+def test_database_browser_selects_a_db_file(tmp_path, monkeypatch):
+    _app, page, _worker, _old_db = _build_page(tmp_path, monkeypatch)
+    selected = str(tmp_path / "selected.db")
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (selected, "SQLite 数据库 (*.db)"),
+    )
+
+    page._browse_database()
+
+    assert page.edit_db.text() == selected
+    page.deleteLater()
+
+
+def test_failed_startup_shortcut_is_saved_as_disabled(tmp_path, monkeypatch):
+    _app, page, _worker, _old_db = _build_page(tmp_path, monkeypatch)
+    captured = {}
+
+    def fake_save(**kwargs):
+        captured.update(kwargs)
+        return {"db_path": kwargs["new_db_path"], "obsidian_output_path": ""}
+
+    monkeypatch.setattr(settings_service, "save_page_config", fake_save)
+    monkeypatch.setattr(page, "_toggle_startup", lambda _enabled: False)
+    page.chk_startup.setChecked(True)
+
+    page._save_all()
+
+    assert captured["startup_enabled"] is False
+    assert page.chk_startup.isChecked() is False
     page.deleteLater()
