@@ -40,6 +40,9 @@ def save_page_config(
     new_db_path: str,
     obsidian_output_path: str,
 ) -> dict:
+    if not new_db_path:
+        raise ValueError("数据库路径不能为空")
+
     updated = dict(config)
     updated["sample_interval_seconds"] = sample_interval
     updated["idle_threshold_seconds"] = idle_threshold
@@ -52,10 +55,13 @@ def save_page_config(
     tracker["sample_interval_seconds"] = sample_interval
     tracker["idle_threshold_seconds"] = idle_threshold
 
+    effective_db_path = updated.get("db_path", db_path)
+    connection = database.init_db(effective_db_path)
+    database.close_db(connection)
+
     with open(config_path, "w", encoding="utf-8") as handle:
         yaml.safe_dump(updated, handle, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
-    effective_db_path = updated.get("db_path", db_path)
     database.save_settings(effective_db_path, updated)
     persisted = {
         key: updated[key]
