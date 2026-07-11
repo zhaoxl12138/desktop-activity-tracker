@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+import tempfile
 from datetime import datetime
 
 from .. import database, exporter
@@ -45,12 +47,18 @@ def load_software_rows(db_path: str, display_name_mapping: dict[str, str]) -> li
 
 
 def export_software_csv(db_path: str, target_path: str) -> str:
-    today = datetime.now().strftime("%Y-%m-%d")
-    exporter.export_csv(db_path, today, os.path.dirname(target_path))
-    return os.path.basename(target_path)
+    return _export_to_target(exporter.export_csv, db_path, target_path)
 
 
 def export_software_markdown(db_path: str, target_path: str) -> str:
+    return _export_to_target(exporter.export_markdown, db_path, target_path)
+
+
+def _export_to_target(export_func, db_path: str, target_path: str) -> str:
     today = datetime.now().strftime("%Y-%m-%d")
-    exporter.export_markdown(db_path, today, os.path.dirname(target_path))
-    return os.path.basename(target_path)
+    target = os.path.abspath(target_path)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="daylens-export-") as temp_dir:
+        generated = export_func(db_path, today, temp_dir)
+        shutil.copy2(generated, target)
+    return target

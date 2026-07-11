@@ -135,11 +135,11 @@ class SoftwareStatsPage(QWidget):
             self.status_label.setText("已取消导出")
             return
         try:
-            filename = software_stats_service.export_software_csv(self.db_path, path)
+            saved_path = software_stats_service.export_software_csv(self.db_path, path)
             self.status_label.setStyleSheet(
                 f"font-size: 12px; color: {COLORS['coding_green']}; font-weight: 600;"
             )
-            self.status_label.setText(f"CSV 已保存 → {filename}")
+            self.status_label.setText(f"CSV 已保存 → {saved_path}")
         except Exception as exc:
             self.status_label.setStyleSheet(
                 f"font-size: 12px; color: {COLORS['danger_red']}; font-weight: 600;"
@@ -157,11 +157,11 @@ class SoftwareStatsPage(QWidget):
             self.status_label.setText("已取消导出")
             return
         try:
-            filename = software_stats_service.export_software_markdown(self.db_path, path)
+            saved_path = software_stats_service.export_software_markdown(self.db_path, path)
             self.status_label.setStyleSheet(
                 f"font-size: 12px; color: {COLORS['coding_green']}; font-weight: 600;"
             )
-            self.status_label.setText(f"日报已保存 → {filename}")
+            self.status_label.setText(f"日报已保存 → {saved_path}")
         except Exception as exc:
             self.status_label.setStyleSheet(
                 f"font-size: 12px; color: {COLORS['danger_red']}; font-weight: 600;"
