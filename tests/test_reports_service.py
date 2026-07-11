@@ -84,3 +84,28 @@ def test_download_reports_continues_after_missing_source(tmp_path: Path):
     assert result["failure_count"] == 1
     assert len(result["failures"]) == 1
     assert result["failures"][0]["source_path"] == str(missing)
+
+
+def test_auto_generate_refreshes_existing_current_reports(tmp_path: Path, monkeypatch):
+    weekly = Path(reports_service.weekly_report_path(str(tmp_path)))
+    monthly = Path(reports_service.monthly_report_path(str(tmp_path)))
+    weekly.parent.mkdir(parents=True, exist_ok=True)
+    monthly.parent.mkdir(parents=True, exist_ok=True)
+    weekly.write_text("stale weekly", encoding="utf-8")
+    monthly.write_text("stale monthly", encoding="utf-8")
+    calls = []
+    monkeypatch.setattr(
+        reports_service,
+        "generate_weekly_report",
+        lambda *_: calls.append("weekly") or str(weekly),
+    )
+    monkeypatch.setattr(
+        reports_service,
+        "generate_monthly_report",
+        lambda *_: calls.append("monthly") or str(monthly),
+    )
+
+    generated = reports_service.auto_generate_current_reports("usage.db", str(tmp_path))
+
+    assert calls == ["weekly", "monthly"]
+    assert generated == [str(weekly), str(monthly)]

@@ -29,10 +29,6 @@ from ..utils import fmt_seconds
 from ..services.shell_service import generate_daily_report, load_poetry_hint, load_shell_summary
 from ..services.reports_service import (
     auto_generate_current_reports,
-    should_generate_weekly,
-    should_generate_monthly,
-    weekly_report_exists,
-    monthly_report_exists,
 )
 from .pages.category_stats import CategoryStatsPage
 from .pages.live_monitor import LiveMonitorPage
@@ -623,12 +619,6 @@ class MainWindow(QMainWindow):
             last = getattr(self, '_last_report_gen', 0)
             # Debounce: don't regenerate within 5 minutes
             if now - last < 290:
-                return
-
-            needs_weekly = should_generate_weekly() or not weekly_report_exists(self.reports_dir)
-            needs_monthly = should_generate_monthly() or not monthly_report_exists(self.reports_dir)
-
-            if not needs_weekly and not needs_monthly:
                 return
 
             self._last_report_gen = now

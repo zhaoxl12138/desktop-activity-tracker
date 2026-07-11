@@ -173,33 +173,26 @@ def should_generate_monthly() -> bool:
 
 
 def auto_generate_current_reports(db_path: str, reports_dir: str) -> list[str]:
-    """Auto-generate weekly/monthly reports for the current period if they don't exist.
-
-    On schedule trigger (Sunday >=23:00 / last day of month >=23:00),
-    generate regardless of existence.
+    """Refresh weekly/monthly reports for the current period.
 
     Returns list of generated file paths.
     """
     generated = []
 
-    should_gen_weekly = should_generate_weekly() or not weekly_report_exists(reports_dir)
-    if should_gen_weekly:
-        try:
-            path = generate_weekly_report(db_path, reports_dir)
-            if path:
-                generated.append(path)
-        except Exception as e:
-            import sys
-            print(f"[AutoReport] Weekly generation failed: {e}", file=sys.stderr)
+    try:
+        path = generate_weekly_report(db_path, reports_dir)
+        if path:
+            generated.append(path)
+    except Exception as e:
+        import sys
+        print(f"[AutoReport] Weekly generation failed: {e}", file=sys.stderr)
 
-    should_gen_monthly = should_generate_monthly() or not monthly_report_exists(reports_dir)
-    if should_gen_monthly:
-        try:
-            path = generate_monthly_report(db_path, reports_dir)
-            if path:
-                generated.append(path)
-        except Exception as e:
-            import sys
-            print(f"[AutoReport] Monthly generation failed: {e}", file=sys.stderr)
+    try:
+        path = generate_monthly_report(db_path, reports_dir)
+        if path:
+            generated.append(path)
+    except Exception as e:
+        import sys
+        print(f"[AutoReport] Monthly generation failed: {e}", file=sys.stderr)
 
     return generated
