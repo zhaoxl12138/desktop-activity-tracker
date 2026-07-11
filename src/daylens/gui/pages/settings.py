@@ -158,17 +158,21 @@ class SettingsPage(QWidget):
             edit.setText(get_val)
             if attr == "edit_obsidian":
                 edit.setPlaceholderText("例如: E:\\obsidian_github\\LifeOS\\TimeTracker")
+            elif attr == "edit_reports":
+                edit.setReadOnly(True)
+                edit.setToolTip("报告目录随数据库路径自动确定")
             setattr(self, attr, edit)
             h.addWidget(edit, 1)
-            btn = QPushButton("...")
-            btn.setFixedWidth(36)
-            btn.setStyleSheet(build_browse_btn_style())
-            btn.setCursor(Qt.PointingHandCursor)
-            if attr == "edit_db":
-                btn.clicked.connect(self._browse_database)
-            else:
-                btn.clicked.connect(lambda checked, e=edit: self._browse_dir(e))
-            h.addWidget(btn)
+            if attr != "edit_reports":
+                btn = QPushButton("...")
+                btn.setFixedWidth(36)
+                btn.setStyleSheet(build_browse_btn_style())
+                btn.setCursor(Qt.PointingHandCursor)
+                if attr == "edit_db":
+                    btn.clicked.connect(self._browse_database)
+                else:
+                    btn.clicked.connect(lambda checked, e=edit: self._browse_dir(e))
+                h.addWidget(btn)
             g2l.addLayout(h)
 
         layout.addWidget(g2)

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QPushButton
 
 from daylens.gui.pages.settings import SettingsPage
 from daylens.gui.main_window import MainWindow
@@ -136,3 +136,13 @@ def test_main_window_propagates_saved_config_to_live_consumers():
     assert holder.config is config
     assert reports_page.obsidian_path == "E:/vault/reports"
     assert tray.config is config
+
+
+def test_report_directory_is_read_only_without_browse_action(tmp_path, monkeypatch):
+    _app, page, _worker, _old_db = _build_page(tmp_path, monkeypatch)
+
+    browse_buttons = [button for button in page.findChildren(QPushButton) if button.text() == "..."]
+
+    assert page.edit_reports.isReadOnly() is True
+    assert len(browse_buttons) == 2
+    page.deleteLater()
