@@ -1,9 +1,39 @@
 from __future__ import annotations
 
 import yaml
+import pytest
 
 from daylens import database
 from daylens.services import settings_service
+
+
+def test_normalize_database_path_resolves_relative_path(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings_service, "get_app_root", lambda: str(tmp_path))
+
+    result = settings_service.normalize_database_path("data/new.db")
+
+    assert result == str(tmp_path / "data" / "new.db")
+
+
+def test_empty_database_path_does_not_overwrite_config(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    original = "db_path: original.db\n"
+    config_path.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(settings_service, "save_user_config", lambda *args, **kwargs: None)
+
+    with pytest.raises(ValueError, match="不能为空"):
+        settings_service.save_page_config(
+            config_path=str(config_path),
+            db_path=str(tmp_path / "current.db"),
+            config={"db_path": "original.db", "tracker": {}},
+            sample_interval=1,
+            idle_threshold=60,
+            startup_enabled=False,
+            new_db_path="",
+            obsidian_output_path="",
+        )
+
+    assert config_path.read_text(encoding="utf-8") == original
 
 
 def test_save_page_config_initializes_a_new_database(tmp_path, monkeypatch):

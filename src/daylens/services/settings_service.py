@@ -12,6 +12,16 @@ from ..runtime import resolve_release_exe_path
 from ..utils import load_user_config, save_user_config
 
 
+def normalize_database_path(path: str) -> str:
+    """Return an absolute database path rooted at the DayLens app directory."""
+    expanded = os.path.expandvars(os.path.expanduser(path.strip()))
+    if not expanded:
+        raise ValueError("数据库路径不能为空")
+    if not os.path.isabs(expanded):
+        expanded = os.path.join(get_app_root(), expanded)
+    return os.path.abspath(expanded)
+
+
 def load_page_config(config_path: str, db_path: str) -> dict:
     try:
         with open(config_path, "r", encoding="utf-8") as handle:
@@ -40,13 +50,12 @@ def save_page_config(
     new_db_path: str,
     obsidian_output_path: str,
 ) -> dict:
-    if not new_db_path:
-        raise ValueError("数据库路径不能为空")
+    normalized_db_path = normalize_database_path(new_db_path)
 
     updated = dict(config)
     updated["sample_interval_seconds"] = sample_interval
     updated["idle_threshold_seconds"] = idle_threshold
-    updated["db_path"] = new_db_path
+    updated["db_path"] = normalized_db_path
     updated["startup_enabled"] = startup_enabled
     updated["obsidian_output_path"] = obsidian_output_path
     updated["theme"] = updated.get("theme", "dark")
