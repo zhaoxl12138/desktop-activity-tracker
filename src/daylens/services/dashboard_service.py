@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 from .. import database, timeline
 from ..utils import fmt_seconds
 
-WORK_KEYS = {"ai_tools", "coding", "reading", "creative"}
+WORK_KEYS = {"ai_tools", "coding", "office", "reading", "creative"}
 ENTERTAINMENT_KEYS = {"video", "gaming"}
 
 
@@ -285,7 +285,7 @@ def _build_today_advice_card(
             else:
                 afternoon_minutes += seconds // 60
         category_key = str(session.get("category_key", "") or "")
-        if category_key in {"ai_tools", "coding", "reading", "creative", "work"}:
+        if category_key in WORK_KEYS or category_key == "work":
             work_seconds += seconds
         elif category_key in {"video", "gaming", "entertainment"}:
             entertainment_seconds += seconds

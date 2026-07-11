@@ -42,7 +42,7 @@ def _generate_suggestions(db_path, today_date, stats):
     idle_sec = totals.get("idle_seconds", 0) or 0
     total_sec = effective_sec + idle_sec
 
-    work_cats = {"ai_tools", "coding", "reading", "creative"}
+    work_cats = {"ai_tools", "coding", "office", "reading", "creative"}
     work_sec = sum(
         c["effective_seconds"] for c in stats["by_category"]
         if c["category_key"] in work_cats
@@ -397,7 +397,7 @@ def _query_prev_period(read_conn, db_path, dates, period_type):
         row = conn.execute(
             f"""
             SELECT SUM(effective_seconds) as eff,
-                   SUM(CASE WHEN category_key IN ('ai_tools','coding','reading','creative')
+                   SUM(CASE WHEN category_key IN ('ai_tools','coding','office','reading','creative')
                        THEN effective_seconds ELSE 0 END) as work,
                    SUM(CASE WHEN category_key IN ('video','gaming')
                        THEN effective_seconds ELSE 0 END) as entertain,
@@ -422,7 +422,7 @@ def _query_best_days(read_conn, db_path, dates, n=3):
         rows = conn.execute(
             f"""
             SELECT date,
-                   SUM(CASE WHEN category_key IN ('ai_tools','coding','reading','creative')
+                   SUM(CASE WHEN category_key IN ('ai_tools','coding','office','reading','creative')
                        THEN effective_seconds ELSE 0 END) as work_seconds,
                    SUM(effective_seconds) as effective_seconds
             FROM activity_sessions
@@ -557,7 +557,7 @@ def _query_top_work_apps(read_conn, db_path, dates, n=3):
                    SUM(effective_seconds) as effective_seconds
             FROM activity_sessions
             WHERE date IN ({placeholders})
-              AND category_key IN ('ai_tools','coding','reading','creative')
+              AND category_key IN ('ai_tools','coding','office','reading','creative')
             GROUP BY process_name
             ORDER BY effective_seconds DESC
             LIMIT ?
@@ -579,7 +579,7 @@ def _query_month_heatmap(read_conn, db_path, year, month):
             """
             SELECT date,
                    SUM(effective_seconds) as effective_seconds,
-                   SUM(CASE WHEN category_key IN ('ai_tools','coding','reading','creative')
+                   SUM(CASE WHEN category_key IN ('ai_tools','coding','office','reading','creative')
                        THEN effective_seconds ELSE 0 END) as work_seconds
             FROM activity_sessions
             WHERE date >= ? AND date <= ?
@@ -671,7 +671,7 @@ def _gen_weekly_summary(stats, prev, best_days, peak_hours, sink, days_with_data
         parts.append(f"最专注时段集中在{'、'.join(peak_hours)}。")
 
     # Top work apps for productivity mention
-    work_keys = {"ai_tools", "coding", "reading", "creative"}
+    work_keys = {"ai_tools", "coding", "office", "reading", "creative"}
     work_apps = [a for a in stats["by_app"] if a.get("category_key") in work_keys][:3]
     if work_apps:
         app_names = [a["process_name"].replace(".exe", "") for a in work_apps]
@@ -1011,7 +1011,7 @@ def export_monthly_report(db_path, year, month, output_dir):
     lines.append("## 📦 时间去向")
     lines.append("")
     # Aggregate into major groups
-    work_keys = {"ai_tools", "coding", "reading", "creative"}
+    work_keys = {"ai_tools", "coding", "office", "reading", "creative"}
     entertainment_keys = {"video", "gaming"}
     system_keys = {"system", "tools", "browser_general", "other"}
 

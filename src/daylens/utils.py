@@ -1,6 +1,6 @@
 """Shared utility functions used across the package."""
 
-WORK_CATEGORY_KEYS = {"ai_tools", "coding", "reading", "creative", "work"}
+WORK_CATEGORY_KEYS = {"ai_tools", "coding", "office", "reading", "creative", "work"}
 ENTERTAINMENT_CATEGORY_KEYS = {"video", "gaming", "entertainment"}
 SOCIAL_CATEGORY_KEYS = {"social"}
 BROWSER_CATEGORY_KEYS = {"browser_general", "browser_other"}
@@ -24,7 +24,7 @@ def fmt_seconds(total_seconds):
 
 
 # ── Default config as Python dict ──────────────────────────────────
-# Category order: ai_tools, coding, reading, video, creative, social,
+# Category order: ai_tools, coding, office, reading, video, creative, social,
 # tools, browser_general, other
 
 _DEFAULT_CATEGORIES = {
@@ -51,6 +51,16 @@ _DEFAULT_CATEGORIES = {
             "VS Code", "Cursor", "Claude Code", "Codex",
             "Visual Studio", "GitHub", "GitLab", "CLion", "Trae",
         ],
+    },
+    "office": {
+        "display_name": "办公套件",
+        "active_rule": "interactive_required",
+        "process_names": [
+            "excel.exe", "winword.exe", "powerpnt.exe", "outlook.exe",
+            "msaccess.exe", "onenote.exe", "visio.exe",
+            "wps.exe", "wpspdf.exe", "wpp.exe", "et.exe",
+        ],
+        "title_keywords": [],
     },
     "reading": {
         "display_name": "阅读学习",
@@ -124,7 +134,7 @@ _DEFAULT_CATEGORIES = {
 }
 
 _CATEGORY_ORDER = [
-    "ai_tools", "coding", "reading", "video", "creative",
+    "ai_tools", "coding", "office", "reading", "video", "creative",
     "social", "tools", "browser_general", "other",
 ]
 
@@ -132,6 +142,7 @@ _CATEGORY_ORDER = [
 _CATEGORY_COMMENTS = {
     "ai_tools": "AI 工具",
     "coding": "编程开发",
+    "office": "办公套件",
     "reading": "阅读学习",
     "video": "娱乐休闲",
     "creative": "创作工具",

@@ -679,7 +679,7 @@ class TodayOverviewPage(QWidget):
             return None
 
     def _color_for_category(self, category_key: str, category_name: str = "") -> str:
-        if category_key in {"ai_tools", "coding", "reading", "creative"}:
+        if category_key in {"ai_tools", "coding", "office", "reading", "creative"}:
             return ui_style.COLORS["coding_green"]
         if category_key == "video":
             return ui_style.COLORS["video_orange"]

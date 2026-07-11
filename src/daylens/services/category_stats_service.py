@@ -23,7 +23,7 @@ def load_category_summary(db_path: str) -> dict[str, object]:
 
 def load_category_detail(db_path: str, date_str: str, category_key: str, limit: int = 5) -> list[dict]:
     source_keys = {
-        "work": ["ai_tools", "coding", "reading", "creative"],
+        "work": ["ai_tools", "coding", "office", "reading", "creative"],
         "entertainment": ["video", "gaming"],
         "social": ["social"],
         "tools": ["tools", "system_tools"],

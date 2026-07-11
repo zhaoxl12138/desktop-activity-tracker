@@ -172,7 +172,7 @@ def query_date_range_from_sessions(read_conn, db_path: str, dates: list[str]) ->
         work_video_rows = conn.execute(
             f"""
             SELECT date,
-                   SUM(CASE WHEN category_key IN ('ai_tools','coding','reading','creative') THEN effective_seconds ELSE 0 END) as work_seconds,
+                   SUM(CASE WHEN category_key IN ('ai_tools','coding','office','reading','creative') THEN effective_seconds ELSE 0 END) as work_seconds,
                    SUM(CASE WHEN category_key = 'video' THEN effective_seconds ELSE 0 END) as video_seconds
             FROM activity_sessions
             WHERE date IN ({placeholders})

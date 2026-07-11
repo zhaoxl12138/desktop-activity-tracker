@@ -10,7 +10,7 @@ from .utils import fmt_seconds
 
 # ── Category groups ──
 
-WORK_CATS = {"ai_tools", "coding", "reading", "creative"}
+WORK_CATS = {"ai_tools", "coding", "office", "reading", "creative"}
 ENTERTAINMENT_CATS = {"video"}
 
 
