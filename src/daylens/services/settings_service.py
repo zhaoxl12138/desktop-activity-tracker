@@ -57,13 +57,13 @@ def save_page_config(
 
     effective_db_path = updated.get("db_path", db_path)
     database.save_settings(effective_db_path, updated)
-    save_user_config(
-        {
-            key: updated[key]
-            for key in ("obsidian_output_path", "theme", "db_path")
-            if key in updated and updated[key]
-        }
-    )
+    persisted = {
+        key: updated[key]
+        for key in ("obsidian_output_path", "theme", "db_path")
+        if key in updated and updated[key]
+    }
+    remove_keys = {"obsidian_output_path"} if not obsidian_output_path else set()
+    save_user_config(persisted, remove_keys=remove_keys)
     return updated
 
 

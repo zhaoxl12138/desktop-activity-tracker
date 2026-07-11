@@ -296,7 +296,7 @@ def load_user_config() -> dict:
         return {}
 
 
-def save_user_config(overrides: dict) -> None:
+def save_user_config(overrides: dict, remove_keys: set[str] | None = None) -> None:
     """Merge overrides into user_config.yaml in the data directory."""
     import os
     import yaml
@@ -309,6 +309,8 @@ def save_user_config(overrides: dict) -> None:
                 existing = yaml.safe_load(f) or {}
         except Exception:
             pass
+    for key in remove_keys or set():
+        existing.pop(key, None)
     existing.update(overrides)
     os.makedirs(os.path.dirname(user_path), exist_ok=True)
     with open(user_path, "w", encoding="utf-8") as f:
