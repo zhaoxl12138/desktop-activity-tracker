@@ -1,5 +1,6 @@
 """Comprehensive tests for Desktop Activity Tracker core modules."""
 import os
+import shutil
 import sys
 import tempfile
 import sqlite3
@@ -328,10 +329,7 @@ def test_exporter():
     check(score_none is None, "no activity → None score")
 
     conn.close()
-    for f in [md_path, csv_path, db_path]:
-        if os.path.exists(f):
-            os.unlink(f)
-    os.rmdir(tmpdir)
+    shutil.rmtree(tmpdir)
 
     print(f"  Exporter: all tests passed.")
 

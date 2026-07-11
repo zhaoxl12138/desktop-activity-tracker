@@ -893,7 +893,7 @@ class TrendChartWidget(QFrame):
         super().__init__(parent)
         self.setObjectName("dashboardCard")
         self.setStyleSheet(ui_style.get_dashboard_card_style())
-        self.setMinimumHeight(240)
+        self.setMinimumHeight(280)
         self._mode = "today"
         self._series: dict[str, list] = {"today": [], "7d": [], "30d": []}
         self._labels: dict[str, list[str]] = {"today": [], "7d": [], "30d": []}

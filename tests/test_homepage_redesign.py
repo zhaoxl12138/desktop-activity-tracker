@@ -120,7 +120,7 @@ def test_homepage_shell_matches_reference_structure():
         assert getattr(window.pages["today"], "insight_empty_label", None) is None
         assert window.pages["today"].trend_card.minimumHeight() >= 280
         assert window.pages["today"].top_app_card.minimumHeight() >= 230
-        assert set(window.pages["today"].distribution_cmp_labels) == {"work", "entertainment", "social"}
+        assert set(window.pages["today"].distribution_cmp_labels) == {"work", "entertainment", "social", "idle"}
         assert ui_style.get_category_color("other") != ui_style.COLORS["social_purple"]
         assert window.pages["today"]._distribution_color("other") == ui_style.get_category_color("other")
         assert window.pages["today"]._color_for_category("other") == ui_style.get_category_color("other")
