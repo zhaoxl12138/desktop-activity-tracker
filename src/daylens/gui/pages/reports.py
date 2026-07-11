@@ -146,7 +146,8 @@ class ReportsPage(QWidget):
     def _build_detail_panel(self) -> QFrame:
         frame = QFrame()
         frame.setObjectName("reportDetailCard")
-        frame.setFixedWidth(310)
+        frame.setMinimumWidth(240)
+        frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         frame.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         frame.setStyleSheet(
             f"""

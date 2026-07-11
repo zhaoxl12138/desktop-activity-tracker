@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
@@ -95,7 +96,8 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("DayLens")
         self.setStyleSheet(ui_style.get_global_style() + ui_style.get_input_style())
-        self.setFixedSize(self.FIXED_SIZE)
+        self.resize(self.FIXED_SIZE)
+        self.setMinimumSize(QSize(1100, 700))
         self.setWindowFlags(
             Qt.Window
             | Qt.WindowMinimizeButtonHint
@@ -157,7 +159,14 @@ class MainWindow(QMainWindow):
 
         self._sidebar = self._build_sidebar()
         self._content_layout.addWidget(self._sidebar)
-        self._content_layout.addWidget(self.stack, 1)
+        self.page_scroll = QScrollArea()
+        self.page_scroll.setObjectName("pageScroll")
+        self.page_scroll.setWidgetResizable(True)
+        self.page_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.page_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.page_scroll.setFrameShape(QFrame.NoFrame)
+        self.page_scroll.setWidget(self.stack)
+        self._content_layout.addWidget(self.page_scroll, 1)
         self.root_layout.addLayout(self._content_layout, 1)
 
         current_row = next((index for index, (_, key, _) in enumerate(NAV_ITEMS) if key == current_key), 0)
@@ -176,16 +185,14 @@ class MainWindow(QMainWindow):
         self.nav_list.setStyleSheet(ui_style.get_sidebar_style())
         self.nav_list.setFont(QFont("Microsoft YaHei", 11))
         self.nav_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.nav_list.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.nav_list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.nav_list.setSpacing(2)
-        self.nav_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        self.nav_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         for title, key, hint in NAV_ITEMS:
             item = QListWidgetItem(title)
             item.setData(Qt.UserRole, {"key": key, "title": title, "hint": hint})
             item.setSizeHint(QSize(0, 52))
             self.nav_list.addItem(item)
-        nav_height = 14 * 2 + len(NAV_ITEMS) * 52 + max(0, len(NAV_ITEMS) - 1) * 2 + 14
-        self.nav_list.setFixedHeight(nav_height)
         self.nav_list.currentRowChanged.connect(self._on_nav_changed)
         layout.addWidget(self.nav_list, 1)
 
@@ -266,7 +273,7 @@ class MainWindow(QMainWindow):
         bar = QFrame()
         bar.setObjectName("topBar")
         bar.setStyleSheet(ui_style.get_top_bar_style())
-        bar.setFixedHeight(168)
+        bar.setMinimumHeight(140)
 
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(34, 24, 34, 20)

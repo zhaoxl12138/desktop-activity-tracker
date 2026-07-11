@@ -104,7 +104,9 @@ def test_homepage_shell_matches_reference_structure():
 
         assert window.size().width() == 1600
         assert window.size().height() == 900
-        assert window.minimumSize() == window.maximumSize()
+        assert window.minimumSize().width() == 1100
+        assert window.minimumSize().height() == 700
+        assert window.maximumSize().width() > 1100
         assert set(window.capsule_values) == {"total", "work", "ent", "social"}
         assert window.capsule_labels["total"].text() == "活跃时间"
         assert window.capsule_labels["work"].text() == "工作学习"

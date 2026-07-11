@@ -105,7 +105,8 @@ class TodayOverviewPage(QWidget):
     def deactivate(self) -> None:
         self._is_active = False
         self._refresh_scheduled = False
-        self.timer.stop()
+        if hasattr(self, "timer"):
+            self.timer.stop()
 
     def schedule_refresh(self, force: bool = False) -> None:
         if self._refresh_scheduled:
@@ -342,7 +343,7 @@ class TodayOverviewPage(QWidget):
         card = QFrame()
         card.setObjectName("dashboardCard")
         card.setStyleSheet(ui_style.get_dashboard_card_style())
-        card.setFixedHeight(220)
+        card.setMinimumHeight(220)
 
         layout = QVBoxLayout(card)
         layout.setContentsMargins(16, 12, 16, 12)
