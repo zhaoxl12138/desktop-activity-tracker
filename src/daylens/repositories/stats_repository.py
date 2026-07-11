@@ -310,31 +310,47 @@ def query_session_entertainment_trend(read_conn, db_path: str, days: int = 3) ->
 
 
 def query_entertainment_trend(read_conn, db_path: str, days: int = 3) -> list[dict]:
-    with read_conn(db_path) as conn:
-        row = conn.execute("SELECT COUNT(*) as cnt FROM activity_sessions").fetchone()
-
-    if row and row["cnt"] > 0:
-        return query_session_entertainment_trend(read_conn, db_path, days)
-
     today = datetime.now().date()
     dates = [(today - timedelta(days=index)).strftime("%Y-%m-%d") for index in range(days)]
     dates.reverse()
 
     with read_conn(db_path) as conn:
         placeholders = ",".join("?" * len(dates))
-        rows = conn.execute(
+        session_date_rows = conn.execute(
+            f"SELECT DISTINCT date FROM activity_sessions WHERE date IN ({placeholders})",
+            dates,
+        ).fetchall()
+        session_rows = conn.execute(
             f"""
-            SELECT date,
-                   SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as entertainment_seconds
-            FROM activity_logs
+            SELECT date, SUM(effective_seconds) as entertainment_seconds
+            FROM activity_sessions
             WHERE date IN ({placeholders}) AND category_key = 'video'
             GROUP BY date
-            ORDER BY date
             """,
             dates,
         ).fetchall()
 
-    result_map = {row["date"]: row["entertainment_seconds"] or 0 for row in rows}
+        session_dates = {row["date"] for row in session_date_rows}
+        legacy_dates = [date_str for date_str in dates if date_str not in session_dates]
+        legacy_rows = []
+        if legacy_dates:
+            legacy_placeholders = ",".join("?" * len(legacy_dates))
+            legacy_rows = conn.execute(
+                f"""
+                SELECT date,
+                       SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as entertainment_seconds
+                FROM activity_logs
+                WHERE date IN ({legacy_placeholders}) AND category_key = 'video'
+                GROUP BY date
+                ORDER BY date
+                """,
+                legacy_dates,
+            ).fetchall()
+
+    result_map = {
+        row["date"]: row["entertainment_seconds"] or 0
+        for row in [*session_rows, *legacy_rows]
+    }
     return [{"date": date_str, "entertainment_seconds": result_map.get(date_str, 0)} for date_str in dates]
 
 
@@ -451,11 +467,97 @@ def query_date_range_stats(read_conn, db_path: str, dates: list[str]) -> dict:
         return {"dates": [], "daily": [], "by_category": [], "by_app": [], "totals": {}}
 
     with read_conn(db_path) as conn:
-        row = conn.execute("SELECT COUNT(*) as cnt FROM activity_sessions").fetchone()
+        placeholders = ",".join("?" * len(dates))
+        rows = conn.execute(
+            f"SELECT DISTINCT date FROM activity_sessions WHERE date IN ({placeholders})",
+            dates,
+        ).fetchall()
 
-    if row and row["cnt"] > 0:
-        return query_date_range_from_sessions(read_conn, db_path, dates)
-    return query_date_range_from_logs(read_conn, db_path, dates)
+    session_date_set = {row["date"] for row in rows}
+    session_dates = [date_str for date_str in dates if date_str in session_date_set]
+    legacy_dates = [date_str for date_str in dates if date_str not in session_date_set]
+    payloads = []
+    if session_dates:
+        payloads.append(query_date_range_from_sessions(read_conn, db_path, session_dates))
+    if legacy_dates:
+        payloads.append(query_date_range_from_logs(read_conn, db_path, legacy_dates))
+    return _merge_range_payloads(dates, payloads)
+
+
+def _merge_range_payloads(dates: list[str], payloads: list[dict]) -> dict:
+    daily_map = {}
+    category_map = {}
+    app_map = {}
+
+    for payload in payloads:
+        for row in payload.get("daily", []):
+            daily_map[row["date"]] = dict(row)
+
+        for row in payload.get("by_category", []):
+            key = (row.get("category_key", ""), row.get("category_name", ""))
+            merged = category_map.setdefault(
+                key,
+                {
+                    "category_key": key[0],
+                    "category_name": key[1],
+                    "effective_seconds": 0,
+                    "idle_seconds": 0,
+                    "total_seconds": 0,
+                },
+            )
+            for field in ("effective_seconds", "idle_seconds", "total_seconds"):
+                merged[field] += row.get(field, 0) or 0
+
+        for row in payload.get("by_app", []):
+            key = (row.get("process_name", ""), row.get("category_key", ""))
+            merged = app_map.setdefault(
+                key,
+                {
+                    "process_name": key[0],
+                    "category_key": key[1],
+                    "effective_seconds": 0,
+                    "samples": 0,
+                },
+            )
+            merged["effective_seconds"] += row.get("effective_seconds", 0) or 0
+            merged["samples"] += row.get("samples", 0) or 0
+
+    daily = [
+        daily_map.get(
+            date_str,
+            {
+                "date": date_str,
+                "effective_seconds": 0,
+                "idle_seconds": 0,
+                "total_seconds": 0,
+                "work_seconds": 0,
+                "video_seconds": 0,
+            },
+        )
+        for date_str in dates
+    ]
+    totals_effective = sum(row.get("effective_seconds", 0) or 0 for row in daily)
+    totals_idle = sum(row.get("idle_seconds", 0) or 0 for row in daily)
+    totals_work = sum(row.get("work_seconds", 0) or 0 for row in daily)
+    totals_video = sum(row.get("video_seconds", 0) or 0 for row in daily)
+
+    return {
+        "dates": dates,
+        "daily": daily,
+        "by_category": sorted(
+            category_map.values(), key=lambda row: row["effective_seconds"], reverse=True
+        ),
+        "by_app": sorted(
+            app_map.values(), key=lambda row: row["effective_seconds"], reverse=True
+        )[:20],
+        "totals": {
+            "effective_seconds": totals_effective,
+            "idle_seconds": totals_idle,
+            "total_seconds": totals_effective + totals_idle,
+            "work_seconds": totals_work,
+            "video_seconds": totals_video,
+        },
+    }
 
 
 def _build_range_payload(dates: list[str], daily_rows, work_video_rows, category_rows, app_rows) -> dict:
