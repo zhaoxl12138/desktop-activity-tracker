@@ -88,7 +88,7 @@ def launch_gui() -> None:
     worker = RecordingWorker(config_path, db_path, config)
     worker.start()
 
-    tray = TrayManager(app, db_path, config)
+    tray = TrayManager(app, db_path, config, reports_dir)
     window = MainWindow(get_app_root(), config, db_path, config_path, reports_dir, worker)
     window.tray = tray
     tray.set_main_window(window)

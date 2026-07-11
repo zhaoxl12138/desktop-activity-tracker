@@ -17,16 +17,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import get_app_root, get_data_dir
+from .. import get_app_root
 from ..gui import style as ui_style
 from ..services.shell_service import build_tray_tooltip, generate_daily_report
 
 
 class TrayManager:
-    def __init__(self, app, db_path, config):
+    def __init__(self, app, db_path, config, reports_dir):
         self.app = app
         self.db_path = db_path
         self.config = config
+        self.reports_dir = reports_dir
         self.main_window = None
 
         if not QSystemTrayIcon.isSystemTrayAvailable():
@@ -169,7 +170,7 @@ class TrayManager:
 
     def _auto_generate_report(self) -> None:
         """Silent auto-generation every 5 minutes; overwrites today's report."""
-        reports_dir = os.path.join(get_data_dir(), "reports", "daily")
+        reports_dir = os.path.join(self.reports_dir, "daily")
         try:
             generate_daily_report(
                 self.db_path,
@@ -181,7 +182,7 @@ class TrayManager:
 
     def _generate_report(self) -> None:
         today = datetime.now().strftime("%Y-%m-%d")
-        reports_dir = os.path.join(get_data_dir(), "reports", "daily")
+        reports_dir = os.path.join(self.reports_dir, "daily")
         try:
             generate_daily_report(
                 self.db_path,
@@ -193,7 +194,7 @@ class TrayManager:
             self.tray.showMessage("DayLens", f"生成失败: {exc}")
 
     def _open_reports(self) -> None:
-        reports_dir = os.path.join(get_data_dir(), "reports")
+        reports_dir = self.reports_dir
         os.makedirs(reports_dir, exist_ok=True)
         os.startfile(reports_dir)
 
