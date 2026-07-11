@@ -76,6 +76,11 @@ def test_main_window_avoids_direct_database_and_exporter_calls():
     assert "exporter." not in MAIN_WINDOW_SOURCE
 
 
+def test_main_window_handles_settings_restart_requests():
+    assert ".restart_requested.connect(self._restart_app)" in MAIN_WINDOW_SOURCE
+    assert "schedule_restart(current_launch_command())" in MAIN_WINDOW_SOURCE
+
+
 def test_tray_manager_avoids_direct_database_and_exporter_calls():
     assert "database.query_" not in TRAY_MANAGER_SOURCE
     assert "exporter." not in TRAY_MANAGER_SOURCE

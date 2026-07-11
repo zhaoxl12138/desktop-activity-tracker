@@ -30,6 +30,7 @@ from ..services.shell_service import generate_daily_report, load_poetry_hint, lo
 from ..services.reports_service import (
     auto_generate_current_reports,
 )
+from ..services.restart_service import current_launch_command, schedule_restart
 from .pages.category_stats import CategoryStatsPage
 from .pages.live_monitor import LiveMonitorPage
 from .pages.reports import ReportsPage
@@ -134,6 +135,7 @@ class MainWindow(QMainWindow):
             "rules": RuleConfigPage(self.config_path, self.db_path, self.worker),
             "settings": SettingsPage(self.config_path, self.db_path, self.reports_dir, self.worker),
         }
+        self.pages["settings"].restart_requested.connect(self._restart_app)
         for _, key, _ in NAV_ITEMS:
             self.stack.addWidget(self.pages[key])
 
@@ -641,6 +643,20 @@ class MainWindow(QMainWindow):
         """Return obsidian_output_path from in-memory config (merged with DB on startup)."""
         return self.config.get("obsidian_output_path", "").strip()
 
+    def _restart_app(self) -> None:
+        try:
+            schedule_restart(current_launch_command())
+        except Exception as exc:
+            QMessageBox.warning(self, "重启失败", str(exc))
+            return
+
+        if self.worker:
+            self.worker.stop()
+            self.worker.wait(5000)
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+
     def _quit_app(self) -> None:
         reply = QMessageBox.question(
             self,
@@ -703,6 +719,7 @@ class MainWindow(QMainWindow):
             "rules": RuleConfigPage(self.config_path, self.db_path, self.worker),
             "settings": SettingsPage(self.config_path, self.db_path, self.reports_dir, self.worker),
         }
+        self.pages["settings"].restart_requested.connect(self._restart_app)
         for _, key, _ in NAV_ITEMS:
             self.stack.addWidget(self.pages[key])
         self.nav_list.setCurrentRow(current_row)

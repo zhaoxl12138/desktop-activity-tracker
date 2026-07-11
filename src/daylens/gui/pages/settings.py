@@ -6,9 +6,10 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QSpinBox,
     QPushButton, QCheckBox, QFileDialog, QMessageBox, QGroupBox, QScrollArea
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 
 from ...services import settings_service
+from ...services.restart_service import database_path_changed
 from .. import style as ui_style
 
 
@@ -51,6 +52,8 @@ def build_browse_btn_style() -> str:
 """
 
 class SettingsPage(QWidget):
+    restart_requested = Signal()
+
     def __init__(self, config_path, db_path, reports_dir, worker=None):
         super().__init__()
         self.config_path = config_path
@@ -206,6 +209,8 @@ class SettingsPage(QWidget):
     def _save_all(self):
         sample_interval = self.spin_interval.value()
         idle_threshold = self.spin_idle.value()
+        requested_db_path = self.edit_db.text().strip()
+        requires_restart = database_path_changed(self.db_path, requested_db_path)
 
         # Reload config to pick up any external changes
         self._load_config()
@@ -219,9 +224,18 @@ class SettingsPage(QWidget):
             sample_interval=sample_interval,
             idle_threshold=idle_threshold,
             startup_enabled=startup_enabled,
-            new_db_path=self.edit_db.text().strip(),
+            new_db_path=requested_db_path,
             obsidian_output_path=self.edit_obsidian.text().strip(),
         )
+
+        if requires_restart:
+            QMessageBox.information(
+                self,
+                "设置已保存",
+                "数据库路径已更改，DayLens 将自动重启以切换到新数据库。",
+            )
+            self.restart_requested.emit()
+            return
 
         # Hot-reload worker (settings + classifier)
         if self.worker:
