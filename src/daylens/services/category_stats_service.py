@@ -58,5 +58,8 @@ def _merge_categories(categories: list[dict]) -> list[dict]:
         bucket["total_seconds"] += int(category.get("total_seconds", 0) or 0)
     return sorted(
         merged.values(),
-        key=lambda item: order.index(item["category_key"]) if item["category_key"] in order else len(order),
+        key=lambda item: (
+            -int(item.get("effective_seconds", 0) or 0),
+            order.index(item["category_key"]) if item["category_key"] in order else len(order),
+        ),
     )

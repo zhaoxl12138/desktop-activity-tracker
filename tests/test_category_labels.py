@@ -35,6 +35,23 @@ def test_category_summary_uses_normalized_labels(monkeypatch):
     assert names == ["工作学习", "娱乐休闲", "社交通讯"]
 
 
+def test_category_summary_orders_by_effective_time_descending(monkeypatch):
+    monkeypatch.setattr(
+        category_stats_service.database,
+        "query_date_stats",
+        lambda db_path, today: {
+            "by_category": [
+                {"category_key": "social", "category_name": "social", "effective_seconds": 3000},
+                {"category_key": "coding", "category_name": "coding", "effective_seconds": 1200},
+                {"category_key": "video", "category_name": "video", "effective_seconds": 600},
+            ]
+        },
+    )
+
+    summary = category_stats_service.load_category_summary("dummy.db")
+    assert [item["category_key"] for item in summary["categories"]] == ["social", "work", "entertainment"]
+
+
 def test_software_rows_use_normalized_labels(monkeypatch):
     monkeypatch.setattr(
         software_stats_service.database,

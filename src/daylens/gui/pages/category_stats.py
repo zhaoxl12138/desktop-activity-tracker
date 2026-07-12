@@ -314,6 +314,15 @@ class CategoryStatsPage(QWidget):
                     card.clicked.connect(self._on_card_clicked)
                     self._cards[key] = card
                     self.cards_container.insertWidget(0, card)
+
+            # Existing cards keep their widgets, but their positions must be
+            # rebuilt on every refresh so live duration changes also change
+            # the visible ranking immediately.
+            for category in reversed(categories):
+                card = self._cards.get(category.get("category_key", "other"))
+                if card is not None:
+                    self.cards_container.removeWidget(card)
+                    self.cards_container.insertWidget(0, card)
         except Exception as exc:
             import traceback
 
