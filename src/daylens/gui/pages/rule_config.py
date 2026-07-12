@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
+    QMessageBox, QInputDialog,
     QPushButton,
     QSizePolicy,
     QSplitter,
@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...app_scanner import classify_scanned_apps, scan_installed_apps
+from ...classifier import Classifier
 from ...services.rules_service import load_rule_categories, save_rule_categories
 from .. import style as ui_style
 
@@ -358,10 +359,16 @@ class RuleConfigPage(QWidget):
         self.btn_rescan.setCursor(Qt.PointingHandCursor)
         self.btn_rescan.clicked.connect(self._rescan_apps)
 
+        self.btn_debug = QPushButton("测试分类")
+        self.btn_debug.setStyleSheet(ui_style.get_button_secondary_style())
+        self.btn_debug.setCursor(Qt.PointingHandCursor)
+        self.btn_debug.clicked.connect(self._debug_classification)
+
         btn_row.addStretch()
         btn_row.addWidget(self.btn_add)
         btn_row.addWidget(self.btn_delete)
         btn_row.addWidget(self.btn_rescan)
+        btn_row.addWidget(self.btn_debug)
         btn_row.addWidget(self.btn_save)
         right_layout.addWidget(self.action_bar)
         return right
@@ -469,6 +476,24 @@ class RuleConfigPage(QWidget):
             QMessageBox.information(self, "扫描完成", f"发现 {len(apps)} 个应用，新增 {added} 条分类规则。")
         except Exception as exc:
             QMessageBox.warning(self, "扫描失败", str(exc))
+
+    def _debug_classification(self):
+        process, ok = QInputDialog.getText(self, "测试分类", "进程名：")
+        if not ok or not process.strip():
+            return
+        title, ok = QInputDialog.getText(self, "测试分类", "窗口标题：")
+        if not ok:
+            return
+        try:
+            result = Classifier(self.config_path, self.db_path).classify(process.strip(), title.strip())
+            QMessageBox.information(
+                self, "分类结果",
+                f"分类：{result.get('category_name', result.get('category_key', '未知'))}\n"
+                f"规则：{result.get('category_key', 'unknown')}\n"
+                f"策略：{result.get('active_rule', 'unknown')}",
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "测试失败", str(exc))
 
     def _add_category(self):
         new_key = f"custom_{len(self.categories)}"

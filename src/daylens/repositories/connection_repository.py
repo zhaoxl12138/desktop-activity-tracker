@@ -74,6 +74,11 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT
 );
 
+CREATE TABLE IF NOT EXISTS schema_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS custom_rules (
     category_key TEXT PRIMARY KEY,
     display_name TEXT,
@@ -183,9 +188,23 @@ def init_db(db_path: str):
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA busy_timeout=5000")
     conn.executescript(SCHEMA)
+    _run_migrations(conn)
     conn.commit()
     conn._commit_count = 0
     return conn
+
+
+def _run_migrations(conn) -> None:
+    """Apply idempotent schema upgrades without rewriting user data."""
+    row = conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()
+    version = int(row[0]) if row and str(row[0]).isdigit() else 0
+    if version < 1:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_date_category ON activity_sessions(date, category_key)")
+        conn.execute(
+            "INSERT INTO schema_meta(key, value) VALUES('schema_version', '1') "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        )
+    conn.commit()
 
 
 def close_db(conn) -> None:
@@ -196,4 +215,3 @@ def close_db(conn) -> None:
         conn.close()
     except Exception:
         pass
-
