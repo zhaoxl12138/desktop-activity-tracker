@@ -320,7 +320,8 @@ class MainWindow(QMainWindow):
 
         self.lbl_page_hint = QLabel("聚焦今天的使用结构、效率与提醒")
         self.lbl_page_hint.setWordWrap(True)
-        self.lbl_page_hint.setMinimumHeight(36)
+        self.lbl_page_hint.setMinimumHeight(42)
+        self.lbl_page_hint.setMaximumHeight(56)
         self.lbl_page_hint.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Minimum
         )

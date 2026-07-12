@@ -73,6 +73,16 @@ def test_load_poetry_hint_includes_author_only(monkeypatch):
     assert hint == "谁念西风独自凉\n萧萧黄叶闭疏窗 ——纳兰性德"
 
 
+def test_load_poetry_hint_cleans_extra_blank_lines(monkeypatch):
+    monkeypatch.setattr(
+        shell_service.database,
+        "get_random_poetry",
+        lambda db_path: {"author": "李白", "content": "  第一行  \r\n\n 第二行\t", "origin": "", "category": ""},
+    )
+
+    assert shell_service.load_poetry_hint("dummy.db", "fallback") == "第一行\n第二行 ——李白"
+
+
 def test_get_random_poetry_truncates_each_line_to_twenty_chars(tmp_path):
     db_path = tmp_path / "poetry.db"
     conn = sqlite3.connect(db_path)
