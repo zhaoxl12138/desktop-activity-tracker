@@ -6,7 +6,7 @@ tracker:
 sample_interval_seconds: 1
 idle_threshold_seconds: 60
 db_path: D:\OfficeSoftware\DayLens\data\usage.db
-obsidian_output_path: E:\obsidian_github\Daylog\时间追踪\桌面活动日报
+obsidian_output_path: E:\obsidian_github\Daylog\时间追踪\桌面活动日报\2026\
 categories:
   ai_tools:
     display_name: AI工具
@@ -828,7 +828,18 @@ categories:
       - firefox.exe
       - iexplore.exe
       - msedge.exe
-      title_keywords: []
+      title_keywords:
+      - Chrome
+      - Chromium
+      - Firefox
+      - Edge
+      - Microsoft Edge
+      - Google
+      - Bing
+      - 百度
+      - 搜索
+      - 新标签页
+      - New Tab
   other:
     display_name: 其他
     active_rule: interactive_required

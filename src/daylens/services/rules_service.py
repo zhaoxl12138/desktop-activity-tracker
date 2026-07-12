@@ -15,12 +15,15 @@ def load_rule_categories(config_path: str, db_path: str) -> dict[str, dict]:
     categories = dict(config.get("categories", {}))
     custom = database.load_custom_rules(db_path)
     for key, rule in custom.items():
+        base = categories.get(key, {})
+        base_match = base.get("match", {}) if isinstance(base, dict) else {}
+        title_keywords = rule["title_keywords"] or list(base_match.get("title_keywords", []) or [])
         categories[key] = {
             "display_name": rule["display_name"],
             "active_rule": rule["active_rule"],
             "match": {
                 "process_names": rule["process_names"],
-                "title_keywords": rule["title_keywords"],
+                "title_keywords": title_keywords,
             },
         }
     normalized: dict[str, dict] = {}

@@ -52,6 +52,31 @@ def test_category_summary_orders_by_effective_time_descending(monkeypatch):
     assert [item["category_key"] for item in summary["categories"]] == ["social", "work", "entertainment"]
 
 
+def test_empty_custom_keywords_keep_builtin_keywords(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "categories:\n  browser_general:\n    display_name: 浏览器\n    active_rule: interactive_required\n    match:\n      process_names: [chrome.exe]\n      title_keywords: [Google, 搜索]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        category_stats_service.database,
+        "load_custom_rules",
+        lambda db_path: {
+            "browser_general": {
+                "display_name": "浏览器",
+                "active_rule": "interactive_required",
+                "process_names": ["chrome.exe"],
+                "title_keywords": [],
+            }
+        },
+    )
+
+    loaded = __import__("desktop_activity_tracker.services.rules_service", fromlist=["load_rule_categories"]).load_rule_categories(
+        str(config_path), "dummy.db"
+    )
+    assert loaded["browser_general"]["match"]["title_keywords"] == ["Google", "搜索"]
+
+
 def test_software_rows_use_normalized_labels(monkeypatch):
     monkeypatch.setattr(
         software_stats_service.database,
