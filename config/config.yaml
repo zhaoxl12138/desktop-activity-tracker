@@ -840,6 +840,29 @@ categories:
       - 搜索
       - 新标签页
       - New Tab
+      - 浏览器
+      - Browser
+      - 地址栏
+      - 无痕浏览
+      - Incognito
+      - 隐私模式
+      - 首页
+      - 主页
+      - 登录
+      - Sign in
+      - Search
+      - Web
+      - 网页
+      - 网站
+      - 网页版
+      - 在线
+      - 打开链接
+      - 新窗口
+      - New Window
+      - 标签页
+      - Tab
+      - 收藏夹
+      - Bookmarks
   other:
     display_name: 其他
     active_rule: interactive_required
