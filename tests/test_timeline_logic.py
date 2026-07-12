@@ -90,6 +90,60 @@ def test_finish_current_closes_session_without_replacement():
     assert ended[0].switch_reason == "ignored_process"
 
 
+def test_switching_apps_creates_separate_sessions_even_in_same_domain(monkeypatch):
+    monkeypatch.setattr("daylens.session_tracker._get_cursor_pos", lambda: (0, 0))
+    monkeypatch.setattr("daylens.session_tracker._get_keyboard_snapshot", lambda: b"")
+    ended = []
+    tracker = SessionTracker(
+        config={"tracker": {"sample_interval_seconds": 1, "flush_interval_seconds": 99, "min_session_seconds": 1}},
+        classifier=FakeClassifier(),
+        on_session_end=ended.append,
+    )
+    tracker.tick(0, {"process_name": "Code.exe", "window_title": "main.py", "exe_path": ""})
+    first_id = tracker.current_session.session_id
+    tracker.tick(0, {"process_name": "Obsidian.exe", "window_title": "notes", "exe_path": ""})
+
+    assert tracker.current_session.session_id != first_id
+    assert ended and ended[0].process_name == "Code.exe"
+
+
+def test_grace_period_time_is_not_counted_twice(monkeypatch):
+    monkeypatch.setattr("daylens.session_tracker._get_cursor_pos", lambda: (0, 0))
+    monkeypatch.setattr("daylens.session_tracker._get_keyboard_snapshot", lambda: b"")
+    tracker = SessionTracker(
+        config={"tracker": {"sample_interval_seconds": 1, "flush_interval_seconds": 99, "min_session_seconds": 1}},
+        classifier=FakeClassifier(),
+    )
+    tracker.tick(0, {"process_name": "Code.exe", "window_title": "main.py", "exe_path": ""})
+    before = tracker.current_session.duration_seconds
+    tracker._pending_switch = {"domain": "entertainment", "since": datetime.now(), "effective_during_grace": 0, "idle_during_grace": 0}
+    tracker._tick_grace_current(datetime.now())
+
+    assert tracker.current_session.duration_seconds == before
+
+
+def test_video_auto_close_keeps_duration_components_consistent(monkeypatch):
+    monkeypatch.setattr("daylens.session_tracker._get_cursor_pos", lambda: (0, 0))
+    monkeypatch.setattr("daylens.session_tracker._get_keyboard_snapshot", lambda: b"")
+    ended = []
+    tracker = SessionTracker(
+        config={"tracker": {"sample_interval_seconds": 1, "flush_interval_seconds": 999, "min_session_seconds": 1, "entertainment_idle_threshold_seconds": 3}},
+        classifier=FakeClassifier(), on_session_end=ended.append,
+    )
+    tracker._current = ActivitySession(
+        session_id="video", start_time=datetime.now(), end_time=datetime.now(), date=datetime.now().strftime("%Y-%m-%d"),
+        process_name="vlc.exe", exe_path="", window_title="Movie", normalized_title="Movie", category_key="video",
+        category_name="video", active_rule="passive_allowed", initial_title="Movie",
+        duration_seconds=10, effective_seconds=10,
+    )
+    for _ in range(8):
+        tracker._tick_current(10, datetime.now())
+
+    assert ended
+    session = ended[0]
+    assert session.duration_seconds >= session.effective_seconds + session.idle_seconds
+
+
 def test_worker_self_window_snapshot_is_marked_ignored():
     clf = classifier.Classifier("config/config.yaml")
     result = clf.classify("DayLens.exe", "DayLens")

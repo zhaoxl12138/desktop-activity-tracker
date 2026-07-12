@@ -327,28 +327,51 @@ class SessionTracker:
 
             # ── Same domain ────────────────────────────────────────
             else:
-                # For video sessions, detect title changes (e.g. episode switch)
-                # and split into a new session.
-                title_changed = (
-                    cat_key == "video" and norm_title
-                    and self._current.initial_title
-                    and norm_title != self._current.initial_title
+                if self._pending_switch is not None:
+                    self._current.duration_seconds += (
+                        self._pending_switch["effective_during_grace"]
+                        + self._pending_switch["idle_during_grace"]
+                    )
+                    self._current.effective_seconds += self._pending_switch["effective_during_grace"]
+                    self._current.idle_seconds += self._pending_switch["idle_during_grace"]
+                    self._pending_switch = None
+
+                # A session is an app-level record. Switching from Cursor to
+                # Obsidian (even inside the same work domain) must not rewrite
+                # the original process/title into one long session.
+                app_changed = (
+                    process_name.lower() != self._current.process_name.lower()
+                    or cat_key != self._current.category_key
                 )
-                if title_changed and not _is_transient_title(norm_title):
+                if app_changed:
                     self._current.end_time = now
-                    self._current.switch_reason = "title_change"
+                    self._current.switch_reason = "app_change"
                     self._emit_session()
                     self._pending_switch = None
-                else:
-                    self._pending_switch = None
-                    self._current.process_name = process_name
-                    self._current.window_title = raw_title
-                    # Don't overwrite title with transient/internal window names
-                    if not _is_transient_title(norm_title):
-                        self._current.normalized_title = norm_title
-                    self._current.category_key = cat_key
-                    self._current.category_name = cat_name
-                    self._current.active_rule = active_rule
+
+                if not app_changed:
+                    # For video sessions, detect title changes (e.g. episode switch)
+                    # and split into a new session.
+                    title_changed = (
+                        cat_key == "video" and norm_title
+                        and self._current.initial_title
+                        and norm_title != self._current.initial_title
+                    )
+                    if title_changed and not _is_transient_title(norm_title):
+                        self._current.end_time = now
+                        self._current.switch_reason = "title_change"
+                        self._emit_session()
+                        self._pending_switch = None
+                    else:
+                        self._pending_switch = None
+                        self._current.process_name = process_name
+                        self._current.window_title = raw_title
+                        # Don't overwrite title with transient/internal window names
+                        if not _is_transient_title(norm_title):
+                            self._current.normalized_title = norm_title
+                        self._current.category_key = cat_key
+                        self._current.category_name = cat_name
+                        self._current.active_rule = active_rule
 
         # If previous session was auto-closed due to entertainment idle,
         # don't create a new session until the user is actually active.
@@ -438,6 +461,13 @@ class SessionTracker:
             return
 
         if self._pending_switch is None or self._pending_switch["domain"] != new_domain:
+            if self._pending_switch is not None:
+                self._current.duration_seconds += (
+                    self._pending_switch["effective_during_grace"]
+                    + self._pending_switch["idle_during_grace"]
+                )
+                self._current.effective_seconds += self._pending_switch["effective_during_grace"]
+                self._current.idle_seconds += self._pending_switch["idle_during_grace"]
             self._pending_switch = {
                 "domain": new_domain,
                 "since": now,
@@ -494,9 +524,6 @@ class SessionTracker:
         """Tick the current session during cross-domain grace period,
         crediting effective vs idle based on actual activity detection.
         """
-        self._current.end_time = now
-        self._current.duration_seconds += self.sample_interval
-
         cursor_pos = _get_cursor_pos()
         cursor_moved = (
             self._last_cursor_pos is not None
@@ -514,10 +541,9 @@ class SessionTracker:
         self._activity_from_hook = False
 
         if active:
-            self._current.effective_seconds += self.sample_interval
             self._persistent_idle = 0.0
         else:
-            self._current.idle_seconds += self.sample_interval
+            self._persistent_idle += self.sample_interval
 
         p = self._pending_switch
         if p is not None:
@@ -593,8 +619,13 @@ class SessionTracker:
                 # (now minus the idle threshold window).
                 limit = self._idle_limit()
                 backdate = now - timedelta(seconds=limit)
+                active_duration = max(0, self._current.duration_seconds - int(self._persistent_idle))
                 self._current.end_time = backdate
-                self._current.duration_seconds -= self._persistent_idle
+                self._current.duration_seconds = active_duration
+                self._current.effective_seconds = min(
+                    self._current.effective_seconds, active_duration
+                )
+                self._current.idle_seconds = 0
                 self._current.switch_reason = "entertainment_idle"
                 self._emit_session()
                 self._awaiting_activity = True
