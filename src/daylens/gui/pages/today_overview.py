@@ -519,11 +519,6 @@ class TodayOverviewPage(QWidget):
             ),
         )
         self.session_top3_widget.set_sessions(sessions_with_icons, self.display_name_mapping)
-        has_long_session = any(
-            int(session.get("effective_seconds", 0) or 0) >= 600
-            for session in sessions
-        )
-        self.focus_timeline_card.setMaximumHeight(380 if not has_long_session else 16777215)
         self.focus_axis.set_minutes(self._build_focus_axis(timeline_sessions))
         trend = snapshot["trend"]
         self.trend_card.set_data(
@@ -537,14 +532,6 @@ class TodayOverviewPage(QWidget):
             yesterday_entertainment=trend.get("yesterday_entertainment", []),
             seven_day_labels=trend.get("seven_day_labels", []),
         )
-        has_trend_data = any(float(value or 0) > 0 for value in trend.get("today", []))
-        if not has_trend_data:
-            has_trend_data = any(
-                float(value or 0) > 0
-                for day in trend.get("seven_days", [])
-                for value in (day if isinstance(day, (list, tuple)) else [])
-            )
-        self.trend_card.setMaximumHeight(300 if not has_trend_data else 16777215)
         focus_summary = str(snapshot["focus_summary"])
         self.focus_hint.setText(focus_summary)
         self.focus_hint.setVisible("暂未识别" not in focus_summary)
