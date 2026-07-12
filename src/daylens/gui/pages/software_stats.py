@@ -27,6 +27,8 @@ class SoftwareStatsPage(QWidget):
         self.db_path = db_path
         self.reports_dir = reports_dir
         self.display_name_mapping = display_name_mapping or {}
+        self._is_active = False
+        self._last_rows_signature = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 24)
@@ -99,15 +101,42 @@ class SoftwareStatsPage(QWidget):
         )
         layout.addWidget(self.table, 1)
 
-        self.refresh()
-
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
-        self.timer.start(30000)
+        self.timer.setInterval(30000)
+
+    def activate(self, force: bool = False) -> None:
+        self._is_active = True
+        if not self.timer.isActive():
+            self.timer.start()
+        if force or self._last_rows_signature is None:
+            self.refresh()
+
+    def deactivate(self) -> None:
+        self._is_active = False
+        self.timer.stop()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self.activate()
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        self.deactivate()
+        super().hideEvent(event)
 
     def refresh(self):
+        if not self._is_active:
+            return
         try:
             rows = software_stats_service.load_software_rows(self.db_path, self.display_name_mapping)
+            signature = tuple(
+                (row.get("software"), row.get("title"), row.get("category_key"),
+                 row.get("duration"), row.get("percent"))
+                for row in rows
+            )
+            if signature == self._last_rows_signature:
+                return
+            self._last_rows_signature = signature
             self.table.setRowCount(len(rows))
             for index, row in enumerate(rows):
                 self.table.setItem(index, 0, QTableWidgetItem(str(row["software"])))

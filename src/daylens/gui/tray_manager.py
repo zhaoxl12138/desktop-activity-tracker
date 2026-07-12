@@ -61,10 +61,8 @@ class TrayManager:
         self.tooltip_timer.start(60000)
         self._update_tooltip()
 
-        self.report_timer = QTimer(self.tray)
-        self.report_timer.timeout.connect(self._auto_generate_report)
-        self.report_timer.start(300000)
-        self._auto_generate_report()
+        # 报告由主窗口统一调度。托盘只负责展示状态和手动操作，
+        # 避免和主窗口同时生成同一份报告、重复读库和写文件。
 
     def set_main_window(self, window) -> None:
         self.main_window = window
@@ -169,7 +167,7 @@ class TrayManager:
             worker.pause()
 
     def _auto_generate_report(self) -> None:
-        """Silent auto-generation every 5 minutes; overwrites today's report."""
+        """兼容旧调用入口；仅在显式调用时生成，不再由定时器触发。"""
         reports_dir = os.path.join(self.reports_dir, "daily")
         try:
             generate_daily_report(

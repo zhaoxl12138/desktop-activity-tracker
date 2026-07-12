@@ -516,8 +516,10 @@ class MainWindow(QMainWindow):
         if not key:
             return
         previous_key = self._current_nav_key
-        if previous_key == "today" and key != "today":
-            self.pages["today"].deactivate()
+        if previous_key and previous_key != key:
+            previous_page = self.pages.get(previous_key)
+            if previous_page is not None and hasattr(previous_page, "deactivate"):
+                previous_page.deactivate()
         for index, (title, nav_key, hint) in enumerate(NAV_ITEMS):
             if nav_key == key:
                 self.stack.setCurrentIndex(index)
@@ -528,6 +530,9 @@ class MainWindow(QMainWindow):
                     self._set_random_poetry(force=True)
                 else:
                     self.lbl_page_hint.setText(hint)
+                    page = self.pages.get(key)
+                    if page is not None and hasattr(page, "activate"):
+                        page.activate(force=previous_key != key)
                 if self._last_sample is not None:
                     if key == "live":
                         self.pages["live"].on_sample_updated(self._last_sample)

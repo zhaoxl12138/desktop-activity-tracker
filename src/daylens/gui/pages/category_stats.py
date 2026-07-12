@@ -209,6 +209,8 @@ class CategoryStatsPage(QWidget):
         self._cards = {}
         self._expanded_key = None
         self._current_date = ""
+        self._is_active = False
+        self._last_signature = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 24)
@@ -241,16 +243,47 @@ class CategoryStatsPage(QWidget):
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
-        self.timer.start(30000)
-        self.refresh()
+        self.timer.setInterval(30000)
+
+    def activate(self, force: bool = False) -> None:
+        self._is_active = True
+        if not self.timer.isActive():
+            self.timer.start()
+        if force or self._last_signature is None:
+            self.refresh()
+
+    def deactivate(self) -> None:
+        self._is_active = False
+        self.timer.stop()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self.activate()
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        self.deactivate()
+        super().hideEvent(event)
 
     def refresh(self):
+        if not self._is_active:
+            return
         self.error_lbl.hide()
         try:
             summary = category_stats_service.load_category_summary(self.db_path)
             self._current_date = str(summary["today"])
             categories = list(summary["categories"])
             total_eff = int(summary["total_effective_seconds"])
+            signature = (
+                self._current_date,
+                total_eff,
+                tuple(
+                    (item.get("category_key"), item.get("effective_seconds"), item.get("category_name"))
+                    for item in categories
+                ),
+            )
+            if signature == self._last_signature:
+                return
+            self._last_signature = signature
             self.total_label.setText(str(summary["total_label"]))
 
             if not categories:
@@ -319,4 +352,3 @@ class CategoryStatsPage(QWidget):
         card = self._cards.get(cat_key)
         if card:
             card.set_expanded(False)
-

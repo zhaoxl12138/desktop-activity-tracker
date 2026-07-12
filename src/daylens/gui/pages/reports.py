@@ -34,6 +34,8 @@ class ReportsPage(QWidget):
         self.obsidian_path = obsidian_path
         self.selected_report: dict | None = None
         self.selected_reports: list[dict] = []
+        self._is_active = False
+        self._last_signature = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 24)
@@ -58,8 +60,26 @@ class ReportsPage(QWidget):
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
-        self.timer.start(60000)
-        self.refresh()
+        self.timer.setInterval(60000)
+
+    def activate(self, force: bool = False) -> None:
+        self._is_active = True
+        if not self.timer.isActive():
+            self.timer.start()
+        if force or self._last_signature is None:
+            self.refresh()
+
+    def deactivate(self) -> None:
+        self._is_active = False
+        self.timer.stop()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self.activate()
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        self.deactivate()
+        super().hideEvent(event)
 
     def _build_generation_bar(self) -> QFrame:
         frame = QFrame()
@@ -251,6 +271,12 @@ class ReportsPage(QWidget):
         ]
         for index, (table, subdir, title) in enumerate(table_specs):
             rows = reports_service.list_report_rows(self.reports_dir, subdir, limit=50)
+            signature = tuple(
+                (row.get("filename"), row.get("size_text"), row.get("modified_text"))
+                for row in rows
+            )
+            if self._last_signature is not None and self._last_signature[index] == signature:
+                continue
             table.blockSignals(True)
             table.clearContents()
             table.setRowCount(len(rows))
@@ -265,6 +291,9 @@ class ReportsPage(QWidget):
             table.clearSelection()
             table.blockSignals(False)
             self.tabs.setTabText(index, f"{title}  {len(rows)}")
+            if self._last_signature is None:
+                self._last_signature = [None, None, None]
+            self._last_signature[index] = signature
         self._clear_selection()
 
     def _select_from_table(self, table: QTableWidget) -> None:
