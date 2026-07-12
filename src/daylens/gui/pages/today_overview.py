@@ -12,7 +12,6 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QFileIconProvider,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QVBoxLayout,
@@ -64,17 +63,24 @@ class TodayOverviewPage(QWidget):
         root.setContentsMargins(18, 18, 18, 18)
         root.setSpacing(14)
 
-        content_grid = QGridLayout()
-        content_grid.setHorizontalSpacing(14)
-        content_grid.setVerticalSpacing(14)
-        root.addLayout(content_grid, 1)
+        columns = QHBoxLayout()
+        columns.setSpacing(14)
+        root.addLayout(columns, 1)
 
         self.distribution_card = self._build_distribution_card()
         self.focus_timeline_card = self._build_focus_timeline_card()
         self.time_stats_card = None
         self.time_stats_ratio_ring = None
-        content_grid.addWidget(self.distribution_card, 0, 0, 1, 8)
-        content_grid.addWidget(self.focus_timeline_card, 1, 0, 1, 8)
+
+        left_panel = QWidget()
+        left_panel.setStyleSheet("background: transparent;")
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(14)
+        left_layout.addWidget(self.distribution_card)
+        left_layout.addWidget(self.focus_timeline_card)
+        left_layout.addStretch(1)
+        columns.addWidget(left_panel, 7)
 
         # Right panel: trend chart + TOP5 in a single vertical layout
         right_panel = QWidget()
@@ -86,15 +92,7 @@ class TodayOverviewPage(QWidget):
         self.top_app_card = TopAppListWidget()
         right_layout.addWidget(self.trend_card, 4)
         right_layout.addWidget(self.top_app_card, 6)
-        content_grid.addWidget(right_panel, 0, 8, 2, 4)
-
-        # Keep the timeline/session area at its natural height. When there
-        # are no long sessions yet, the empty state must not fill the window.
-        content_grid.setRowStretch(0, 1)
-        content_grid.setRowStretch(1, 0)
-        for column in range(8):
-            content_grid.setColumnStretch(column, 1)
-        content_grid.setColumnStretch(8, 4)
+        columns.addWidget(right_panel, 4)
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._refresh_if_active)
