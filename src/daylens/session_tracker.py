@@ -588,7 +588,7 @@ class SessionTracker:
         if (
             self._current.category_key == "video"
             and self._audio_detector is not None
-            and self._audio_detector.is_any_playing()
+            and self._audio_detector.is_playing(self._last_pid)
         ):
             # Audio peaks detected → always effective, reset idle timer
             self._persistent_idle = 0.0
@@ -666,7 +666,7 @@ class SessionTracker:
         is_ent = cat_key == "video"
         audio_playing = (
             is_ent and self._audio_detector is not None
-            and self._audio_detector.is_any_playing()
+            and self._audio_detector.is_playing(self._last_pid)
         )
         idle_limit = self.entertainment_idle_threshold if is_ent else self.idle_threshold
         is_eff = audio_playing or (self._persistent_idle <= idle_limit)

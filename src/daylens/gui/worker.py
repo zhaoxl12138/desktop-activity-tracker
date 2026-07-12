@@ -26,6 +26,7 @@ class RecordingWorker(QThread):
         self.config = config
         self._running = True
         self._paused = False
+        self._pause_requested = False
         self._last_error = ""
 
         tracker_cfg = config.get("tracker", {})
@@ -89,6 +90,10 @@ class RecordingWorker(QThread):
         kb_listener.start()
 
         while self._running:
+            if self._pause_requested:
+                if self._tracker.current_session is not None:
+                    self._tracker.finish_current("paused")
+                self._pause_requested = False
             if self._paused:
                 self._sleep_check(1000)
                 continue
@@ -152,6 +157,7 @@ class RecordingWorker(QThread):
             self._tracker.classifier = classifier.Classifier(self.config_path, self.db_path)
 
     def pause(self):
+        self._pause_requested = True
         self._paused = True
 
     def resume(self):

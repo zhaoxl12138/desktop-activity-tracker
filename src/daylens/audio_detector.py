@@ -34,7 +34,7 @@ class AudioDetector:
 
     def is_playing(self, pid: int | None) -> bool:
         if pid is None:
-            return True
+            return False
 
         now = time.time()
         if pid == self._last_pid and now - self._last_check < self._interval:
@@ -53,7 +53,9 @@ class AudioDetector:
             # No session for this PID — might be child-process audio
             self._cached = self.is_any_playing()
         except Exception:
-            self._cached = True
+            # Unknown is safer than treating unrelated system audio as proof
+            # that the foreground video is playing.
+            self._cached = False
 
         return self._cached
 
