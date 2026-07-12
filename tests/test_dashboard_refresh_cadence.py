@@ -122,3 +122,28 @@ def test_today_overview_exposes_shell_summary_from_same_snapshot(tmp_path, monke
     }
     page.deleteLater()
     app.processEvents()
+
+
+def test_today_overview_compacts_empty_focus_area(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    db_path = tmp_path / "usage.db"
+    database.close_db(database.init_db(str(db_path)))
+
+    def fake_snapshot(_db_path, _resolver):
+        return {
+            "today": "2026-06-06", "stats": {},
+            "totals": {"effective_seconds": 0, "idle_seconds": 0, "total_seconds": 0, "active_ratio": 0},
+            "distribution_sections": [], "day_comparison": {}, "sessions": [],
+            "focus_summary": "", "consecutive_days": 0, "top_app_rows": [],
+            "trend": {"today": [0] * 24, "yesterday": [0] * 24, "seven_days": [[0] * 24 for _ in range(7)], "thirty_days": [0] * 30},
+        }
+
+    monkeypatch.setattr("desktop_activity_tracker.gui.pages.today_overview.load_today_snapshot", fake_snapshot)
+    page = TodayOverviewPage(str(db_path))
+    page.activate(force=True)
+    app.processEvents()
+
+    assert page.focus_timeline_card.maximumHeight() <= 380
+    assert page.trend_card.maximumHeight() <= 300
+    page.deleteLater()
+    app.processEvents()
