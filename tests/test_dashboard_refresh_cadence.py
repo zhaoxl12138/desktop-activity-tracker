@@ -87,3 +87,38 @@ def test_today_overview_only_refreshes_after_activation(tmp_path, monkeypatch):
     assert page.timer.isActive() is False
     page.deleteLater()
     app.processEvents()
+
+
+def test_today_overview_exposes_shell_summary_from_same_snapshot(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    db_path = tmp_path / "usage.db"
+    database.close_db(database.init_db(str(db_path)))
+
+    def fake_snapshot(_db_path, _resolver):
+        return {
+            "today": "2026-06-06",
+            "stats": {},
+            "totals": {"effective_seconds": 420, "idle_seconds": 30, "total_seconds": 450, "active_ratio": 93},
+            "distribution_sections": [
+                {"category_key": "work", "label": "工作学习", "seconds": 240},
+                {"category_key": "video", "label": "娱乐休闲", "seconds": 120},
+                {"category_key": "social", "label": "社交通讯", "seconds": 60},
+            ],
+            "day_comparison": {}, "sessions": [], "focus_summary": "", "consecutive_days": 0,
+            "top_app_rows": [],
+            "trend": {"today": [0] * 24, "yesterday": [0] * 24, "seven_days": [[0] * 24 for _ in range(7)], "thirty_days": [0] * 30},
+        }
+
+    monkeypatch.setattr("desktop_activity_tracker.gui.pages.today_overview.load_today_snapshot", fake_snapshot)
+    page = TodayOverviewPage(str(db_path))
+    page.activate(force=True)
+    app.processEvents()
+
+    assert page.last_shell_summary == {
+        "effective_seconds": 420,
+        "work_seconds": 240,
+        "entertainment_seconds": 120,
+        "social_seconds": 60,
+    }
+    page.deleteLater()
+    app.processEvents()

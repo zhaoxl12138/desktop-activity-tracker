@@ -43,6 +43,12 @@ class TodayOverviewPage(QWidget):
         self.last_stats_date: str | None = None
         self.last_stats: dict[str, object] = {}
         self.last_snapshot_totals: dict[str, object] = {}
+        self.last_shell_summary: dict[str, int] = {
+            "effective_seconds": 0,
+            "work_seconds": 0,
+            "entertainment_seconds": 0,
+            "social_seconds": 0,
+        }
         self.last_consecutive_days = 0
         setattr(self, "metric_cards", {})
         self.time_stats_labels: dict[str, QLabel] = {}
@@ -82,8 +88,10 @@ class TodayOverviewPage(QWidget):
         right_layout.addWidget(self.top_app_card, 6)
         content_grid.addWidget(right_panel, 0, 8, 2, 4)
 
-        content_grid.setRowStretch(0, 4)
-        content_grid.setRowStretch(1, 6)
+        # Keep the timeline/session area at its natural height. When there
+        # are no long sessions yet, the empty state must not fill the window.
+        content_grid.setRowStretch(0, 1)
+        content_grid.setRowStretch(1, 0)
         for column in range(8):
             content_grid.setColumnStretch(column, 1)
         content_grid.setColumnStretch(8, 4)
@@ -443,6 +451,13 @@ class TodayOverviewPage(QWidget):
             (str(item["label"]), int(item["seconds"]), self._distribution_color(str(item["category_key"])))
             for item in snapshot["distribution_sections"]
         ]
+        category_seconds = {str(item["category_key"]): int(item["seconds"]) for item in snapshot["distribution_sections"]}
+        self.last_shell_summary = {
+            "effective_seconds": effective,
+            "work_seconds": category_seconds.get("work", 0),
+            "entertainment_seconds": category_seconds.get("video", category_seconds.get("entertainment", 0)),
+            "social_seconds": category_seconds.get("social", 0),
+        }
         self.donut_widget.set_data(effective, distribution)
         self.legend_widget.set_items(distribution, effective)
 

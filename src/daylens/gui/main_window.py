@@ -590,7 +590,10 @@ class MainWindow(QMainWindow):
             stats = today_page.last_stats
         else:
             stats = None
-        summary = load_shell_summary(self.db_path, stats)
+        if today_page is not None and today_page.last_stats_date == today and today_page.last_shell_summary:
+            summary = today_page.last_shell_summary
+        else:
+            summary = load_shell_summary(self.db_path, stats)
         self.capsule_values["total"].setText(fmt_seconds(summary["effective_seconds"]))
         self.capsule_values["work"].setText(fmt_seconds(summary["work_seconds"]))
         self.capsule_values["ent"].setText(fmt_seconds(summary["entertainment_seconds"]))
