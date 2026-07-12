@@ -120,7 +120,7 @@ def test_rule_config_page_match_hint_has_stable_info_bar_layout():
 
         assert page.match_hint_frame.minimumHeight() >= 36
         assert page.match_hint.text().startswith("当前配置")
-        assert not page.match_hint.wordWrap()
+        assert page.match_hint.wordWrap()
         assert page.match_hint.height() >= page.match_hint.minimumSizeHint().height()
 
 

@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...app_scanner import classify_scanned_apps, scan_installed_apps
 from ...services.rules_service import load_rule_categories, save_rule_categories
 from .. import style as ui_style
 
@@ -113,6 +114,11 @@ class RuleConfigPage(QWidget):
         self.db_path = db_path
         self.worker = worker
         self.categories = load_rule_categories(self.config_path, self.db_path)
+        self._factory_keys = set(self.categories) - {
+            key for key in self.categories if key.startswith("custom_")
+        }
+        self._loading_editor = False
+        self._dirty = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 24)
@@ -256,7 +262,7 @@ class RuleConfigPage(QWidget):
 
         self.match_hint_frame = QFrame()
         self.match_hint_frame.setObjectName("ruleMatchHint")
-        self.match_hint_frame.setFixedHeight(48)
+        self.match_hint_frame.setMinimumHeight(48)
         self.match_hint_frame.setStyleSheet(
             _frame_style("ruleMatchHint", "card_bg_alt", 10)
         )
@@ -274,7 +280,7 @@ class RuleConfigPage(QWidget):
         match_hint_layout.addWidget(hint_icon, 0, Qt.AlignTop)
 
         self.match_hint = QLabel("")
-        self.match_hint.setWordWrap(False)
+        self.match_hint.setWordWrap(True)
         self.match_hint.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         self.match_hint.setStyleSheet(
             f"font-size: 12px; color: {ui_style.COLORS['text_muted']};"
@@ -347,18 +353,26 @@ class RuleConfigPage(QWidget):
         self.btn_delete.setCursor(Qt.PointingHandCursor)
         self.btn_delete.clicked.connect(self._delete_current)
 
+        self.btn_rescan = QPushButton("重新扫描应用")
+        self.btn_rescan.setStyleSheet(ui_style.get_button_secondary_style())
+        self.btn_rescan.setCursor(Qt.PointingHandCursor)
+        self.btn_rescan.clicked.connect(self._rescan_apps)
+
         btn_row.addStretch()
         btn_row.addWidget(self.btn_add)
         btn_row.addWidget(self.btn_delete)
+        btn_row.addWidget(self.btn_rescan)
         btn_row.addWidget(self.btn_save)
         right_layout.addWidget(self.action_bar)
         return right
 
-    def _save_to_db(self):
+    def _save_to_db(self) -> bool:
         try:
             save_rule_categories(self.db_path, self.categories)
-        except Exception:
-            pass
+            return True
+        except Exception as exc:
+            QMessageBox.warning(self, "保存失败", f"规则未保存：{exc}")
+            return False
 
     def _populate_list(self):
         self.cat_list.clear()
@@ -407,23 +421,54 @@ class RuleConfigPage(QWidget):
 
         key = self.cat_list.item(row).data(Qt.UserRole)
         cat = self.categories[key]
-        cat["display_name"] = self.edit_name.text().strip()
+        display_name = self.edit_name.text().strip()
+        if not display_name:
+            QMessageBox.warning(self, "无法保存", "分类名称不能为空。")
+            return
+        cat["display_name"] = display_name
         cat.setdefault("match", {})
-        cat["match"]["process_names"] = [
+        cat["match"]["process_names"] = list(dict.fromkeys([
             item.strip() for item in self.edit_processes.toPlainText().split("\n") if item.strip()
-        ]
-        cat["match"]["title_keywords"] = [
+        ]))
+        cat["match"]["title_keywords"] = list(dict.fromkeys([
             item.strip() for item in self.edit_keywords.toPlainText().split("\n") if item.strip()
-        ]
+        ]))
         cat["active_rule"] = _RULE_OPTIONS[self.edit_rule.currentIndex()]["key"]
 
-        self._save_to_db()
+        if not self._save_to_db():
+            return
         self._populate_list()
         self.cat_list.setCurrentRow(row)
         if self.worker:
             self.worker.reload_classifier()
 
         QMessageBox.information(self, "保存成功", f"分类“{cat['display_name']}”已更新。")
+
+    def _rescan_apps(self):
+        try:
+            apps = scan_installed_apps()
+            classified = classify_scanned_apps(apps)
+            added = 0
+            for category_key, process_names in classified.items():
+                if category_key not in self.categories:
+                    self.categories[category_key] = {
+                        "display_name": category_key,
+                        "active_rule": "interactive_required",
+                        "match": {"process_names": [], "title_keywords": []},
+                    }
+                match = self.categories[category_key].setdefault("match", {})
+                existing = list(match.get("process_names", []))
+                merged = list(dict.fromkeys(existing + sorted(process_names)))
+                added += max(0, len(merged) - len(existing))
+                match["process_names"] = merged
+            if not self._save_to_db():
+                return
+            self._populate_list()
+            if self.worker:
+                self.worker.reload_classifier()
+            QMessageBox.information(self, "扫描完成", f"发现 {len(apps)} 个应用，新增 {added} 条分类规则。")
+        except Exception as exc:
+            QMessageBox.warning(self, "扫描失败", str(exc))
 
     def _add_category(self):
         new_key = f"custom_{len(self.categories)}"
@@ -447,7 +492,7 @@ class RuleConfigPage(QWidget):
             return
 
         key = self.cat_list.item(row).data(Qt.UserRole)
-        if key in _FACTORY_KEYS:
+        if key in self._factory_keys:
             QMessageBox.warning(self, "不可删除", "系统保留分类不可删除。")
             return
 
@@ -459,7 +504,8 @@ class RuleConfigPage(QWidget):
         )
         if reply == QMessageBox.Yes:
             del self.categories[key]
-            self._save_to_db()
+            if not self._save_to_db():
+                return
             if self.worker:
                 self.worker.reload_classifier()
             self._populate_list()
