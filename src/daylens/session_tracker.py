@@ -219,6 +219,7 @@ class SessionTracker:
         self._activity_from_hook: bool = False  # set by pynput listener
         self._idle_corrected: bool = False  # back-correct threshold window once per idle period
         self._awaiting_activity: bool = False  # don't create new session while idle after auto-close
+        self._last_tick_wall_time: datetime | None = None
 
     # ── Public API ──────────────────────────────────────────────────
 
@@ -265,6 +266,23 @@ class SessionTracker:
 
         now = datetime.now()
         date_str = now.strftime("%Y-%m-%d")
+
+        # Lock/sleep can pause the worker for minutes or hours. Treat a large
+        # sampling gap as a hard boundary instead of attributing the gap to
+        # the foreground application.
+        if (
+            self._last_tick_wall_time is not None
+            and (now - self._last_tick_wall_time).total_seconds()
+            > max(120, self.idle_threshold * 2)
+        ):
+            if self._current is not None:
+                self._current.end_time = self._last_tick_wall_time
+                self._current.switch_reason = "system_gap"
+                self._emit_session()
+            self._pending_switch = None
+            self._persistent_idle = 0.0
+            self._awaiting_activity = True
+        self._last_tick_wall_time = now
 
         # Resolve window info
         if win_info and (win_info.get("process_name") or win_info.get("window_title")):

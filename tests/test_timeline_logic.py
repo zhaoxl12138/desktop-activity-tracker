@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -142,6 +142,21 @@ def test_video_auto_close_keeps_duration_components_consistent(monkeypatch):
     assert ended
     session = ended[0]
     assert session.duration_seconds >= session.effective_seconds + session.idle_seconds
+
+
+def test_large_sampling_gap_closes_session(monkeypatch):
+    monkeypatch.setattr("daylens.session_tracker._get_cursor_pos", lambda: (0, 0))
+    monkeypatch.setattr("daylens.session_tracker._get_keyboard_snapshot", lambda: b"")
+    ended = []
+    tracker = SessionTracker(
+        config={"tracker": {"sample_interval_seconds": 1, "flush_interval_seconds": 99, "min_session_seconds": 1}},
+        classifier=FakeClassifier(), on_session_end=ended.append,
+    )
+    tracker.tick(0, {"process_name": "Code.exe", "window_title": "main.py", "exe_path": ""})
+    tracker._last_tick_wall_time -= timedelta(seconds=600)
+    tracker.tick(0, {"process_name": "Code.exe", "window_title": "main.py", "exe_path": ""})
+
+    assert ended and ended[0].switch_reason == "system_gap"
 
 
 def test_worker_self_window_snapshot_is_marked_ignored():

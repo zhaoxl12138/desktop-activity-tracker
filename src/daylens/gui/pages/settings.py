@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 
 from ...services import settings_service
+from ...services.data_quality_service import inspect_data_quality
 from ...services.restart_service import database_path_changed
 from .. import style as ui_style
 
@@ -194,6 +195,12 @@ class SettingsPage(QWidget):
         btn_clean.clicked.connect(self._clean_old)
         g3l.addWidget(btn_clean, 0, Qt.AlignLeft)
 
+        btn_quality = QPushButton("检查数据质量")
+        btn_quality.setStyleSheet(ui_style.get_button_secondary_style())
+        btn_quality.setCursor(Qt.PointingHandCursor)
+        btn_quality.clicked.connect(self._check_data_quality)
+        g3l.addWidget(btn_quality, 0, Qt.AlignLeft)
+
         layout.addWidget(g3)
 
         # ── Save ──
@@ -309,6 +316,23 @@ class SettingsPage(QWidget):
         d = QFileDialog.getExistingDirectory(self, "选择目录")
         if d:
             edit.setText(d)
+
+    def _check_data_quality(self):
+        try:
+            result = inspect_data_quality(self.db_path)
+            if result["issue_count"]:
+                QMessageBox.warning(
+                    self, "数据质量检查",
+                    f"检查 {result['checked_sessions']} 个 Session，发现 {result['issue_count']} 个问题。\n"
+                    f"当前可信度：{result['score']}%",
+                )
+            else:
+                QMessageBox.information(
+                    self, "数据质量检查",
+                    f"检查 {result['checked_sessions']} 个 Session，未发现异常。\n当前可信度：100%",
+                )
+        except Exception as exc:
+            QMessageBox.warning(self, "检查失败", str(exc))
 
     def _clean_old(self):
         reply = QMessageBox.question(
