@@ -108,6 +108,20 @@ def generate_daily_report(db_path: str, reports_dir: str) -> str:
     return exporter.export_markdown(db_path, today, os.path.join(reports_dir, "daily"))
 
 
+def auto_generate_daily_report(db_path: str, reports_dir: str) -> str | None:
+    """Refresh today's daily report and return its path.
+
+    The operation is intentionally idempotent: exporting again updates the
+    same date file with the latest sessions, which makes it safe to run hourly.
+    """
+    try:
+        return generate_daily_report(db_path, reports_dir)
+    except Exception as exc:
+        import sys
+        print(f"[AutoReport] Daily generation failed: {exc}", file=sys.stderr)
+        return None
+
+
 def generate_weekly_report(db_path: str, reports_dir: str) -> str:
     today = date.today()
     iso_year, iso_week, _ = today.isocalendar()

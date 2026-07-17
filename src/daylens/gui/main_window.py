@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 from ..utils import fmt_seconds
 from ..services.shell_service import generate_daily_report, load_poetry_hint, load_shell_summary
 from ..services.reports_service import (
+    auto_generate_daily_report,
     auto_generate_current_reports,
 )
 from ..services.restart_service import current_launch_command, schedule_restart
@@ -121,6 +122,10 @@ class MainWindow(QMainWindow):
         self.report_schedule_timer = QTimer(self)
         self.report_schedule_timer.timeout.connect(self._check_report_schedule)
         self.report_schedule_timer.start(300000)  # every 5 minutes
+        self.daily_report_timer = QTimer(self)
+        self.daily_report_timer.timeout.connect(self._auto_generate_daily_report)
+        self.daily_report_timer.start(3600000)  # refresh today's report every hour
+        QTimer.singleShot(10000, self._auto_generate_daily_report)
 
     def _init_pages(self) -> None:
         """Create page widgets once. Reused across theme toggles."""
@@ -656,6 +661,19 @@ class MainWindow(QMainWindow):
             import sys, traceback
             print(f"[AutoReport] Error: {e}", file=sys.stderr)
             traceback.print_exc()
+
+    def _auto_generate_daily_report(self):
+        """Refresh today's report hourly without interrupting the GUI."""
+        path = auto_generate_daily_report(self.db_path, self.reports_dir)
+        if path:
+            obsidian_path = self._live_obsidian_path()
+            if obsidian_path:
+                try:
+                    from ..exporter import sync_to_obsidian
+                    sync_to_obsidian(path, obsidian_path)
+                except Exception as exc:
+                    import sys
+                    print(f"[AutoReport] Daily Obsidian sync failed: {exc}", file=sys.stderr)
 
     def _live_obsidian_path(self) -> str:
         """Return obsidian_output_path from in-memory config (merged with DB on startup)."""

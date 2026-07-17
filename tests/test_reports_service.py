@@ -109,3 +109,18 @@ def test_auto_generate_refreshes_existing_current_reports(tmp_path: Path, monkey
 
     assert calls == ["weekly", "monthly"]
     assert generated == [str(weekly), str(monthly)]
+
+
+def test_auto_generate_daily_report_refreshes_today(tmp_path: Path, monkeypatch):
+    expected = tmp_path / "daily" / "2026-07-17.md"
+    calls = []
+    monkeypatch.setattr(
+        reports_service,
+        "generate_daily_report",
+        lambda db_path, reports_dir: calls.append((db_path, reports_dir)) or str(expected),
+    )
+
+    result = reports_service.auto_generate_daily_report("usage.db", str(tmp_path))
+
+    assert result == str(expected)
+    assert calls == [("usage.db", str(tmp_path))]
