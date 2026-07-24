@@ -50,8 +50,8 @@ class AudioDetector:
                     meter = s._ctl.QueryInterface(IAudioMeterInformation)
                     self._cached = meter.GetPeakValue() > _PEAK_THRESHOLD
                     return self._cached
-            # No session for this PID — might be child-process audio
-            self._cached = self.is_any_playing()
+            # No target session: unrelated audio is not playback evidence.
+            self._cached = False
         except Exception:
             # Unknown is safer than treating unrelated system audio as proof
             # that the foreground video is playing.

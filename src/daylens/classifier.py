@@ -10,6 +10,22 @@ from . import get_app_root
 # video/entertainment, they win (content-is-king principle).
 _LEARNING_CATEGORIES = {"reading", "coding", "ai_tools", "office", "creative"}
 
+_DEFAULT_BROWSER_PROCESSES = {
+    "chrome.exe",
+    "msedge.exe",
+    "iexplore.exe",
+    "firefox.exe",
+    "msedgewebview2.exe",
+    "chromium.exe",
+    "brave.exe",
+    "vivaldi.exe",
+    "opera.exe",
+    "360chrome.exe",
+    "360chromex.exe",
+    "qqbrowser.exe",
+    "sogouexplorer.exe",
+}
+
 
 def _match_title(title_lower, match_rules, compiled_patterns=None):
     """Return (matched_keywords, matched_patterns) for title against rules."""
@@ -34,6 +50,12 @@ class Classifier:
             database.merge_custom_rules(self.config, db_path)
             self.categories = self.config.get("categories", {})
 
+        browser_match = self.categories.get("browser_general", {}).get("match", {})
+        self.browser_processes = _DEFAULT_BROWSER_PROCESSES | {
+            process.lower()
+            for process in browser_match.get("process_names", [])
+            if process
+        }
         self.idle_threshold = self.config.get("idle_threshold_seconds", 60)
 
         # Precompile regex patterns once at startup (avoid re.compile per tick)
@@ -55,7 +77,7 @@ class Classifier:
         # First pass: match both process_names + title_keywords (highest specificity)
         title_matches = []
         for key, cat in self.categories.items():
-            if key == "other":
+            if key in ("other", "browser_general"):
                 continue
             match_rules = cat.get("match", {})
             proc_list = [p.lower() for p in match_rules.get("process_names", [])]
@@ -80,9 +102,7 @@ class Classifier:
         # msedgewebview2.exe is the Edge WebView2 runtime embedded by
         # desktop apps (Tencent Video, iQiyi, etc.). Treat it like a
         # browser so title-based classification works.
-        browser_procs = {"chrome.exe", "msedge.exe", "iexplore.exe", "firefox.exe",
-                         "msedgewebview2.exe"}
-        if process_name in browser_procs:
+        if process_name in self.browser_processes:
             title_only_matches = []
             for key, cat in self.categories.items():
                 if key in ("other", "browser_general"):
@@ -116,7 +136,7 @@ class Classifier:
             # apps (iQiyi, Tencent Video) MUST NOT be reclassified by
             # title — their episode titles (第\d+集) collide with
             # learning patterns.
-            if best[0] == "video" and process_name in browser_procs:
+            if best[0] == "video" and process_name in self.browser_processes:
                 for key, cat in self.categories.items():
                     if key not in _LEARNING_CATEGORIES:
                         continue
@@ -133,8 +153,7 @@ class Classifier:
 
         # Browser general fallback
         bg = self.categories.get("browser_general", {})
-        bg_procs = [p.lower() for p in bg.get("match", {}).get("process_names", [])]
-        if bg_procs and process_name in bg_procs:
+        if process_name in self.browser_processes:
             return {
                 "category_key": "browser_general",
                 "category_name": bg.get("display_name", "浏览器"),

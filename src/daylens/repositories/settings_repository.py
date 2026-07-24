@@ -121,12 +121,17 @@ def merge_custom_rules(config: dict, db_path: str) -> None:
 
     categories = config.setdefault("categories", {})
     for key, rule in custom_rules.items():
+        base_category = categories.get(key, {})
+        base_match = base_category.get("match", {}) if isinstance(base_category, dict) else {}
+        title_keywords = rule["title_keywords"] or list(
+            base_match.get("title_keywords", []) or []
+        )
         categories[key] = {
             "display_name": rule["display_name"],
             "active_rule": rule["active_rule"],
             "match": {
                 "process_names": rule["process_names"],
-                "title_keywords": rule["title_keywords"],
+                "title_keywords": title_keywords,
             },
         }
 
