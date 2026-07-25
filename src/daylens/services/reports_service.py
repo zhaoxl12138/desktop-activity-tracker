@@ -5,6 +5,7 @@ from __future__ import annotations
 import glob
 import os
 import shutil
+import sqlite3
 from datetime import date, datetime
 
 from .. import exporter
@@ -120,6 +121,62 @@ def auto_generate_daily_report(db_path: str, reports_dir: str) -> str | None:
         import sys
         print(f"[AutoReport] Daily generation failed: {exc}", file=sys.stderr)
         return None
+
+
+def list_recorded_dates(db_path: str) -> list[str]:
+    """Return every date represented by Session or legacy sample data."""
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            """
+            SELECT date FROM activity_sessions WHERE date != ''
+            UNION
+            SELECT date FROM activity_logs WHERE date != ''
+            ORDER BY date
+            """
+        ).fetchall()
+        return [str(row[0]) for row in rows if row[0]]
+    finally:
+        conn.close()
+
+
+def backfill_missing_daily_reports(
+    db_path: str,
+    reports_dir: str,
+    obsidian_path: str = "",
+    today_str: str | None = None,
+) -> dict[str, object]:
+    """Generate missing historical daily reports without overwriting files."""
+    today_str = today_str or datetime.now().strftime("%Y-%m-%d")
+    daily_dir = os.path.join(reports_dir, "daily")
+    generated_paths: list[str] = []
+    failures: list[dict[str, str]] = []
+    skipped_count = 0
+
+    for date_str in list_recorded_dates(db_path):
+        report_path = exporter.daily_report_path(daily_dir, date_str)
+        if date_str >= today_str or os.path.isfile(report_path):
+            skipped_count += 1
+            continue
+        try:
+            generated_path = exporter.export_markdown(
+                db_path,
+                date_str,
+                daily_dir,
+            )
+            generated_paths.append(generated_path)
+            if obsidian_path:
+                exporter.sync_to_obsidian(generated_path, obsidian_path)
+        except Exception as exc:
+            failures.append({"date": date_str, "error": str(exc)})
+
+    return {
+        "generated_count": len(generated_paths),
+        "skipped_count": skipped_count,
+        "failure_count": len(failures),
+        "generated_paths": generated_paths,
+        "failures": failures,
+    }
 
 
 def generate_weekly_report(db_path: str, reports_dir: str) -> str:

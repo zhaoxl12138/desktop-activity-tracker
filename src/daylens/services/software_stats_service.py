@@ -16,22 +16,30 @@ def load_software_rows(db_path: str, display_name_mapping: dict[str, str]) -> li
     stats = database.query_date_stats(db_path, today)
     details = stats.get("by_app_detail", [])
     total_eff = stats.get("totals", {}).get("effective_seconds", 0) or 1
-    by_app = stats.get("by_app", [])
+    fallback_categories = {}
+    for category_app in stats.get("by_app", []):
+        process_name = category_app.get("process_name", "")
+        fallback_categories.setdefault(process_name, category_app)
 
     rows: list[dict[str, str]] = []
     for app in details:
         process_name = app.get("process_name", "")
         display_name = display_name_mapping.get(process_name, process_name)
         title = (app.get("window_title", "") or "-")[:60]
-        category_name = ""
-        category_key = ""
-        for category_app in by_app:
-            if category_app["process_name"] == process_name:
-                raw_category_name = str(category_app.get("category_name", "") or "")
-                raw_category_key = str(category_app.get("category_key", "") or "")
-                category_name = normalize_category_display_name(raw_category_key, raw_category_name)
-                category_key = normalize_category_bucket_key(raw_category_key, raw_category_name)
-                break
+        raw_category_name = str(app.get("category_name", "") or "")
+        raw_category_key = str(app.get("category_key", "") or "")
+        if not raw_category_key and not raw_category_name:
+            fallback = fallback_categories.get(process_name, {})
+            raw_category_name = str(fallback.get("category_name", "") or "")
+            raw_category_key = str(fallback.get("category_key", "") or "")
+        category_name = normalize_category_display_name(
+            raw_category_key,
+            raw_category_name,
+        )
+        category_key = normalize_category_bucket_key(
+            raw_category_key,
+            raw_category_name,
+        )
         seconds = app.get("effective_seconds", 0) or 0
         rows.append(
             {

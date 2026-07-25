@@ -81,6 +81,11 @@ def test_main_window_handles_settings_restart_requests():
     assert "schedule_restart(current_launch_command())" in MAIN_WINDOW_SOURCE
 
 
+def test_main_window_schedules_background_report_backfill():
+    assert "ReportBackfillWorker" in MAIN_WINDOW_SOURCE
+    assert "QTimer.singleShot(15000, self._start_report_backfill)" in MAIN_WINDOW_SOURCE
+
+
 def test_tray_manager_avoids_direct_database_and_exporter_calls():
     assert "database.query_" not in TRAY_MANAGER_SOURCE
     assert "exporter." not in TRAY_MANAGER_SOURCE

@@ -33,6 +33,7 @@ from ..services.reports_service import (
     auto_generate_current_reports,
 )
 from ..services.restart_service import current_launch_command, schedule_restart
+from .report_backfill_worker import ReportBackfillWorker
 from .pages.category_stats import CategoryStatsPage
 from .pages.live_monitor import LiveMonitorPage
 from .pages.reports import ReportsPage
@@ -126,6 +127,8 @@ class MainWindow(QMainWindow):
         self.daily_report_timer.timeout.connect(self._auto_generate_daily_report)
         self.daily_report_timer.start(3600000)  # refresh today's report every hour
         QTimer.singleShot(10000, self._auto_generate_daily_report)
+        self._report_backfill_worker = None
+        QTimer.singleShot(15000, self._start_report_backfill)
 
     def _init_pages(self) -> None:
         """Create page widgets once. Reused across theme toggles."""
@@ -674,6 +677,43 @@ class MainWindow(QMainWindow):
                 except Exception as exc:
                     import sys
                     print(f"[AutoReport] Daily Obsidian sync failed: {exc}", file=sys.stderr)
+
+    def _start_report_backfill(self) -> None:
+        worker = self._report_backfill_worker
+        if worker is not None and worker.isRunning():
+            return
+        worker = ReportBackfillWorker(
+            self.db_path,
+            self.reports_dir,
+            self._live_obsidian_path(),
+            self,
+        )
+        self._report_backfill_worker = worker
+        worker.completed.connect(self._on_report_backfill_completed)
+        worker.failed.connect(self._on_report_backfill_failed)
+        worker.finished.connect(self._cleanup_report_backfill_worker)
+        worker.start()
+
+    def _on_report_backfill_completed(self, result: dict) -> None:
+        import sys
+
+        print(
+            "[AutoReport] Backfill generated "
+            f"{result.get('generated_count', 0)}, "
+            f"failed {result.get('failure_count', 0)}",
+            file=sys.stderr,
+        )
+
+    def _on_report_backfill_failed(self, error: str) -> None:
+        import sys
+
+        print(f"[AutoReport] Backfill failed: {error}", file=sys.stderr)
+
+    def _cleanup_report_backfill_worker(self) -> None:
+        worker = self._report_backfill_worker
+        self._report_backfill_worker = None
+        if worker is not None:
+            worker.deleteLater()
 
     def _live_obsidian_path(self) -> str:
         """Return obsidian_output_path from in-memory config (merged with DB on startup)."""

@@ -146,3 +146,12 @@ def test_report_directory_is_read_only_without_browse_action(tmp_path, monkeypat
     assert page.edit_reports.isReadOnly() is True
     assert len(browse_buttons) == 2
     page.deleteLater()
+
+
+def test_settings_data_quality_action_offers_preview_and_repair(tmp_path, monkeypatch):
+    _app, page, _worker, _old_db = _build_page(tmp_path, monkeypatch)
+
+    labels = [button.text() for button in page.findChildren(QPushButton)]
+
+    assert "预览并修复数据" in labels
+    page.deleteLater()

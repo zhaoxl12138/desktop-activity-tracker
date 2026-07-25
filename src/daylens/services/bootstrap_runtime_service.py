@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 from .. import database
+from .data_quality_service import auto_repair_legacy_sessions
 
 
 def prepare_runtime_config(config: dict) -> tuple[dict, str]:
     db_path = database.get_db_path(config)
-    database.init_db(db_path)
+    connection = database.init_db(db_path)
+    database.close_db(connection)
+    try:
+        auto_repair_legacy_sessions(db_path)
+    except Exception as exc:
+        import sys
+
+        print(f"[DataRepair] Startup repair failed: {exc}", file=sys.stderr)
     database.init_shared_read_conn(db_path)
     database.merge_db_settings(config, db_path)
     database.merge_custom_rules(config, db_path)

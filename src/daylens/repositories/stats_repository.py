@@ -55,9 +55,11 @@ def query_date_stats_from_logs(read_conn, db_path: str, date_str: str) -> dict:
             SELECT
                 process_name,
                 window_title,
+                category_key,
+                category_name,
                 SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds
             FROM activity_logs WHERE date = ? AND is_effective = 1
-            GROUP BY process_name, window_title
+            GROUP BY process_name, window_title, category_key, category_name
             ORDER BY effective_seconds DESC
             LIMIT 50
             """,
@@ -122,9 +124,11 @@ def query_date_stats_from_sessions(read_conn, db_path: str, date_str: str) -> di
             SELECT
                 process_name,
                 normalized_title as window_title,
+                category_key,
+                category_name,
                 SUM(effective_seconds) as effective_seconds
             FROM activity_sessions WHERE date = ? AND effective_seconds > 0
-            GROUP BY process_name, normalized_title
+            GROUP BY process_name, normalized_title, category_key, category_name
             ORDER BY effective_seconds DESC
             LIMIT 50
             """,

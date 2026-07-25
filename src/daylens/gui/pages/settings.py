@@ -9,8 +9,13 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 
 from ...services import settings_service
-from ...services.data_quality_service import inspect_data_quality
+from ...services.data_quality_service import (
+    inspect_data_quality,
+    preview_repairable_sessions,
+    repair_legacy_session_data,
+)
 from ...services.restart_service import database_path_changed
+from ...utils import fmt_seconds
 from .. import style as ui_style
 
 
@@ -195,7 +200,7 @@ class SettingsPage(QWidget):
         btn_clean.clicked.connect(self._clean_old)
         g3l.addWidget(btn_clean, 0, Qt.AlignLeft)
 
-        btn_quality = QPushButton("检查数据质量")
+        btn_quality = QPushButton("预览并修复数据")
         btn_quality.setStyleSheet(ui_style.get_button_secondary_style())
         btn_quality.setCursor(Qt.PointingHandCursor)
         btn_quality.clicked.connect(self._check_data_quality)
@@ -320,7 +325,36 @@ class SettingsPage(QWidget):
     def _check_data_quality(self):
         try:
             result = inspect_data_quality(self.db_path)
-            if result["issue_count"]:
+            preview = preview_repairable_sessions(self.db_path)
+            repairable_count = int(preview["repairable_count"])
+            if repairable_count:
+                other_issues = max(0, int(result["issue_count"]) - repairable_count)
+                dates = "、".join(preview["dates"])
+                reply = QMessageBox.question(
+                    self,
+                    "数据修复预览",
+                    f"发现 {repairable_count} 条可安全修复的旧版娱乐挂机记录。\n"
+                    f"涉及日期：{dates}\n"
+                    f"重复空闲时间：{fmt_seconds(int(preview['duplicate_idle_seconds']))}\n"
+                    f"其他异常：{other_issues} 条\n\n"
+                    "修复前会自动备份数据库，是否继续？",
+                    QMessageBox.Yes | QMessageBox.No,
+                )
+                if reply != QMessageBox.Yes:
+                    return
+                repaired = repair_legacy_session_data(
+                    self.db_path,
+                    reason="manual",
+                )
+                after = inspect_data_quality(self.db_path)
+                QMessageBox.information(
+                    self,
+                    "数据修复完成",
+                    f"已修复 {repaired['repaired_count']} 条记录。\n"
+                    f"剩余异常：{after['issue_count']} 条\n"
+                    f"备份文件：{repaired['backup_path']}",
+                )
+            elif result["issue_count"]:
                 QMessageBox.warning(
                     self, "数据质量检查",
                     f"检查 {result['checked_sessions']} 个 Session，发现 {result['issue_count']} 个问题。\n"

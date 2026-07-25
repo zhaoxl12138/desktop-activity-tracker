@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
+from daylens import database, exporter
 from daylens.services import reports_service
 
 
@@ -124,3 +126,95 @@ def test_auto_generate_daily_report_refreshes_today(tmp_path: Path, monkeypatch)
 
     assert result == str(expected)
     assert calls == [("usage.db", str(tmp_path))]
+
+
+def _create_database_with_dates(tmp_path: Path, dates: list[str]) -> Path:
+    db_path = tmp_path / "usage.db"
+    database.close_db(database.init_db(str(db_path)))
+    conn = sqlite3.connect(db_path)
+    conn.executemany(
+        """
+        INSERT INTO activity_sessions
+            (session_id,start_time,end_time,date,duration_seconds,
+             effective_seconds,idle_seconds)
+        VALUES (?,?,?,?,?,?,?)
+        """,
+        [
+            (
+                f"session-{index}",
+                f"{date_str} 10:00:00",
+                f"{date_str} 10:01:00",
+                date_str,
+                60,
+                60,
+                0,
+            )
+            for index, date_str in enumerate(dates)
+        ],
+    )
+    conn.commit()
+    conn.close()
+    return db_path
+
+
+def test_backfill_generates_only_missing_historical_reports(tmp_path, monkeypatch):
+    db_path = _create_database_with_dates(
+        tmp_path,
+        ["2026-07-20", "2026-07-21", "2026-07-24"],
+    )
+    reports_dir = tmp_path / "reports"
+    existing = Path(
+        exporter.daily_report_path(
+            str(reports_dir / "daily"),
+            "2026-07-20",
+        )
+    )
+    existing.parent.mkdir(parents=True)
+    existing.write_text("existing", encoding="utf-8")
+    generated_dates = []
+
+    def fake_export(_db, date_str, output_dir):
+        generated_dates.append(date_str)
+        path = Path(exporter.daily_report_path(output_dir, date_str))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(date_str, encoding="utf-8")
+        return str(path)
+
+    monkeypatch.setattr(reports_service.exporter, "export_markdown", fake_export)
+
+    result = reports_service.backfill_missing_daily_reports(
+        str(db_path),
+        str(reports_dir),
+        today_str="2026-07-24",
+    )
+
+    assert generated_dates == ["2026-07-21"]
+    assert result["generated_count"] == 1
+    assert result["skipped_count"] == 2
+
+
+def test_backfill_continues_after_one_report_failure(tmp_path, monkeypatch):
+    db_path = _create_database_with_dates(
+        tmp_path,
+        ["2026-07-20", "2026-07-21", "2026-07-22"],
+    )
+
+    def fake_export(_db, date_str, output_dir):
+        if date_str == "2026-07-20":
+            raise RuntimeError("broken day")
+        path = Path(exporter.daily_report_path(output_dir, date_str))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(date_str, encoding="utf-8")
+        return str(path)
+
+    monkeypatch.setattr(reports_service.exporter, "export_markdown", fake_export)
+
+    result = reports_service.backfill_missing_daily_reports(
+        str(db_path),
+        str(tmp_path / "reports"),
+        today_str="2026-07-23",
+    )
+
+    assert result["generated_count"] == 2
+    assert result["failure_count"] == 1
+    assert result["failures"][0]["date"] == "2026-07-20"
