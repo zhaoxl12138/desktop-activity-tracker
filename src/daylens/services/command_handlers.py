@@ -77,12 +77,10 @@ def handle_start(config: dict, config_path: str) -> None:
                 last_error = err_msg
                 print(f"[ERROR] {datetime.now().strftime('%H:%M:%S')} {err_msg}", file=sys.stderr)
 
-    sess = tracker.current_session
-    if sess is not None and sess.duration_seconds >= min_session:
-        sess.switch_reason = "shutdown"
-        store.persist_session(sess)
-
-    store.close()
+    try:
+        tracker.finish_current("shutdown")
+    finally:
+        store.close()
     print("数据库已安全关闭。")
 
 

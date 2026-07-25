@@ -6,6 +6,7 @@ import shutil
 import sqlite3
 from datetime import datetime
 from pathlib import Path
+from pathlib import Path
 
 
 REPAIR_META_KEY = "legacy_entertainment_idle_repair_v1"
@@ -15,11 +16,29 @@ AND idle_seconds > 0
 AND effective_seconds + idle_seconds > duration_seconds + 1
 """
 SAMPLING_TOLERANCE_SECONDS = 1
+DEFAULT_WALL_CLOCK_TOLERANCE_SECONDS = 300
 
 
-def inspect_data_quality(db_path: str, date_str: str | None = None) -> dict[str, object]:
+def inspect_data_quality(
+    db_path: str,
+    date_str: str | None = None,
+    *,
+    sample_interval_seconds: float = 1,
+    wall_clock_tolerance_seconds: float | None = None,
+) -> dict[str, object]:
     """Return consistency issues and a simple confidence score."""
-    conn = sqlite3.connect(db_path)
+    if wall_clock_tolerance_seconds is None:
+        wall_clock_tolerance_seconds = max(
+            DEFAULT_WALL_CLOCK_TOLERANCE_SECONDS,
+            2 * max(0, float(sample_interval_seconds)),
+        )
+    else:
+        wall_clock_tolerance_seconds = max(
+            0,
+            float(wall_clock_tolerance_seconds),
+        )
+    read_only_uri = f"{Path(db_path).resolve().as_uri()}?mode=ro"
+    conn = sqlite3.connect(read_only_uri, uri=True)
     try:
         where = "WHERE date = ?" if date_str else ""
         args = (date_str,) if date_str else ()
@@ -136,7 +155,7 @@ def inspect_data_quality(db_path: str, date_str: str | None = None) -> dict[str,
                 continue
 
             wall_impact = int(round(abs(wall_span - duration)))
-            if wall_impact > SAMPLING_TOLERANCE_SECONDS:
+            if wall_impact > wall_clock_tolerance_seconds:
                 wall_clock_impact_seconds += wall_impact
                 add_issue(
                     row_index,
@@ -149,11 +168,16 @@ def inspect_data_quality(db_path: str, date_str: str | None = None) -> dict[str,
                     },
                 )
 
-        score = (
-            100
-            if not rows
-            else max(0, round(100 * (1 - len(affected_rows) / len(rows))))
-        )
+        if not rows or not affected_rows:
+            score = 100
+        else:
+            score = max(
+                0,
+                min(
+                    99,
+                    int(100 * (1 - len(affected_rows) / len(rows))),
+                ),
+            )
         return {
             "checked_sessions": len(rows),
             "issue_count": len(issues),
@@ -163,6 +187,7 @@ def inspect_data_quality(db_path: str, date_str: str | None = None) -> dict[str,
             "unattributed_seconds": unattributed_seconds,
             "overattributed_seconds": overattributed_seconds,
             "wall_clock_impact_seconds": wall_clock_impact_seconds,
+            "wall_clock_tolerance_seconds": wall_clock_tolerance_seconds,
             "impact_seconds": impact_seconds,
         }
     finally:

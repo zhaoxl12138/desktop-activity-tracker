@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import sys
+
 from .. import database
-from .data_quality_service import auto_repair_legacy_sessions
+from .data_quality_service import inspect_data_quality
 
 
 def prepare_runtime_config(config: dict) -> tuple[dict, str]:
@@ -11,11 +13,16 @@ def prepare_runtime_config(config: dict) -> tuple[dict, str]:
     connection = database.init_db(db_path)
     database.close_db(connection)
     try:
-        auto_repair_legacy_sessions(db_path)
+        quality = inspect_data_quality(db_path)
+        if quality["issue_count"]:
+            dates = ", ".join(quality.get("affected_dates", [])) or "unknown"
+            print(
+                f"[DataQuality] Found {quality['issue_count']} issue(s) "
+                f"on dates: {dates}; use the manual repair preview to review",
+                file=sys.stderr,
+            )
     except Exception as exc:
-        import sys
-
-        print(f"[DataRepair] Startup repair failed: {exc}", file=sys.stderr)
+        print(f"[DataQuality] Startup inspection failed: {exc}", file=sys.stderr)
     database.init_shared_read_conn(db_path)
     database.merge_db_settings(config, db_path)
     database.merge_custom_rules(config, db_path)

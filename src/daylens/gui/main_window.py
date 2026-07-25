@@ -33,6 +33,7 @@ from ..services.reports_service import (
     auto_generate_current_reports,
 )
 from ..services.restart_service import current_launch_command, schedule_restart
+from ..services.gui_shutdown_service import stop_recording_worker_safely
 from .report_backfill_worker import ReportBackfillWorker
 from .pages.category_stats import CategoryStatsPage
 from .pages.live_monitor import LiveMonitorPage
@@ -731,14 +732,22 @@ class MainWindow(QMainWindow):
 
     def _restart_app(self) -> None:
         try:
-            schedule_restart(current_launch_command())
+            command = current_launch_command()
         except Exception as exc:
             QMessageBox.warning(self, "重启失败", str(exc))
             return
 
-        if self.worker:
-            self.worker.stop()
-            self.worker.wait(5000)
+        result = stop_recording_worker_safely(self.worker)
+        if not result.completed:
+            QMessageBox.warning(self, "Cannot restart safely", result.message)
+            return
+
+        try:
+            schedule_restart(command)
+        except Exception as exc:
+            QMessageBox.warning(self, "重启失败", str(exc))
+            return
+
         app = QApplication.instance()
         if app is not None:
             app.quit()
@@ -752,10 +761,13 @@ class MainWindow(QMainWindow):
         )
         if reply != QMessageBox.Yes:
             return
-        if self.worker:
-            self.worker.stop()
-            self.worker.wait(5000)
-        QApplication.instance().quit()
+        result = stop_recording_worker_safely(self.worker)
+        if not result.completed:
+            QMessageBox.warning(self, "Cannot quit safely", result.message)
+            return
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
 
     def closeEvent(self, event) -> None:  # noqa: N802
         event.ignore()

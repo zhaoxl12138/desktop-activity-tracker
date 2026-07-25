@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 
 from daylens.session_tracker import SessionTracker
@@ -9,6 +11,7 @@ class MappingClassifier:
     _MAPPING = {
         "Code.exe": ("coding", "Coding", "interactive_required"),
         "Chat.exe": ("social", "Social", "passive_allowed"),
+        "Forum.exe": ("social", "Forum", "interactive_required"),
         "VLC.exe": ("video", "Video", "passive_allowed"),
     }
 
@@ -217,3 +220,219 @@ def test_finished_short_session_is_handed_to_persistence_callback():
     assert len(ended) == 1
     assert ended[0].duration_seconds == 1
     assert ended[0].switch_reason == "shutdown"
+
+
+def test_social_passive_grace_uses_pending_policy_at_threshold_boundary():
+    tracker = _tracker(idle_threshold=1, passive_threshold=3)
+    coding = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 30,
+    }
+    social = {
+        "process_name": "Chat.exe",
+        "window_title": "Friends",
+        "exe_path": "",
+        "pid": 31,
+    }
+    tracker.tick(0, coding)
+
+    first = tracker.tick(0, social)
+    boundary = tracker.tick(0, social)
+
+    assert tracker.current_session.process_name == "Code.exe"
+    assert tracker._pending_switch["domain"] == "social"
+    assert tracker.cross_group_grace == 30
+    assert tracker._pending_switch["effective_during_grace"] == 2
+    assert tracker._pending_switch["idle_during_grace"] == 0
+    assert first["is_effective"] is True
+    assert boundary["is_effective"] is True
+
+    tracker._pending_switch["since"] -= timedelta(seconds=31)
+    after_threshold = tracker.tick(0, social)
+
+    assert tracker.current_session.process_name == "Chat.exe"
+    assert tracker.current_session.effective_seconds == 0
+    assert tracker.current_session.idle_seconds == 3
+    assert after_threshold["is_effective"] is False
+
+
+def test_social_interactive_grace_uses_normal_threshold_and_matches_snapshot():
+    tracker = _tracker(idle_threshold=2, passive_threshold=10)
+    coding = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 32,
+    }
+    social = {
+        "process_name": "Forum.exe",
+        "window_title": "Forum",
+        "exe_path": "",
+        "pid": 33,
+    }
+    tracker.tick(0, coding)
+
+    at_boundary = tracker.tick(0, social)
+    assert at_boundary["is_effective"] is True
+    assert tracker._pending_switch["effective_during_grace"] == 1
+
+    tracker._pending_switch["since"] -= timedelta(seconds=31)
+    after_threshold = tracker.tick(0, social)
+
+    assert tracker.current_session.process_name == "Forum.exe"
+    assert tracker.current_session.effective_seconds == 0
+    assert tracker.current_session.idle_seconds == 2
+    assert after_threshold["is_effective"] is False
+
+
+def test_immediate_entertainment_switch_waits_when_end_callback_returns_false():
+    callback_results = iter([False, True])
+    callback_sessions = []
+
+    def persist(session):
+        callback_sessions.append(session)
+        return next(callback_results)
+
+    tracker = SessionTracker(
+        config={
+            "tracker": {
+                "sample_interval_seconds": 1,
+                "cross_group_grace_seconds": 30,
+            }
+        },
+        classifier=MappingClassifier(),
+        on_session_end=persist,
+    )
+    coding = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 34,
+    }
+    video = {
+        "process_name": "VLC.exe",
+        "window_title": "Movie",
+        "exe_path": "",
+        "pid": 35,
+    }
+    tracker.tick(0, coding)
+    original_session = tracker.current_session
+
+    failed_snapshot = tracker.tick(0, video)
+
+    assert tracker.current_session is original_session
+    assert tracker.current_session.process_name == "Code.exe"
+    assert tracker._pending_switch["domain"] == "entertainment"
+    assert tracker._pending_switch["process_name"] == "VLC.exe"
+    assert failed_snapshot["process_name"] == "VLC.exe"
+    assert failed_snapshot["category_key"] == "video"
+    assert len(callback_sessions) == 1
+
+    tracker.tick(0, video)
+
+    assert tracker.current_session is not original_session
+    assert tracker.current_session.process_name == "VLC.exe"
+    assert tracker._pending_switch is None
+    assert len(callback_sessions) == 2
+
+
+def test_immediate_entertainment_switch_conserves_abandoned_grace_counters():
+    ended = []
+    tracker = SessionTracker(
+        config={
+            "tracker": {
+                "sample_interval_seconds": 1,
+                "cross_group_grace_seconds": 30,
+            }
+        },
+        classifier=MappingClassifier(),
+        on_session_end=ended.append,
+    )
+    coding = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 40,
+    }
+    social = {
+        "process_name": "Chat.exe",
+        "window_title": "Friends",
+        "exe_path": "",
+        "pid": 41,
+    }
+    video = {
+        "process_name": "VLC.exe",
+        "window_title": "Movie",
+        "exe_path": "",
+        "pid": 42,
+    }
+    tracker.tick(0, coding)
+    tracker.tick(0, social)
+    tracker.tick(0, social)
+    pending_seconds = (
+        tracker._pending_switch["effective_during_grace"]
+        + tracker._pending_switch["idle_during_grace"]
+    )
+    old_duration = tracker.current_session.duration_seconds
+
+    tracker.tick(0, video)
+
+    assert len(ended) == 1
+    assert ended[0].duration_seconds == old_duration + pending_seconds
+    assert (
+        ended[0].effective_seconds + ended[0].idle_seconds
+        == ended[0].duration_seconds
+    )
+    assert tracker.current_session.process_name == "VLC.exe"
+    assert tracker._pending_switch is None
+
+
+def test_grace_confirmation_waits_when_end_callback_returns_false():
+    callback_results = iter([False, True])
+    callback_sessions = []
+
+    def persist(session):
+        callback_sessions.append(session)
+        return next(callback_results)
+
+    tracker = SessionTracker(
+        config={
+            "tracker": {
+                "sample_interval_seconds": 1,
+                "cross_group_grace_seconds": 30,
+            }
+        },
+        classifier=MappingClassifier(),
+        on_session_end=persist,
+    )
+    coding = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 36,
+    }
+    social = {
+        "process_name": "Chat.exe",
+        "window_title": "Friends",
+        "exe_path": "",
+        "pid": 37,
+    }
+    tracker.tick(0, coding)
+    original_session = tracker.current_session
+    tracker.tick(0, social)
+    tracker._pending_switch["since"] -= timedelta(seconds=31)
+
+    tracker.tick(0, social)
+
+    assert tracker.current_session is original_session
+    assert tracker._pending_switch is not None
+    assert len(callback_sessions) == 1
+
+    tracker.tick(0, social)
+
+    assert tracker.current_session is not original_session
+    assert tracker.current_session.process_name == "Chat.exe"
+    assert tracker._pending_switch is None
+    assert len(callback_sessions) == 2

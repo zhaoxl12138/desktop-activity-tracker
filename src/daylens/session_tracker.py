@@ -460,25 +460,75 @@ class SessionTracker:
         """
         # Entertainment: switch immediately, no grace period
         if new_domain == "entertainment":
-            self._current.end_time = now
+            p = self._pending_switch
+            if p is None or p.get("domain") != new_domain:
+                if p is not None:
+                    effective = p["effective_during_grace"]
+                    idle = p["idle_during_grace"]
+                    self._current.duration_seconds += effective + idle
+                    self._current.effective_seconds += effective
+                    self._current.idle_seconds += idle
+                p = {
+                    "domain": new_domain,
+                    "since": now,
+                    "process_name": process_name,
+                    "exe_path": exe_path,
+                    "raw_title": raw_title,
+                    "norm_title": norm_title,
+                    "cat_key": cat_key,
+                    "cat_name": cat_name,
+                    "active_rule": active_rule,
+                    "effective_during_grace": 0,
+                    "idle_during_grace": 0,
+                    "idle_corrected": False,
+                }
+                self._pending_switch = p
+                self._persistent_idle = 0.0
+                self._idle_corrected = False
+                self._last_cursor_pos = None
+                self._last_kb_state = None
+            else:
+                p.update(
+                    {
+                        "process_name": process_name,
+                        "exe_path": exe_path,
+                        "raw_title": raw_title,
+                        "norm_title": norm_title,
+                        "cat_key": cat_key,
+                        "cat_name": cat_name,
+                        "active_rule": active_rule,
+                    }
+                )
+
+            self._current.end_time = p["since"]
             self._current.switch_reason = "domain_change"
-            self._emit_session()
-            self._persistent_idle = 0.0
+            if not self._emit_session():
+                self._tick_grace_current(now)
+                return False
+
+            effective = p["effective_during_grace"]
+            idle = p["idle_during_grace"]
+            if effective + idle == 0:
+                self._persistent_idle = 0.0
+                self._idle_corrected = False
             self._last_cursor_pos = None
             self._last_kb_state = None
             self._current = ActivitySession(
                 session_id=uuid.uuid4().hex[:12],
-                start_time=now,
+                start_time=p["since"],
                 end_time=now,
                 date=date_str,
-                process_name=process_name,
-                exe_path=exe_path,
-                window_title=raw_title,
-                normalized_title=norm_title,
-                category_key=cat_key,
-                category_name=cat_name,
-                active_rule=active_rule,
-                initial_title=norm_title,
+                process_name=p["process_name"],
+                exe_path=p["exe_path"],
+                window_title=p["raw_title"],
+                normalized_title=p["norm_title"],
+                category_key=p["cat_key"],
+                category_name=p["cat_name"],
+                active_rule=p["active_rule"],
+                duration_seconds=effective + idle,
+                effective_seconds=effective,
+                idle_seconds=idle,
+                initial_title=p["norm_title"],
             )
             self._pending_switch = None
             return True
@@ -503,6 +553,7 @@ class SessionTracker:
                 "active_rule": active_rule,
                 "effective_during_grace": 0,
                 "idle_during_grace": 0,
+                "idle_corrected": False,
             }
             self._tick_grace_current(now)
             return False
@@ -517,7 +568,8 @@ class SessionTracker:
         p = self._pending_switch
         self._current.end_time = p["since"]
         self._current.switch_reason = "domain_change"
-        self._emit_session()
+        if not self._emit_session():
+            return False
 
         eff = p["effective_during_grace"]
         idle = p["idle_during_grace"]
@@ -539,7 +591,6 @@ class SessionTracker:
             initial_title=p["norm_title"],
         )
         self._pending_switch = None
-        self._persistent_idle = 0.0
         self._last_cursor_pos = None
         self._last_kb_state = None
         return False
@@ -573,15 +624,36 @@ class SessionTracker:
         active = self._activity_from_hook or cursor_moved or kb_changed
         self._activity_from_hook = False
 
+        p = self._pending_switch
+        if p is None:
+            return
+
         if active:
             self._persistent_idle = 0.0
+            self._idle_corrected = False
+            p["idle_corrected"] = False
         else:
             self._persistent_idle += self.sample_interval
 
-        p = self._pending_switch
-        if p is not None:
-            p["effective_during_grace"] += self.sample_interval if active else 0
-            p["idle_during_grace"] += 0 if active else self.sample_interval
+        idle_limit = self._idle_limit(
+            p.get(
+                "active_rule",
+                self._current.active_rule if self._current is not None else None,
+            )
+        )
+        if self._persistent_idle <= idle_limit:
+            p["effective_during_grace"] += self.sample_interval
+            return
+
+        if not p.get("idle_corrected", False):
+            correction = min(
+                idle_limit,
+                p["effective_during_grace"],
+            )
+            p["effective_during_grace"] -= correction
+            p["idle_during_grace"] += correction
+            p["idle_corrected"] = True
+        p["idle_during_grace"] += self.sample_interval
 
     # ── Internals ──────────────────────────────────────────────────
 

@@ -45,6 +45,9 @@ class _PersistenceQueueFull(RuntimeError):
 
 
 class RecordingWorker(QThread):
+    _PERSISTENCE_BUSY_TIMEOUT_MS = 5_000
+    _SHUTDOWN_WAIT_MARGIN_MS = 1_000
+
     sample_updated = Signal(dict)
     error_occurred = Signal(str)
     health_updated = Signal(object)
@@ -78,6 +81,21 @@ class RecordingWorker(QThread):
     def health(self) -> RecordingHealth:
         with self._health_lock:
             return self._health
+
+    def shutdown_wait_budget_ms(self) -> int:
+        """Return a conservative bound for cleanup persistence attempts."""
+
+        pending_count = max(0, int(self.health.pending_persists))
+        retry_attempts = max(0, int(self._shutdown_retry_attempts))
+        # One item may currently be inside persistence and the current tracker
+        # session can become a second tail item after stop(). Cleanup has two
+        # drain phases plus final handoff/close operations.
+        possible_items = pending_count + 2
+        blocking_calls = (2 * possible_items * retry_attempts) + 4
+        return (
+            blocking_calls * self._PERSISTENCE_BUSY_TIMEOUT_MS
+            + self._SHUTDOWN_WAIT_MARGIN_MS
+        )
 
     def _load_worker_settings(self, config) -> None:
         settings = self._worker_settings(config)
@@ -369,10 +387,12 @@ class RecordingWorker(QThread):
         self._persist_or_queue(pending.session)
 
     def _drain_pending_persists(self) -> None:
-        for _ in range(self._shutdown_retry_attempts):
-            if not self._pending_persists:
-                return
-            self._retry_pending_once()
+        for key in list(self._pending_persists):
+            for _ in range(self._shutdown_retry_attempts):
+                pending = self._pending_persists.get(key)
+                if pending is None:
+                    break
+                self._persist_or_queue(pending.session)
 
     def _on_key_press(self, _key) -> None:
         self._keyboard_activity.set()

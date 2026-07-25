@@ -68,6 +68,27 @@ class FakeStore:
         self.closed = True
 
 
+class PerSessionStore:
+    def __init__(self):
+        self.queueing = True
+        self.remaining_failures = {}
+        self.attempt_ids = []
+
+    def persist_session(self, session):
+        self.attempt_ids.append(session.session_id)
+        if self.queueing:
+            raise OSError("offline")
+        failures = self.remaining_failures.get(session.session_id, 0)
+        if failures:
+            self.remaining_failures[session.session_id] = failures - 1
+            raise OSError(f"{session.session_id} still offline")
+        session._db_row_id = session._db_row_id if session._db_row_id > 0 else 1
+        return session._db_row_id
+
+    def close(self):
+        pass
+
+
 def _session(session_id):
     now = datetime.now()
     return ActivitySession(
@@ -456,3 +477,63 @@ def test_successful_retry_does_not_overwrite_fatal_health():
     assert worker.health.status == "fatal"
     assert worker.health.error == "queue overflow"
     assert worker.health.pending_persists == 0
+
+
+@pytest.mark.parametrize("pending_count", [10, 100])
+def test_shutdown_retry_budget_applies_to_each_pending_session(pending_count):
+    worker = worker_module.RecordingWorker(
+        "config.yaml",
+        "usage.db",
+        {
+            "tracker": {
+                "persistence_retry_queue_size": pending_count,
+                "persistence_shutdown_retry_attempts": 3,
+            }
+        },
+    )
+    store = PerSessionStore()
+    worker._store = store
+    sessions = [_session(f"session-{index}") for index in range(pending_count)]
+    for session in sessions:
+        worker._persist_or_queue(session)
+    store.queueing = False
+    initial_attempt_count = len(store.attempt_ids)
+
+    worker._drain_pending_persists()
+
+    assert list(worker._pending_persists) == []
+    assert store.attempt_ids[initial_attempt_count:] == [
+        session.session_id for session in sessions
+    ]
+
+
+def test_shutdown_drain_preserves_fifo_and_continues_after_item_exhausts_budget():
+    worker = worker_module.RecordingWorker(
+        "config.yaml",
+        "usage.db",
+        {
+            "tracker": {
+                "persistence_retry_queue_size": 3,
+                "persistence_shutdown_retry_attempts": 2,
+            }
+        },
+    )
+    store = PerSessionStore()
+    worker._store = store
+    for session_id in ("one", "two", "three"):
+        worker._persist_or_queue(_session(session_id))
+    store.queueing = False
+    store.remaining_failures = {"one": 99, "two": 1}
+    initial_attempt_count = len(store.attempt_ids)
+
+    worker._drain_pending_persists()
+
+    assert store.attempt_ids[initial_attempt_count:] == [
+        "one",
+        "one",
+        "two",
+        "two",
+        "three",
+    ]
+    assert list(worker._pending_persists) == ["one"]
+    assert worker._pending_persists["one"].attempts >= 3

@@ -14,6 +14,10 @@ from .bootstrap_runtime_service import (
     shutdown_runtime_state,
 )
 from .rules_service import save_scanned_rules
+from .gui_shutdown_service import (
+    WorkerShutdownResult,
+    stop_recording_worker_safely,
+)
 
 
 def auto_scan_and_save_rules(config: dict, db_path: str) -> None:
@@ -48,6 +52,15 @@ def ensure_single_instance() -> tuple[bool, object | None]:
         return False, None
     atexit.register(kernel32.CloseHandle, handle)
     return True, handle
+
+
+def shutdown_gui_runtime(worker: object | None) -> WorkerShutdownResult:
+    """Close shared runtime state only after the recording thread is done."""
+
+    result = stop_recording_worker_safely(worker)
+    if result.completed:
+        shutdown_runtime_state()
+    return result
 
 
 def launch_gui() -> None:
@@ -94,8 +107,11 @@ def launch_gui() -> None:
     tray.set_main_window(window)
     window.show()
 
-    exit_code = app.exec()
-    worker.stop()
-    worker.wait(5000)
-    shutdown_runtime_state()
+    while True:
+        exit_code = app.exec()
+        shutdown_result = shutdown_gui_runtime(worker)
+        if shutdown_result.completed:
+            break
+        print(f"[Shutdown] {shutdown_result.message}", file=sys.stderr)
+        window.show()
     sys.exit(exit_code)
