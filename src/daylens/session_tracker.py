@@ -2,6 +2,7 @@
 
 import ctypes
 import re
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -184,7 +185,7 @@ class SessionTracker:
 
     def __init__(self, config, classifier,
                  on_session_end=None, on_flush=None,
-                 audio_detector=None):
+                 audio_detector=None, monotonic_clock=None):
         tracker = config.get("tracker", {})
         self.sample_interval = tracker.get("sample_interval_seconds",
             config.get("sample_interval_seconds", 1))
@@ -202,6 +203,8 @@ class SessionTracker:
         self._on_session_end = on_session_end
         self._on_flush = on_flush
         self._audio_detector = audio_detector
+        self._monotonic_clock = monotonic_clock or time.monotonic
+        self._last_flush_at = self._monotonic_clock()
 
         self._current: ActivitySession | None = None
         self._pending_switch: dict | None = None  # cross-domain grace period state
@@ -230,10 +233,10 @@ class SessionTracker:
     def finish_current(self, reason="manual"):
         """End the current session without starting a replacement session."""
         if self._current is None:
-            return
+            return True
         self._current.end_time = datetime.now()
         self._current.switch_reason = reason
-        self._emit_session()
+        return self._emit_session()
 
     def mark_user_active(self):
         """Called from pynput keyboard listener (any thread) on keypress.
@@ -248,9 +251,11 @@ class SessionTracker:
         self._activity_from_hook = True
         self._awaiting_activity = False
 
-    def _idle_limit(self) -> int:
-        """Return the idle threshold for the current session category."""
-        if self._current is not None and self._current.category_key == "video":
+    def _idle_limit(self, active_rule=None) -> int:
+        """Return the idle threshold for the active session policy."""
+        if active_rule is None and self._current is not None:
+            active_rule = self._current.active_rule
+        if active_rule == "passive_allowed":
             return self.entertainment_idle_threshold
         return self.idle_threshold
 
@@ -297,8 +302,9 @@ class SessionTracker:
             hwnd = None
 
         # Cache psutil-heavy lookups
-        if process_name != self._last_process_name:
-            self._last_pid = win_info.get("pid") if win_info else None
+        pid = win_info.get("pid") if win_info else None
+        if process_name != self._last_process_name or pid != self._last_pid:
+            self._last_pid = pid
             self._last_process_name = process_name
             self._last_exe_path = exe_path
 
@@ -333,14 +339,14 @@ class SessionTracker:
 
             # ── Cross-domain ───────────────────────────────────────
             elif current_domain != new_domain:
-                self._handle_cross_domain(
+                switched_immediately = self._handle_cross_domain(
                     now, date_str, new_domain,
                     process_name, exe_path, raw_title, norm_title,
                     cat_key, cat_name, active_rule,
                 )
-                self._tick_count += 1
-                if self._tick_count % self.flush_interval == 0 and self._on_flush:
-                    self._on_flush(self._current)
+                if switched_immediately:
+                    self._tick_current(idle_seconds, now, hwnd)
+                self._maybe_flush()
                 return self._make_snapshot(idle_seconds)
 
             # ── Same domain ────────────────────────────────────────
@@ -433,8 +439,7 @@ class SessionTracker:
 
         self._tick_current(idle_seconds, now, hwnd)
         self._tick_count += 1
-        if self._tick_count % self.flush_interval == 0 and self._on_flush:
-            self._on_flush(self._current)
+        self._maybe_flush()
         return self._make_snapshot(idle_seconds)
 
     # ── Cross-domain grace period ────────────────────────────────────
@@ -476,7 +481,7 @@ class SessionTracker:
                 initial_title=norm_title,
             )
             self._pending_switch = None
-            return
+            return True
 
         if self._pending_switch is None or self._pending_switch["domain"] != new_domain:
             if self._pending_switch is not None:
@@ -500,13 +505,13 @@ class SessionTracker:
                 "idle_during_grace": 0,
             }
             self._tick_grace_current(now)
-            return
+            return False
 
         # Always tick first so every second is accounted correctly
         self._tick_grace_current(now)
         elapsed = (now - self._pending_switch["since"]).total_seconds()
         if elapsed < self.cross_group_grace:
-            return
+            return False
 
         # ── Grace period expired → confirm switch ──────────────────
         p = self._pending_switch
@@ -537,6 +542,16 @@ class SessionTracker:
         self._persistent_idle = 0.0
         self._last_cursor_pos = None
         self._last_kb_state = None
+        return False
+
+    def _maybe_flush(self):
+        """Persist the current session after real monotonic time has elapsed."""
+        now = self._monotonic_clock()
+        if now - self._last_flush_at < self.flush_interval:
+            return
+        if self._on_flush and self._current is not None:
+            self._on_flush(self._current)
+        self._last_flush_at = now
 
     def _tick_grace_current(self, now):
         """Tick the current session during cross-domain grace period,
@@ -650,13 +665,13 @@ class SessionTracker:
 
     def _emit_session(self):
         if self._current is None:
-            return
-        if self._current.duration_seconds < self.min_session:
-            self._current = None
-            return
+            return True
         if self._on_session_end:
-            self._on_session_end(self._current)
+            persisted = self._on_session_end(self._current)
+            if persisted is False:
+                return False
         self._current = None
+        return True
 
     def _make_snapshot(self, idle_seconds):
         """Build a UI-compatible snapshot dict for the sample_updated signal.
@@ -681,12 +696,16 @@ class SessionTracker:
             cat_key = p.get("cat_key", cat_key)
             cat_name = p.get("cat_name", cat_name)
 
+        active_rule = (
+            p.get("active_rule", s.active_rule if s else "")
+            if p else (s.active_rule if s else "")
+        )
         is_ent = cat_key == "video"
         audio_playing = (
             is_ent and self._audio_detector is not None
             and self._audio_detector.is_playing(self._last_pid)
         )
-        idle_limit = self.entertainment_idle_threshold if is_ent else self.idle_threshold
+        idle_limit = self._idle_limit(active_rule)
         is_eff = audio_playing or (self._persistent_idle <= idle_limit)
         if s is None and not p:
             audio_playing = False
@@ -702,14 +721,14 @@ class SessionTracker:
             "normalized_title": (p.get("norm_title", s.normalized_title if s else "") if p else (s.normalized_title if s else "")),
             "category_key": cat_key,
             "category_name": cat_name,
-            "active_rule": (p.get("active_rule", s.active_rule if s else "") if p else (s.active_rule if s else "")),
+            "active_rule": active_rule,
             "duration_seconds": s.duration_seconds if s else 0,
             "effective_seconds": s.effective_seconds if s else 0,
             "idle_seconds": idle_seconds,
             "session_idle_seconds": s.idle_seconds if s else 0,
             "persistent_idle": self._persistent_idle,
             "audio_playing": audio_playing,
-            "is_user_active": self._persistent_idle <= self._idle_limit(),
+            "is_user_active": self._persistent_idle <= idle_limit,
             "is_effective": is_eff,
             "pending_switch_domain": self._pending_switch["domain"] if self._pending_switch else None,
             "pending_switch_elapsed": (

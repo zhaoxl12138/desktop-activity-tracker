@@ -119,6 +119,7 @@ def test_session_tracker():
     clf = FakeClassifier()
     sessions_ended = []
     sessions_flushed = []
+    monotonic_now = [0.0]
 
     tracker = SessionTracker(
         config={"tracker": {"sample_interval_seconds": 1, "flush_interval_seconds": 5,
@@ -126,6 +127,7 @@ def test_session_tracker():
         classifier=clf,
         on_session_end=lambda s: sessions_ended.append(s),
         on_flush=lambda s: sessions_flushed.append(s),
+        monotonic_clock=lambda: monotonic_now[0],
     )
 
     # 1. First tick starts a session
@@ -172,6 +174,7 @@ def test_session_tracker():
     check(sessions_ended[0].category_key == "coding", "ended session is coding")
 
     # 7. Passive_allowed (vlc = video) always effective
+    monotonic_now[0] = 5.0
     snap = tracker.tick(80.0, win2)
     check(snap["is_effective"] is True, "passive_allowed: effective even when idle=80")
 

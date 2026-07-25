@@ -12,13 +12,107 @@ def test_inspect_data_quality_reports_duration_mismatch(tmp_path):
     db = tmp_path / "quality.db"
     conn = sqlite3.connect(db)
     conn.execute("CREATE TABLE activity_sessions (session_id TEXT, start_time TEXT, end_time TEXT, date TEXT, duration_seconds INTEGER, effective_seconds INTEGER, idle_seconds INTEGER)")
-    conn.execute("INSERT INTO activity_sessions VALUES ('s1','2026-01-01 10:00','2026-01-01 10:10','2026-01-01',10,8,5)")
+    conn.execute("INSERT INTO activity_sessions VALUES ('s1','2026-01-01 10:00:00','2026-01-01 10:00:10','2026-01-01',10,8,5)")
     conn.commit(); conn.close()
 
     result = inspect_data_quality(str(db), "2026-01-01")
 
     assert result["issue_count"] == 1
     assert result["issues"][0]["type"] == "duration_mismatch"
+
+
+def _create_quality_database(tmp_path):
+    db = tmp_path / "quality.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE activity_sessions ("
+        "session_id TEXT, start_time TEXT, end_time TEXT, date TEXT, "
+        "duration_seconds INTEGER, effective_seconds INTEGER, idle_seconds INTEGER"
+        ")"
+    )
+    return db, conn
+
+
+def test_inspect_data_quality_reports_unattributed_duration(tmp_path):
+    db, conn = _create_quality_database(tmp_path)
+    conn.execute(
+        "INSERT INTO activity_sessions VALUES "
+        "('missing','2026-01-02 10:00:00','2026-01-02 10:00:10',"
+        "'2026-01-02',10,6,1)"
+    )
+    conn.commit()
+    conn.close()
+
+    result = inspect_data_quality(str(db))
+
+    assert result["issue_count"] == 1
+    assert result["issues"][0] == {
+        "type": "duration_mismatch",
+        "direction": "duration_exceeds_components",
+        "session_id": "missing",
+        "date": "2026-01-02",
+        "impact_seconds": 3,
+    }
+    assert result["affected_dates"] == ["2026-01-02"]
+    assert result["unattributed_seconds"] == 3
+    assert result["impact_seconds"] == 3
+    assert result["score"] < 100
+
+
+def test_inspect_data_quality_reports_multiple_issues_for_one_row(tmp_path):
+    db, conn = _create_quality_database(tmp_path)
+    conn.execute(
+        "INSERT INTO activity_sessions VALUES "
+        "('multi','2026-01-03 10:00:00','2026-01-03 10:00:30',"
+        "'2026-01-03',10,4,1)"
+    )
+    conn.commit()
+    conn.close()
+
+    result = inspect_data_quality(str(db))
+
+    assert result["issue_count"] == 2
+    assert {issue["type"] for issue in result["issues"]} == {
+        "duration_mismatch",
+        "wall_clock_mismatch",
+    }
+    assert result["affected_dates"] == ["2026-01-03"]
+    assert result["unattributed_seconds"] == 5
+    assert result["score"] == 0
+
+
+def test_inspect_data_quality_reports_wall_clock_span_anomaly(tmp_path):
+    db, conn = _create_quality_database(tmp_path)
+    conn.execute(
+        "INSERT INTO activity_sessions VALUES "
+        "('wall','2026-01-04 10:00:00','2026-01-04 10:02:00',"
+        "'2026-01-04',10,10,0)"
+    )
+    conn.commit()
+    conn.close()
+
+    result = inspect_data_quality(str(db))
+
+    assert result["issue_count"] == 1
+    assert result["issues"][0]["type"] == "wall_clock_mismatch"
+    assert result["issues"][0]["impact_seconds"] == 110
+    assert result["wall_clock_impact_seconds"] == 110
+
+
+def test_inspect_data_quality_allows_one_second_sampling_tolerance(tmp_path):
+    db, conn = _create_quality_database(tmp_path)
+    conn.execute(
+        "INSERT INTO activity_sessions VALUES "
+        "('tolerance','2026-01-05 10:00:00','2026-01-05 10:00:10',"
+        "'2026-01-05',10,9,0)"
+    )
+    conn.commit()
+    conn.close()
+
+    result = inspect_data_quality(str(db))
+
+    assert result["issue_count"] == 0
+    assert result["score"] == 100
 
 
 def _insert_session(

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
 
 WAL_CHECKPOINT_INTERVAL = 100
 
 _shared_read_conn = None
 _shared_read_db_path = None
+_shared_read_thread_id = None
 
 
 class TrackedConnection(sqlite3.Connection):
@@ -105,8 +107,11 @@ class ReadConnectionContext:
         self.own = False
 
     def __enter__(self):
-        global _shared_read_conn, _shared_read_db_path
-        if _shared_read_conn is not None and _shared_read_db_path == self.db_path:
+        if (
+            _shared_read_conn is not None
+            and _shared_read_db_path == self.db_path
+            and _shared_read_thread_id == threading.get_ident()
+        ):
             self.conn = _shared_read_conn
         else:
             self.conn = sqlite3.connect(self.db_path)
@@ -121,7 +126,7 @@ class ReadConnectionContext:
 
 
 def init_shared_read_conn(db_path: str) -> None:
-    global _shared_read_conn, _shared_read_db_path
+    global _shared_read_conn, _shared_read_db_path, _shared_read_thread_id
     if _shared_read_conn is not None and _shared_read_db_path != db_path:
         _shared_read_conn.close()
         _shared_read_conn = None
@@ -130,14 +135,16 @@ def init_shared_read_conn(db_path: str) -> None:
         _shared_read_conn.row_factory = sqlite3.Row
         _shared_read_conn.execute("PRAGMA journal_mode=WAL")
         _shared_read_db_path = db_path
+        _shared_read_thread_id = threading.get_ident()
 
 
 def close_shared_read_conn() -> None:
-    global _shared_read_conn, _shared_read_db_path
+    global _shared_read_conn, _shared_read_db_path, _shared_read_thread_id
     if _shared_read_conn:
         _shared_read_conn.close()
         _shared_read_conn = None
         _shared_read_db_path = None
+        _shared_read_thread_id = None
 
 
 def read_conn(db_path: str) -> ReadConnectionContext:
