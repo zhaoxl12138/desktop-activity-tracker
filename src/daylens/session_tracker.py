@@ -478,6 +478,7 @@ class SessionTracker:
                     "cat_key": cat_key,
                     "cat_name": cat_name,
                     "active_rule": active_rule,
+                    "pid": self._last_pid,
                     "effective_during_grace": 0,
                     "idle_during_grace": 0,
                     "idle_corrected": False,
@@ -497,6 +498,7 @@ class SessionTracker:
                         "cat_key": cat_key,
                         "cat_name": cat_name,
                         "active_rule": active_rule,
+                        "pid": self._last_pid,
                     }
                 )
 
@@ -551,6 +553,7 @@ class SessionTracker:
                 "cat_key": cat_key,
                 "cat_name": cat_name,
                 "active_rule": active_rule,
+                "pid": self._last_pid,
                 "effective_during_grace": 0,
                 "idle_during_grace": 0,
                 "idle_corrected": False,
@@ -628,7 +631,11 @@ class SessionTracker:
         if p is None:
             return
 
-        if active:
+        audio_playing = self._is_audio_playing(
+            p.get("cat_key", ""),
+            p.get("pid", self._last_pid),
+        )
+        if active or audio_playing:
             self._persistent_idle = 0.0
             self._idle_corrected = False
             p["idle_corrected"] = False
@@ -656,6 +663,13 @@ class SessionTracker:
         p["idle_during_grace"] += self.sample_interval
 
     # ── Internals ──────────────────────────────────────────────────
+
+    def _is_audio_playing(self, category_key, pid):
+        return (
+            category_key == "video"
+            and self._audio_detector is not None
+            and self._audio_detector.is_playing(pid)
+        )
 
     def _tick_current(self, idle_seconds, now, hwnd=None):
         if self._current is None:
@@ -690,10 +704,9 @@ class SessionTracker:
         # ── Threshold: audio peak detection for entertainment ──────────
         # Audio actually playing (peak > 0) → user is definitely watching,
         # no idle timeout. Silent (paused) → standard 60s rule.
-        if (
-            self._current.category_key == "video"
-            and self._audio_detector is not None
-            and self._audio_detector.is_playing(self._last_pid)
+        if self._is_audio_playing(
+            self._current.category_key,
+            self._last_pid,
         ):
             # Audio peaks detected → always effective, reset idle timer
             self._persistent_idle = 0.0
@@ -772,10 +785,9 @@ class SessionTracker:
             p.get("active_rule", s.active_rule if s else "")
             if p else (s.active_rule if s else "")
         )
-        is_ent = cat_key == "video"
-        audio_playing = (
-            is_ent and self._audio_detector is not None
-            and self._audio_detector.is_playing(self._last_pid)
+        audio_playing = self._is_audio_playing(
+            cat_key,
+            p.get("pid", self._last_pid) if p else self._last_pid,
         )
         idle_limit = self._idle_limit(active_rule)
         is_eff = audio_playing or (self._persistent_idle <= idle_limit)

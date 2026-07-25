@@ -1,6 +1,8 @@
 import signal
 from types import SimpleNamespace
 
+import pytest
+
 from daylens.services import command_handlers
 
 
@@ -88,3 +90,104 @@ def test_cli_shutdown_persists_short_tail_via_tracker_protocol(monkeypatch):
     assert persisted == [tail]
     assert tail.switch_reason == "shutdown"
     assert store_holder["store"].closed is True
+
+
+def _run_cli_with_finish_results(monkeypatch, finish_results):
+    signal_handlers = {}
+    finish_reasons = []
+    results = iter(finish_results)
+
+    class FakeStore:
+        def __init__(self, _db_path):
+            self.closed = False
+
+        def persist_session(self, _session):
+            return 1
+
+        def close(self):
+            self.closed = True
+
+    class FakeTracker:
+        def __init__(self, **_kwargs):
+            pass
+
+        def tick(self, _idle_seconds, _window):
+            return None
+
+        def finish_current(self, reason):
+            finish_reasons.append(reason)
+            return next(results)
+
+    store_holder = {}
+
+    def create_store(db_path):
+        store = FakeStore(db_path)
+        store_holder["store"] = store
+        return store
+
+    monkeypatch.setattr(
+        command_handlers.database,
+        "get_db_path",
+        lambda _config: "usage.db",
+    )
+    monkeypatch.setattr(command_handlers, "Classifier", lambda *_args: object())
+    monkeypatch.setattr(command_handlers, "SessionRuntimeStore", create_store)
+    monkeypatch.setattr(command_handlers, "SessionTracker", FakeTracker)
+    monkeypatch.setattr(command_handlers, "get_idle_seconds", lambda: 0)
+    monkeypatch.setattr(
+        command_handlers,
+        "get_foreground_window_info",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        command_handlers.signal,
+        "signal",
+        lambda sig, handler: signal_handlers.__setitem__(sig, handler),
+    )
+    monkeypatch.setattr(
+        command_handlers.time,
+        "sleep",
+        lambda _seconds: signal_handlers[signal.SIGINT](signal.SIGINT, None),
+    )
+    config = {
+        "tracker": {
+            "sample_interval_seconds": 1,
+            "flush_interval_seconds": 5,
+            "idle_threshold_seconds": 60,
+            "min_session_seconds": 2,
+            "persistence_shutdown_retry_attempts": 3,
+        }
+    }
+
+    return (
+        lambda: command_handlers.handle_start(config, "config.yaml"),
+        finish_reasons,
+        store_holder,
+    )
+
+
+def test_cli_shutdown_retries_false_finish_until_success(monkeypatch, capsys):
+    run, finish_reasons, store_holder = _run_cli_with_finish_results(
+        monkeypatch,
+        [False, True],
+    )
+
+    run()
+
+    assert finish_reasons == ["shutdown", "shutdown"]
+    assert store_holder["store"].closed is True
+    assert "数据库已安全关闭" in capsys.readouterr().out
+
+
+def test_cli_shutdown_persistent_false_raises_without_closing(monkeypatch, capsys):
+    run, finish_reasons, store_holder = _run_cli_with_finish_results(
+        monkeypatch,
+        [False, False, False],
+    )
+
+    with pytest.raises(RuntimeError, match="shutdown"):
+        run()
+
+    assert finish_reasons == ["shutdown", "shutdown", "shutdown"]
+    assert store_holder["store"].closed is False
+    assert "数据库已安全关闭" not in capsys.readouterr().out

@@ -338,6 +338,66 @@ def test_immediate_entertainment_switch_waits_when_end_callback_returns_false():
     assert len(callback_sessions) == 2
 
 
+def test_pending_video_with_audio_stays_effective_past_passive_threshold():
+    persist_attempts = []
+
+    def persist(session):
+        persist_attempts.append(session)
+        return len(persist_attempts) > 303
+
+    audio = AudioForPid(playing_pid=51)
+    tracker = SessionTracker(
+        config={
+            "tracker": {
+                "sample_interval_seconds": 1,
+                "entertainment_idle_threshold_seconds": 300,
+                "cross_group_grace_seconds": 30,
+            }
+        },
+        classifier=MappingClassifier(),
+        on_session_end=persist,
+        audio_detector=audio,
+    )
+    coding = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 50,
+    }
+    video = {
+        "process_name": "VLC.exe",
+        "window_title": "Movie",
+        "exe_path": "",
+        "pid": 51,
+    }
+    tracker.tick(0, coding)
+
+    for _ in range(303):
+        failed_snapshot = tracker.tick(0, video)
+
+    pending = tracker._pending_switch
+    assert pending["pid"] == 51
+    assert pending["effective_during_grace"] == 303
+    assert pending["idle_during_grace"] == 0
+    assert failed_snapshot["audio_playing"] is True
+    assert failed_snapshot["is_effective"] is True
+
+    success_snapshot = tracker.tick(0, video)
+    session = tracker.current_session
+
+    assert len(persist_attempts) == 304
+    assert session.process_name == "VLC.exe"
+    assert session.duration_seconds == 304
+    assert session.effective_seconds == 304
+    assert session.idle_seconds == 0
+    assert session.duration_seconds == (
+        session.effective_seconds + session.idle_seconds
+    )
+    assert success_snapshot["audio_playing"] is True
+    assert success_snapshot["is_effective"] is True
+    assert set(audio.seen_pids) == {51}
+
+
 def test_immediate_entertainment_switch_conserves_abandoned_grace_counters():
     ended = []
     tracker = SessionTracker(

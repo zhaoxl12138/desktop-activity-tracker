@@ -22,6 +22,10 @@ def handle_start(config: dict, config_path: str) -> None:
     flush_interval = tracker_cfg.get("flush_interval_seconds", config.get("flush_interval_seconds", 5))
     idle_threshold = tracker_cfg.get("idle_threshold_seconds", config.get("idle_threshold_seconds", 60))
     min_session = tracker_cfg.get("min_session_seconds", config.get("min_session_seconds", 2))
+    shutdown_attempts = max(
+        1,
+        int(tracker_cfg.get("persistence_shutdown_retry_attempts", 3)),
+    )
 
     db_path = database.get_db_path(config)
     classifier = Classifier(config_path, db_path)
@@ -77,10 +81,15 @@ def handle_start(config: dict, config_path: str) -> None:
                 last_error = err_msg
                 print(f"[ERROR] {datetime.now().strftime('%H:%M:%S')} {err_msg}", file=sys.stderr)
 
-    try:
-        tracker.finish_current("shutdown")
-    finally:
-        store.close()
+    for _ in range(shutdown_attempts):
+        if tracker.finish_current("shutdown"):
+            break
+    else:
+        raise RuntimeError(
+            "shutdown session persistence failed after "
+            f"{shutdown_attempts} attempts"
+        )
+    store.close()
     print("数据库已安全关闭。")
 
 
