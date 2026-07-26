@@ -12,6 +12,7 @@ from .. import database, exporter, reporter
 from ..activity_detector import get_idle_seconds
 from ..classifier import Classifier
 from ..session_tracker import SessionTracker
+from .session_recovery_service import SessionRecoverySpool
 from .session_runtime_service import SessionRuntimeStore
 from ..window_detector import get_foreground_window_info
 
@@ -30,6 +31,14 @@ def handle_start(config: dict, config_path: str) -> None:
     db_path = database.get_db_path(config)
     classifier = Classifier(config_path, db_path)
     store = SessionRuntimeStore(db_path)
+    recovery_spool = SessionRecoverySpool(db_path)
+    try:
+        recovery_spool.replay(store)
+    except Exception as exc:
+        store.close()
+        raise RuntimeError(
+            f"session recovery failed: {recovery_spool.path}"
+        ) from exc
 
     tracker = SessionTracker(
         config={
@@ -74,21 +83,48 @@ def handle_start(config: dict, config_path: str) -> None:
                     print(status)
                 except UnicodeEncodeError:
                     print(status.encode("ascii", errors="replace").decode("ascii"))
-            time.sleep(sample_interval)
         except Exception as exc:
             err_msg = str(exc)
             if err_msg != last_error:
                 last_error = err_msg
                 print(f"[ERROR] {datetime.now().strftime('%H:%M:%S')} {err_msg}", file=sys.stderr)
+        finally:
+            time.sleep(sample_interval)
 
+    shutdown_error = None
+    unresolved_tail = getattr(tracker, "current_session", None)
     for _ in range(shutdown_attempts):
-        if tracker.finish_current("shutdown"):
-            break
+        current_tail = getattr(tracker, "current_session", None)
+        if current_tail is not None:
+            unresolved_tail = current_tail
+        try:
+            if tracker.finish_current("shutdown"):
+                unresolved_tail = None
+                break
+        except Exception as exc:
+            shutdown_error = exc
     else:
-        raise RuntimeError(
-            "shutdown session persistence failed after "
-            f"{shutdown_attempts} attempts"
+        current_tail = getattr(tracker, "current_session", None)
+        if current_tail is not None:
+            unresolved_tail = current_tail
+        if unresolved_tail is None:
+            raise RuntimeError(
+                "shutdown session persistence failed and no recoverable "
+                "session remained in memory"
+            ) from shutdown_error
+        try:
+            recovery_spool.store_sessions([unresolved_tail])
+        except Exception as exc:
+            raise RuntimeError(
+                "shutdown session persistence and recovery spool both failed"
+            ) from exc
+        recovery_message = (
+            "shutdown session persistence failed; recovery saved at "
+            f"{recovery_spool.path}"
         )
+        print(f"[ERROR] {recovery_message}", file=sys.stderr)
+        store.close()
+        raise RuntimeError(recovery_message) from shutdown_error
     store.close()
     print("数据库已安全关闭。")
 

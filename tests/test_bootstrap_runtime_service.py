@@ -30,7 +30,7 @@ def test_prepare_runtime_closes_schema_connection_then_only_inspects_quality(
     monkeypatch.setattr(
         bootstrap_runtime_service,
         "inspect_data_quality",
-        lambda _path: calls.append("inspect") or {
+        lambda _path, **_kwargs: calls.append("inspect") or {
             "issue_count": 0,
             "affected_dates": [],
         },
@@ -55,7 +55,13 @@ def test_prepare_runtime_closes_schema_connection_then_only_inspects_quality(
     bootstrap_runtime_service.prepare_runtime_config({})
 
     assert "repair" not in calls
-    assert calls[:4] == ["init", ("close", connection), "inspect", "shared"]
+    assert calls[:5] == [
+        "init",
+        ("close", connection),
+        "settings",
+        "inspect",
+        "shared",
+    ]
 
 
 def test_prepare_runtime_reports_quality_issues_without_repairing(
@@ -80,7 +86,7 @@ def test_prepare_runtime_reports_quality_issues_without_repairing(
     monkeypatch.setattr(
         bootstrap_runtime_service,
         "inspect_data_quality",
-        lambda _path: {
+        lambda _path, **_kwargs: {
             "issue_count": 3,
             "affected_dates": ["2026-07-01", "2026-07-02"],
         },
@@ -115,3 +121,59 @@ def test_prepare_runtime_reports_quality_issues_without_repairing(
     error_output = capsys.readouterr().err
     assert "3" in error_output
     assert "2026-07-01" in error_output
+
+
+def test_prepare_runtime_passes_tracker_sample_interval_to_quality_inspection(
+    monkeypatch,
+):
+    connection = object()
+    inspections = []
+    monkeypatch.setattr(
+        bootstrap_runtime_service.database,
+        "get_db_path",
+        lambda _config: "usage.db",
+    )
+    monkeypatch.setattr(
+        bootstrap_runtime_service.database,
+        "init_db",
+        lambda _path: connection,
+    )
+    monkeypatch.setattr(
+        bootstrap_runtime_service.database,
+        "close_db",
+        lambda _connection: None,
+    )
+    monkeypatch.setattr(
+        bootstrap_runtime_service,
+        "inspect_data_quality",
+        lambda path, **kwargs: inspections.append((path, kwargs)) or {
+            "issue_count": 0,
+            "affected_dates": [],
+        },
+    )
+    monkeypatch.setattr(
+        bootstrap_runtime_service.database,
+        "init_shared_read_conn",
+        lambda _path: None,
+    )
+    def merge_db_settings(config, _path):
+        config["tracker"]["sample_interval_seconds"] = 7
+
+    monkeypatch.setattr(
+        bootstrap_runtime_service.database,
+        "merge_db_settings",
+        merge_db_settings,
+    )
+    monkeypatch.setattr(
+        bootstrap_runtime_service.database,
+        "merge_custom_rules",
+        lambda *_args: None,
+    )
+
+    bootstrap_runtime_service.prepare_runtime_config(
+        {"tracker": {"sample_interval_seconds": 5}}
+    )
+
+    assert inspections == [
+        ("usage.db", {"sample_interval_seconds": 7})
+    ]

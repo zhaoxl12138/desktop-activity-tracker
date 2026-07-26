@@ -251,17 +251,27 @@ def test_run_retries_failed_final_session_and_cleans_up(monkeypatch):
     assert worker.health.last_sample_at is not None
     assert worker.health.last_persist_at is not None
     assert worker.health.pending_persists == 0
+    assert worker.health.shutdown_safe is True
     assert "delayed" in [health.status for health in health_updates]
     assert errors and "database busy" in errors[0]
 
 
-def test_run_reports_fatal_when_shutdown_retry_cannot_persist(monkeypatch):
+def test_run_reports_fatal_when_shutdown_recovery_spool_fails(
+    monkeypatch,
+    tmp_path,
+):
     store = FakeStore([OSError("disk full")] * 10)
     _patch_run_dependencies(monkeypatch, store)
     worker = worker_module.RecordingWorker(
         "config.yaml",
         "usage.db",
         {"tracker": {"persistence_shutdown_retry_attempts": 2}},
+        recovery_path=tmp_path / "recovery.json",
+    )
+    monkeypatch.setattr(
+        worker._recovery_spool,
+        "store_sessions",
+        lambda _sessions: (_ for _ in ()).throw(OSError("spool full")),
     )
     errors = []
     worker.error_occurred.connect(errors.append)
@@ -274,8 +284,39 @@ def test_run_reports_fatal_when_shutdown_retry_cannot_persist(monkeypatch):
     assert FakeListener.instances[0].stopped is True
     assert worker.health.status == "fatal"
     assert worker.health.pending_persists == 1
+    assert worker.health.recovery_status == "failed"
+    assert worker.health.shutdown_safe is False
     assert worker.health.error
     assert any("disk full" in error for error in errors)
+
+
+def test_persistent_worker_failure_spools_tail_and_reports_recovery(
+    monkeypatch,
+    tmp_path,
+):
+    recovery_path = tmp_path / "worker-recovery.json"
+    store = FakeStore([OSError("disk full")] * 100)
+    _patch_run_dependencies(monkeypatch, store)
+    worker = worker_module.RecordingWorker(
+        "config.yaml",
+        "usage.db",
+        {"tracker": {"persistence_shutdown_retry_attempts": 2}},
+        recovery_path=recovery_path,
+    )
+    worker._sleep_check = lambda _ms: worker.stop()
+
+    worker.run()
+
+    recovered = worker._recovery_spool.load_sessions()
+    assert len(recovered) == 1
+    assert recovered[0].session_id
+    assert worker.health.status == "stopped"
+    assert worker.health.pending_persists == 0
+    assert worker.health.recovery_path == str(recovery_path)
+    assert worker.health.recovery_status == "pending"
+    assert worker.health.recovery_pending == 1
+    assert worker.health.shutdown_safe is True
+    assert store.closed is True
 
 
 def test_listener_initialization_failure_still_closes_store(monkeypatch):
@@ -405,7 +446,7 @@ def test_cleanup_drains_full_queue_before_persisting_tail_session():
     assert store.closed is True
 
 
-def test_cleanup_counts_retained_tail_when_full_queue_never_recovers():
+def test_cleanup_spools_retained_tail_when_full_queue_never_recovers(tmp_path):
     worker = worker_module.RecordingWorker(
         "config.yaml",
         "usage.db",
@@ -415,6 +456,7 @@ def test_cleanup_counts_retained_tail_when_full_queue_never_recovers():
                 "persistence_shutdown_retry_attempts": 1,
             }
         },
+        recovery_path=tmp_path / "recovery.json",
     )
     store = FakeStore([OSError("offline")] * 10)
     worker._store = store
@@ -431,8 +473,10 @@ def test_cleanup_counts_retained_tail_when_full_queue_never_recovers():
 
     assert tracker.current_session is not None
     assert tracker.current_session.session_id == "tail"
-    assert worker.health.status == "fatal"
-    assert worker.health.pending_persists == 2
+    assert worker.health.status == "stopped"
+    assert worker.health.pending_persists == 0
+    assert worker.health.recovery_pending == 2
+    assert worker.health.shutdown_safe is True
     assert store.closed is True
 
 
@@ -530,10 +574,65 @@ def test_shutdown_drain_preserves_fifo_and_continues_after_item_exhausts_budget(
 
     assert store.attempt_ids[initial_attempt_count:] == [
         "one",
-        "one",
-        "two",
         "two",
         "three",
+        "one",
+        "two",
     ]
     assert list(worker._pending_persists) == ["one"]
     assert worker._pending_persists["one"].attempts >= 3
+
+
+def test_shutdown_drain_uses_one_deadline_and_fair_fifo_for_100_busy_sessions():
+    class Clock:
+        def __init__(self):
+            self.now = 0.0
+
+        def monotonic(self):
+            return self.now
+
+    class BusyStore:
+        def __init__(self, clock):
+            self.clock = clock
+            self.queueing = True
+            self.attempt_ids = []
+            self.timeouts = []
+
+        def persist_session(self, session, *, busy_timeout_ms=None):
+            self.attempt_ids.append(session.session_id)
+            if self.queueing:
+                raise OSError("offline")
+            self.timeouts.append(busy_timeout_ms)
+            self.clock.now += 1.0
+            raise OSError("still busy")
+
+        def close(self):
+            pass
+
+    clock = Clock()
+    worker = worker_module.RecordingWorker(
+        "config.yaml",
+        "usage.db",
+        {
+            "tracker": {
+                "persistence_retry_queue_size": 100,
+                "persistence_shutdown_retry_attempts": 3,
+                "persistence_shutdown_deadline_seconds": 5,
+            }
+        },
+        monotonic_clock=clock.monotonic,
+    )
+    store = BusyStore(clock)
+    worker._store = store
+    for index in range(100):
+        worker._persist_or_queue(_session(f"session-{index}"))
+    store.queueing = False
+    initial_attempts = len(store.attempt_ids)
+
+    worker._drain_pending_persists()
+
+    assert store.attempt_ids[initial_attempts:] == [
+        f"session-{index}" for index in range(5)
+    ]
+    assert all(timeout <= 5_000 for timeout in store.timeouts)
+    assert worker.shutdown_wait_budget_ms() <= 15_000

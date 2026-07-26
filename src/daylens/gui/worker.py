@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import queue
 import threading
+import time
 from collections import OrderedDict
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -13,6 +14,7 @@ from PySide6.QtCore import QThread, Signal
 from pynput import keyboard
 
 from .. import activity_detector, classifier, window_detector
+from ..services.session_recovery_service import SessionRecoverySpool
 from ..services.session_runtime_service import SessionRuntimeStore
 from ..session_tracker import SessionTracker
 
@@ -31,6 +33,10 @@ class RecordingHealth:
     last_persist_at: datetime | None = None
     error: str = ""
     pending_persists: int = 0
+    recovery_pending: int = 0
+    recovery_path: str = ""
+    recovery_status: str = "none"
+    shutdown_safe: bool = False
 
 
 @dataclass
@@ -52,7 +58,15 @@ class RecordingWorker(QThread):
     error_occurred = Signal(str)
     health_updated = Signal(object)
 
-    def __init__(self, config_path, db_path, config):
+    def __init__(
+        self,
+        config_path,
+        db_path,
+        config,
+        *,
+        recovery_path=None,
+        monotonic_clock=None,
+    ):
         super().__init__()
         self.config_path = config_path
         self.db_path = db_path
@@ -72,8 +86,21 @@ class RecordingWorker(QThread):
         self._retained_tail = None
         self._last_error = ""
         self._fatal = False
+        self._recoverable_fatal = False
         self._health_lock = threading.Lock()
-        self._health = RecordingHealth(status="starting")
+        self._monotonic_clock = monotonic_clock or time.monotonic
+        self._shutdown_deadline = None
+        self._recovery_spool = SessionRecoverySpool(
+            db_path,
+            recovery_path=recovery_path,
+        )
+        recovery_exists = self._recovery_spool.path.exists()
+        self._health = RecordingHealth(
+            status="starting",
+            recovery_pending=1 if recovery_exists else 0,
+            recovery_path=str(self._recovery_spool.path),
+            recovery_status="pending" if recovery_exists else "none",
+        )
 
         self._load_worker_settings(self.config)
 
@@ -85,16 +112,10 @@ class RecordingWorker(QThread):
     def shutdown_wait_budget_ms(self) -> int:
         """Return a conservative bound for cleanup persistence attempts."""
 
-        pending_count = max(0, int(self.health.pending_persists))
-        retry_attempts = max(0, int(self._shutdown_retry_attempts))
-        # One item may currently be inside persistence and the current tracker
-        # session can become a second tail item after stop(). Cleanup has two
-        # drain phases plus final handoff/close operations.
-        possible_items = pending_count + 2
-        blocking_calls = (2 * possible_items * retry_attempts) + 4
-        return (
-            blocking_calls * self._PERSISTENCE_BUSY_TIMEOUT_MS
-            + self._SHUTDOWN_WAIT_MARGIN_MS
+        return min(
+            15_000,
+            int(self._shutdown_deadline_seconds * 1000)
+            + self._SHUTDOWN_WAIT_MARGIN_MS,
         )
 
     def _load_worker_settings(self, config) -> None:
@@ -120,6 +141,18 @@ class RecordingWorker(QThread):
             "_shutdown_retry_attempts": max(
                 0, int(tracker_cfg.get("persistence_shutdown_retry_attempts", 3))
             ),
+            "_shutdown_deadline_seconds": min(
+                14.0,
+                max(
+                    0.0,
+                    float(
+                        tracker_cfg.get(
+                            "persistence_shutdown_deadline_seconds",
+                            10,
+                        )
+                    ),
+                ),
+            ),
             "_degraded_after_attempts": max(
                 1, int(tracker_cfg.get("persistence_degraded_after_attempts", 3))
             ),
@@ -137,6 +170,9 @@ class RecordingWorker(QThread):
         last_sample_at: datetime | None = None,
         last_persist_at: datetime | None = None,
         error: str | None = None,
+        recovery_pending: int | None = None,
+        recovery_status: str | None = None,
+        shutdown_safe: bool | None = None,
     ) -> None:
         with self._health_lock:
             updates = {"pending_persists": self._pending_persist_count()}
@@ -148,6 +184,12 @@ class RecordingWorker(QThread):
                 updates["last_persist_at"] = last_persist_at
             if error is not None:
                 updates["error"] = error
+            if recovery_pending is not None:
+                updates["recovery_pending"] = max(0, int(recovery_pending))
+            if recovery_status is not None:
+                updates["recovery_status"] = recovery_status
+            if shutdown_safe is not None:
+                updates["shutdown_safe"] = bool(shutdown_safe)
             self._health = replace(self._health, **updates)
             snapshot = self._health
         self.health_updated.emit(snapshot)
@@ -159,10 +201,12 @@ class RecordingWorker(QThread):
             self.error_occurred.emit(message)
         self._set_health(status, error=message)
 
-    def _mark_fatal(self, error) -> None:
+    def _mark_fatal(self, error, *, recoverable: bool = False) -> None:
         self._fatal = True
+        self._recoverable_fatal = recoverable
         self._running.clear()
         self._report_error(error, "fatal")
+        self._set_health(shutdown_safe=False)
 
     def _tracker_config(self) -> dict:
         tracker = self.config.get("tracker", {})
@@ -192,6 +236,19 @@ class RecordingWorker(QThread):
         try:
             clf = classifier.Classifier(self.config_path, self.db_path)
             self._store = SessionRuntimeStore(self.db_path)
+            try:
+                replayed = self._recovery_spool.replay(self._store)
+            except Exception:
+                self._set_health(
+                    recovery_pending=1,
+                    recovery_status="failed",
+                    shutdown_safe=False,
+                )
+                raise
+            self._set_health(
+                recovery_pending=0,
+                recovery_status="replayed" if replayed else "none",
+            )
             tracker_config = self._tracker_config()
             tracker_options = tracker_config["tracker"]
             self._tracker = SessionTracker(
@@ -256,6 +313,9 @@ class RecordingWorker(QThread):
             self._cleanup()
 
     def _cleanup(self) -> None:
+        self._shutdown_deadline = (
+            self._monotonic_clock() + self._shutdown_deadline_seconds
+        )
         if self._listener is not None:
             try:
                 self._listener.stop()
@@ -269,14 +329,17 @@ class RecordingWorker(QThread):
 
         if self._tracker is not None and self._tracker.current_session is not None:
             tail = self._tracker.current_session
-            try:
-                if self._tracker.finish_current("shutdown"):
-                    self._retained_tail = None
-                else:
-                    self._retained_tail = tail
-            except Exception as error:
+            if self._remaining_shutdown_ms() <= 0:
                 self._retained_tail = tail
-                self._mark_fatal(error)
+            else:
+                try:
+                    if self._tracker.finish_current("shutdown"):
+                        self._retained_tail = None
+                    else:
+                        self._retained_tail = tail
+                except Exception as error:
+                    self._retained_tail = tail
+                    self._report_error(error, "degraded")
 
         if self._store is not None:
             self._drain_pending_persists()
@@ -286,28 +349,48 @@ class RecordingWorker(QThread):
             if (
                 self._retained_tail is not None
                 and len(self._pending_persists) < self._max_pending_persists
+                and self._remaining_shutdown_ms() > 0
             ):
                 try:
                     if self._tracker.finish_current("shutdown"):
                         self._retained_tail = None
                     self._drain_pending_persists()
                 except Exception as error:
-                    self._mark_fatal(error)
+                    self._report_error(error, "degraded")
 
             if self._pending_persist_count():
-                self._mark_fatal(
-                    RuntimeError(
-                        f"{self._pending_persist_count()} session(s) remain "
-                        "unpersisted after shutdown retries"
-                    )
-                )
+                self._spool_unresolved()
             try:
                 self._store.close()
             except Exception as error:
                 self._mark_fatal(error)
 
         if not self._fatal:
-            self._set_health("stopped")
+            self._set_health("stopped", error="", shutdown_safe=True)
+        else:
+            self._set_health(shutdown_safe=False)
+        self._shutdown_deadline = None
+
+    def _spool_unresolved(self) -> None:
+        sessions = [item.session for item in self._pending_persists.values()]
+        if self._retained_tail is not None:
+            sessions.append(self._retained_tail)
+        try:
+            stored_count = self._recovery_spool.store_sessions(sessions)
+        except Exception as error:
+            self._set_health(recovery_status="failed", shutdown_safe=False)
+            self._mark_fatal(error)
+            return
+
+        self._pending_persists.clear()
+        self._retained_tail = None
+        if self._recoverable_fatal:
+            self._fatal = False
+            self._recoverable_fatal = False
+        self._set_health(
+            recovery_pending=stored_count,
+            recovery_status="pending",
+        )
 
     @staticmethod
     def _persistence_key(session) -> str:
@@ -323,12 +406,20 @@ class RecordingWorker(QThread):
                 f"session persistence returned invalid row id {result}"
             )
 
-    def _persist_or_queue(self, session) -> bool:
+    def _persist_or_queue(
+        self,
+        session,
+        *,
+        busy_timeout_ms: int | None = None,
+    ) -> bool:
         if self._store is None:
             raise RuntimeError("session store is not initialized")
         key = self._persistence_key(session)
         try:
-            result = self._store.persist_session(session)
+            result = self._call_persist(
+                session,
+                busy_timeout_ms=busy_timeout_ms,
+            )
             self._validate_persist_result(result)
         except Exception as error:
             pending = self._pending_persists.get(key)
@@ -337,7 +428,7 @@ class RecordingWorker(QThread):
                     queue_error = _PersistenceQueueFull(
                         "session persistence retry queue is full"
                     )
-                    self._mark_fatal(queue_error)
+                    self._mark_fatal(queue_error, recoverable=True)
                     raise queue_error from error
                 pending = _PendingPersist(session=session)
                 self._pending_persists[key] = pending
@@ -386,13 +477,64 @@ class RecordingWorker(QThread):
         pending = next(iter(self._pending_persists.values()))
         self._persist_or_queue(pending.session)
 
+    def _call_persist(self, session, *, busy_timeout_ms: int | None):
+        if busy_timeout_ms is None:
+            return self._store.persist_session(session)
+        try:
+            return self._store.persist_session(
+                session,
+                busy_timeout_ms=busy_timeout_ms,
+            )
+        except TypeError as error:
+            if "busy_timeout_ms" not in str(error):
+                raise
+            return self._store.persist_session(session)
+
+    def _remaining_shutdown_ms(self, deadline=None) -> int:
+        effective_deadline = (
+            self._shutdown_deadline if deadline is None else deadline
+        )
+        if effective_deadline is None:
+            return self._PERSISTENCE_BUSY_TIMEOUT_MS
+        return max(
+            0,
+            int((effective_deadline - self._monotonic_clock()) * 1000),
+        )
+
     def _drain_pending_persists(self) -> None:
-        for key in list(self._pending_persists):
-            for _ in range(self._shutdown_retry_attempts):
-                pending = self._pending_persists.get(key)
-                if pending is None:
-                    break
-                self._persist_or_queue(pending.session)
+        if not self._pending_persists or self._shutdown_retry_attempts <= 0:
+            return
+        deadline = self._shutdown_deadline
+        if deadline is None:
+            deadline = (
+                self._monotonic_clock() + self._shutdown_deadline_seconds
+            )
+        keys = list(self._pending_persists)
+        attempts_by_key = {key: 0 for key in keys}
+        total_budget = len(keys) * self._shutdown_retry_attempts
+        total_attempts = 0
+        while keys and total_attempts < total_budget:
+            remaining_ms = self._remaining_shutdown_ms(deadline)
+            if remaining_ms <= 0:
+                break
+            key = keys.pop(0)
+            pending = self._pending_persists.get(key)
+            if pending is None:
+                continue
+            self._persist_or_queue(
+                pending.session,
+                busy_timeout_ms=min(
+                    self._PERSISTENCE_BUSY_TIMEOUT_MS,
+                    remaining_ms,
+                ),
+            )
+            total_attempts += 1
+            attempts_by_key[key] += 1
+            if (
+                key in self._pending_persists
+                and attempts_by_key[key] < self._shutdown_retry_attempts
+            ):
+                keys.append(key)
 
     def _on_key_press(self, _key) -> None:
         self._keyboard_activity.set()

@@ -145,6 +145,39 @@ def test_flush_interval_uses_monotonic_seconds_not_tick_count(sample_interval):
     assert flushed == [tracker.current_session]
 
 
+def test_flush_exception_still_advances_monotonic_deadline():
+    clock = ManualClock()
+    attempts = []
+
+    def failing_flush(session):
+        attempts.append(session)
+        raise OSError("database busy")
+
+    tracker = _tracker(
+        on_flush=failing_flush,
+        monotonic_clock=clock,
+    )
+    window = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 15,
+    }
+    clock.now = 5.0
+
+    with pytest.raises(OSError, match="database busy"):
+        tracker.tick(0, window)
+
+    clock.now = 5.1
+    tracker.tick(0, window)
+    assert len(attempts) == 1
+
+    clock.now = 10.0
+    with pytest.raises(OSError, match="database busy"):
+        tracker.tick(0, window)
+    assert len(attempts) == 2
+
+
 def test_immediate_work_to_video_switch_counts_the_new_sessions_first_sample():
     tracker = _tracker(sample_interval=2)
     tracker.tick(

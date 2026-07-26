@@ -737,14 +737,22 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "重启失败", str(exc))
             return
 
+        try:
+            restart_handle = schedule_restart(command, deferred=True)
+        except Exception as exc:
+            QMessageBox.warning(self, "重启失败", str(exc))
+            return
+
         result = stop_recording_worker_safely(self.worker)
         if not result.completed:
+            restart_handle.cancel()
             QMessageBox.warning(self, "Cannot restart safely", result.message)
             return
 
         try:
-            schedule_restart(command)
+            restart_handle.arm()
         except Exception as exc:
+            restart_handle.cancel()
             QMessageBox.warning(self, "重启失败", str(exc))
             return
 

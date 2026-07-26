@@ -603,9 +603,9 @@ class SessionTracker:
         now = self._monotonic_clock()
         if now - self._last_flush_at < self.flush_interval:
             return
+        self._last_flush_at = now
         if self._on_flush and self._current is not None:
             self._on_flush(self._current)
-        self._last_flush_at = now
 
     def _tick_grace_current(self, now):
         """Tick the current session during cross-domain grace period,

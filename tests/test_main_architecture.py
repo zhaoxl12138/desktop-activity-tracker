@@ -80,7 +80,7 @@ def test_main_window_handles_settings_restart_requests():
     assert ".restart_requested.connect(self._restart_app)" in MAIN_WINDOW_SOURCE
     assert "command = current_launch_command()" in MAIN_WINDOW_SOURCE
     assert "stop_recording_worker_safely(self.worker)" in MAIN_WINDOW_SOURCE
-    assert "schedule_restart(command)" in MAIN_WINDOW_SOURCE
+    assert "schedule_restart(command, deferred=True)" in MAIN_WINDOW_SOURCE
 
 
 def test_main_window_schedules_background_report_backfill():

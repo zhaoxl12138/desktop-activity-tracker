@@ -6,7 +6,6 @@ import shutil
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from pathlib import Path
 
 
 REPAIR_META_KEY = "legacy_entertainment_idle_repair_v1"
@@ -37,6 +36,10 @@ def inspect_data_quality(
             0,
             float(wall_clock_tolerance_seconds),
         )
+    composition_tolerance_seconds = max(
+        SAMPLING_TOLERANCE_SECONDS,
+        float(sample_interval_seconds),
+    )
     read_only_uri = f"{Path(db_path).resolve().as_uri()}?mode=ro"
     conn = sqlite3.connect(read_only_uri, uri=True)
     try:
@@ -95,7 +98,7 @@ def inspect_data_quality(
                 )
 
             components = effective + idle
-            if components > duration + SAMPLING_TOLERANCE_SECONDS:
+            if components > duration + composition_tolerance_seconds:
                 mismatch = components - duration
                 overattributed_seconds += mismatch
                 add_issue(
@@ -109,7 +112,7 @@ def inspect_data_quality(
                         "impact_seconds": mismatch,
                     },
                 )
-            elif duration > components + SAMPLING_TOLERANCE_SECONDS:
+            elif duration > components + composition_tolerance_seconds:
                 mismatch = duration - components
                 unattributed_seconds += mismatch
                 add_issue(
@@ -188,6 +191,7 @@ def inspect_data_quality(
             "overattributed_seconds": overattributed_seconds,
             "wall_clock_impact_seconds": wall_clock_impact_seconds,
             "wall_clock_tolerance_seconds": wall_clock_tolerance_seconds,
+            "composition_tolerance_seconds": composition_tolerance_seconds,
             "impact_seconds": impact_seconds,
         }
     finally:

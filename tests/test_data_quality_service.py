@@ -158,6 +158,38 @@ def test_inspect_data_quality_allows_one_second_sampling_tolerance(tmp_path):
     assert result["score"] == 100
 
 
+@pytest.mark.parametrize(
+    ("component_delta", "expected_issue_count"),
+    [(5, 0), (6, 1)],
+)
+def test_composition_tolerance_uses_actual_sample_interval(
+    tmp_path,
+    component_delta,
+    expected_issue_count,
+):
+    db, conn = _create_quality_database(tmp_path)
+    conn.execute(
+        "INSERT INTO activity_sessions VALUES "
+        "('sample-step','2026-01-05 10:00:00','2026-01-05 10:00:30',"
+        "'2026-01-05',30,?,0)",
+        (30 + component_delta,),
+    )
+    conn.commit()
+    conn.close()
+
+    result = inspect_data_quality(
+        str(db),
+        sample_interval_seconds=5,
+    )
+
+    duration_issues = [
+        issue
+        for issue in result["issues"]
+        if issue["type"] == "duration_mismatch"
+    ]
+    assert len(duration_issues) == expected_issue_count
+
+
 @pytest.mark.parametrize("sample_interval", [2, 60])
 def test_tracker_first_sample_is_not_a_wall_clock_anomaly(
     tmp_path, monkeypatch, sample_interval

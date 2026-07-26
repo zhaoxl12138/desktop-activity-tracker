@@ -7,6 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QPushButton
 
+from daylens.gui.pages import settings as settings_page_module
 from daylens.gui.pages.settings import SettingsPage
 from daylens.gui.main_window import MainWindow
 from daylens.services import settings_service
@@ -150,8 +151,31 @@ def test_report_directory_is_read_only_without_browse_action(tmp_path, monkeypat
 
 def test_settings_data_quality_action_offers_preview_and_repair(tmp_path, monkeypatch):
     _app, page, _worker, _old_db = _build_page(tmp_path, monkeypatch)
+    inspections = []
+    page.config["tracker"]["sample_interval_seconds"] = 7
+    monkeypatch.setattr(
+        settings_page_module,
+        "inspect_data_quality",
+        lambda path, **kwargs: inspections.append((path, kwargs)) or {
+            "issue_count": 0,
+            "checked_sessions": 0,
+            "score": 100,
+        },
+    )
+    monkeypatch.setattr(
+        settings_page_module,
+        "preview_repairable_sessions",
+        lambda _path: {"repairable_count": 0},
+    )
 
     labels = [button.text() for button in page.findChildren(QPushButton)]
+    page._check_data_quality()
 
     assert "预览并修复数据" in labels
+    assert inspections == [
+        (
+            page.db_path,
+            {"sample_interval_seconds": 7},
+        )
+    ]
     page.deleteLater()

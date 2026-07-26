@@ -12,8 +12,17 @@ def prepare_runtime_config(config: dict) -> tuple[dict, str]:
     db_path = database.get_db_path(config)
     connection = database.init_db(db_path)
     database.close_db(connection)
+    database.merge_db_settings(config, db_path)
     try:
-        quality = inspect_data_quality(db_path)
+        tracker_config = config.get("tracker", {})
+        sample_interval = tracker_config.get(
+            "sample_interval_seconds",
+            config.get("sample_interval_seconds", 1),
+        )
+        quality = inspect_data_quality(
+            db_path,
+            sample_interval_seconds=sample_interval,
+        )
         if quality["issue_count"]:
             dates = ", ".join(quality.get("affected_dates", [])) or "unknown"
             print(
@@ -24,7 +33,6 @@ def prepare_runtime_config(config: dict) -> tuple[dict, str]:
     except Exception as exc:
         print(f"[DataQuality] Startup inspection failed: {exc}", file=sys.stderr)
     database.init_shared_read_conn(db_path)
-    database.merge_db_settings(config, db_path)
     database.merge_custom_rules(config, db_path)
     return config, db_path
 

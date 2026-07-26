@@ -324,7 +324,15 @@ class SettingsPage(QWidget):
 
     def _check_data_quality(self):
         try:
-            result = inspect_data_quality(self.db_path)
+            tracker_config = self.config.get("tracker", {})
+            sample_interval = tracker_config.get(
+                "sample_interval_seconds",
+                self.config.get("sample_interval_seconds", 1),
+            )
+            result = inspect_data_quality(
+                self.db_path,
+                sample_interval_seconds=sample_interval,
+            )
             preview = preview_repairable_sessions(self.db_path)
             repairable_count = int(preview["repairable_count"])
             if repairable_count:
@@ -346,7 +354,10 @@ class SettingsPage(QWidget):
                     self.db_path,
                     reason="manual",
                 )
-                after = inspect_data_quality(self.db_path)
+                after = inspect_data_quality(
+                    self.db_path,
+                    sample_interval_seconds=sample_interval,
+                )
                 QMessageBox.information(
                     self,
                     "数据修复完成",

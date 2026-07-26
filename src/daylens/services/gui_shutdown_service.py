@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-DEFAULT_SHUTDOWN_WAIT_MS = 30_000
+DEFAULT_SHUTDOWN_WAIT_MS = 15_000
+MAX_SHUTDOWN_WAIT_MS = 15_000
 
 
 @dataclass(frozen=True)
@@ -25,13 +26,13 @@ class WorkerShutdownResult:
 
 def _resolve_wait_budget_ms(worker: object, timeout_ms: int | None) -> int:
     if timeout_ms is not None:
-        return max(1, int(timeout_ms))
+        return min(MAX_SHUTDOWN_WAIT_MS, max(1, int(timeout_ms)))
 
     configured_budget = getattr(worker, "shutdown_wait_budget_ms", None)
     try:
         value = configured_budget() if callable(configured_budget) else configured_budget
         if value is not None:
-            return max(1, int(value))
+            return min(MAX_SHUTDOWN_WAIT_MS, max(1, int(value)))
     except (TypeError, ValueError):
         pass
     return DEFAULT_SHUTDOWN_WAIT_MS
@@ -69,6 +70,32 @@ def stop_recording_worker_safely(
         )
 
     if completed:
+        health = getattr(worker, "health", None)
+        status = str(getattr(health, "status", "") or "")
+        pending = max(0, int(getattr(health, "pending_persists", 0) or 0))
+        recovery_path = str(getattr(health, "recovery_path", "") or "")
+        recovery_status = str(
+            getattr(health, "recovery_status", "") or ""
+        )
+        explicitly_safe = getattr(health, "shutdown_safe", None)
+        if status == "fatal" or pending or explicitly_safe is False:
+            details = [f"status={status or 'unknown'}"]
+            if pending:
+                details.append(f"volatile pending sessions={pending}")
+            if recovery_status:
+                details.append(f"recovery={recovery_status}")
+            if recovery_path:
+                details.append(f"path={recovery_path}")
+            return WorkerShutdownResult(
+                completed=False,
+                worker=worker,
+                timeout_ms=budget_ms,
+                message=(
+                    "The recording worker joined but shutdown is not safe ("
+                    + ", ".join(details)
+                    + "). Runtime data was not closed."
+                ),
+            )
         return WorkerShutdownResult(True, worker, budget_ms)
 
     return WorkerShutdownResult(
