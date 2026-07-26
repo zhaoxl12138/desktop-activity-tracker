@@ -308,7 +308,9 @@ class RecordingWorker(QThread):
 
                 self._sleep_check(int(self.sample_interval * 1000))
         except Exception as error:
-            self._mark_fatal(error)
+            # Queue exhaustion is recoverable once cleanup has durably
+            # transferred every unresolved session to the recovery spool.
+            self._mark_fatal(error, recoverable=self._recoverable_fatal)
         finally:
             self._cleanup()
 
@@ -414,6 +416,11 @@ class RecordingWorker(QThread):
     ) -> bool:
         if self._store is None:
             raise RuntimeError("session store is not initialized")
+        if busy_timeout_ms is None and self._shutdown_deadline is not None:
+            busy_timeout_ms = min(
+                self._PERSISTENCE_BUSY_TIMEOUT_MS,
+                self._remaining_shutdown_ms(),
+            )
         key = self._persistence_key(session)
         try:
             result = self._call_persist(

@@ -636,3 +636,111 @@ def test_shutdown_drain_uses_one_deadline_and_fair_fifo_for_100_busy_sessions():
     ]
     assert all(timeout <= 5_000 for timeout in store.timeouts)
     assert worker.shutdown_wait_budget_ms() <= 15_000
+
+
+def test_cleanup_tail_persist_uses_remaining_global_deadline(tmp_path):
+    class Clock:
+        now = 0.0
+
+        def monotonic(self):
+            return self.now
+
+    class BusyStore:
+        def __init__(self):
+            self.timeouts = []
+
+        def persist_session(self, _session, *, busy_timeout_ms=None):
+            self.timeouts.append(busy_timeout_ms)
+            raise OSError("database busy")
+
+        def close(self):
+            pass
+
+    clock = Clock()
+    worker = worker_module.RecordingWorker(
+        "config.yaml",
+        "usage.db",
+        {
+            "tracker": {
+                "persistence_shutdown_deadline_seconds": 2,
+                "persistence_shutdown_retry_attempts": 1,
+            }
+        },
+        recovery_path=tmp_path / "recovery.json",
+        monotonic_clock=clock.monotonic,
+    )
+    worker._store = BusyStore()
+    tracker = SessionTracker(
+        config={"tracker": {"min_session_seconds": 1}},
+        classifier=StaticClassifier(),
+        on_session_end=worker._persist_or_queue,
+    )
+    tracker._current = _session("tail")
+    worker._tracker = tracker
+
+    worker._cleanup()
+
+    assert worker._store.timeouts[0] is not None
+    assert worker._store.timeouts[0] <= 2_000
+
+
+def test_live_queue_full_remains_recoverable_after_outer_run_catch(
+    monkeypatch,
+    tmp_path,
+):
+    first = _session("first")
+    tail = _session("tail")
+    store = FakeStore(
+        [
+            OSError("offline"),
+            OSError("offline"),
+            None,
+            OSError("offline"),
+            OSError("offline"),
+        ]
+    )
+    _patch_run_dependencies(monkeypatch, store)
+
+    class QueueFillingTracker:
+        def __init__(self, *, on_session_end, **_kwargs):
+            self.on_session_end = on_session_end
+            self.current_session = None
+
+        def tick(self, _idle_seconds, _window):
+            self.current_session = first
+            self.on_session_end(first)
+            self.current_session = tail
+            self.on_session_end(tail)
+
+        def finish_current(self, reason):
+            self.current_session.switch_reason = reason
+            result = self.on_session_end(self.current_session)
+            if result:
+                self.current_session = None
+            return result
+
+        def mark_user_active(self):
+            pass
+
+    monkeypatch.setattr(worker_module, "SessionTracker", QueueFillingTracker)
+    recovery_path = tmp_path / "recovery.json"
+    worker = worker_module.RecordingWorker(
+        "config.yaml",
+        "usage.db",
+        {
+            "tracker": {
+                "persistence_retry_queue_size": 1,
+                "persistence_shutdown_retry_attempts": 1,
+            }
+        },
+        recovery_path=recovery_path,
+    )
+    worker._sleep_check = lambda _ms: worker.stop()
+
+    worker.run()
+
+    recovered = worker._recovery_spool.load_sessions()
+    assert [session.session_id for session in recovered] == ["tail"]
+    assert worker.health.status == "stopped"
+    assert worker.health.recovery_status == "pending"
+    assert worker.health.shutdown_safe is True
