@@ -915,30 +915,6 @@ class MainWindow(QMainWindow):
         self._theme_rebuilding = False
 
     def _persist_theme_preference(self) -> None:
-        """Write only the theme key back, atomically via temp file."""
-        import os
-        import re
-
-        try:
-            with open(self.config_path, "r", encoding="utf-8") as f:
-                content = f.read()
-        except FileNotFoundError:
-            return
-
-        theme_line = f"theme: {self.current_theme}"
-        if re.search(r'^theme:', content, re.MULTILINE):
-            content = re.sub(r'^theme:.*$', theme_line, content, flags=re.MULTILINE)
-        else:
-            content = content.rstrip() + "\n" + theme_line + "\n"
-
-        tmp_path = self.config_path + ".tmp"
-        try:
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                f.write(content)
-            os.replace(tmp_path, self.config_path)
-        except Exception as e:
-            print(f"[MainWindow] _persist_theme_preference write error: {e}")
-
-        # Also persist to data/user_config.yaml
+        """Persist theme as user state; factory config remains read-only."""
         from ..utils import save_user_config
         save_user_config({"theme": self.current_theme})

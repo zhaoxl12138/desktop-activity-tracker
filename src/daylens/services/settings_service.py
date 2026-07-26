@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import copy
 from datetime import datetime, timedelta
 
 import yaml
@@ -29,10 +30,14 @@ def load_page_config(config_path: str, db_path: str) -> dict:
     except (FileNotFoundError, yaml.YAMLError):
         config = {}
 
+    if not isinstance(config, dict):
+        config = {}
+
     user_config = load_user_config()
-    for key in ("obsidian_output_path", "theme", "db_path"):
-        if key in user_config and user_config[key]:
-            config[key] = user_config[key]
+    if isinstance(user_config, dict):
+        for key in ("obsidian_output_path", "theme", "db_path"):
+            if key in user_config and user_config[key]:
+                config[key] = user_config[key]
 
     effective_db_path = config.get("db_path", db_path)
     database.merge_db_settings(config, effective_db_path)
@@ -52,7 +57,7 @@ def save_page_config(
 ) -> dict:
     normalized_db_path = normalize_database_path(new_db_path)
 
-    updated = dict(config)
+    updated = copy.deepcopy(config)
     updated["sample_interval_seconds"] = sample_interval
     updated["idle_threshold_seconds"] = idle_threshold
     updated["db_path"] = normalized_db_path
@@ -67,9 +72,6 @@ def save_page_config(
     effective_db_path = updated.get("db_path", db_path)
     connection = database.init_db(effective_db_path)
     database.close_db(connection)
-
-    with open(config_path, "w", encoding="utf-8") as handle:
-        yaml.safe_dump(updated, handle, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
     database.save_settings(effective_db_path, updated)
     persisted = {

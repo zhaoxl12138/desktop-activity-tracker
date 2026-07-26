@@ -31,9 +31,17 @@ def get_app_root():
 def get_data_dir():
     """Return the persistent user-data directory (survives rebuilds).
 
-    Frozen build: data/ under the resolved app root.
-    Normal Python: data/ under project root (3 levels up from this file).
+    Existing frozen installs keep legacy state under the application root.
+    New frozen installs use LocalAppData. Source runs keep project-local data.
     """
+    app_root = get_app_root()
     if getattr(sys, 'frozen', False):
-        return os.path.join(get_app_root(), "data")
-    return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")
+        legacy_dir = os.path.join(app_root, "data")
+        state_names = ("usage.db", "user_config.yaml", "reports", "backups", "logs")
+        if any(os.path.exists(os.path.join(legacy_dir, name)) for name in state_names):
+            return legacy_dir
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            return os.path.join(local_app_data, "DayLens")
+        return legacy_dir
+    return os.path.join(app_root, "data")

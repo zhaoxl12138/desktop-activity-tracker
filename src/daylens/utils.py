@@ -208,34 +208,24 @@ def should_hide_rule_category(category_key: str, category_name: str = "") -> boo
 
 
 def generate_default_config(path):
-    """Write default config.yaml, auto-enriched with apps found on this machine."""
+    """Write deterministic, machine-independent factory configuration."""
+    import copy
     import os
     import yaml
 
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
-    # Attempt app scan (non-fatal if it fails)
-    try:
-        from .app_scanner import scan_installed_apps, classify_scanned_apps
-        scanned = scan_installed_apps()
-        classified = classify_scanned_apps(scanned)
-    except Exception:
-        classified = {}
-
     # Build categories dict preserving order
     categories = {}
     for key in _CATEGORY_ORDER:
-        cat = dict(_DEFAULT_CATEGORIES[key])
+        cat = copy.deepcopy(_DEFAULT_CATEGORIES[key])
         default_procs = cat.pop("process_names")
         title_kws = cat.pop("title_keywords")
 
-        # Merge: default procs (always kept) + scanned procs.
-        # Dedup by lowercase, prefer default casing.
+        # Deduplicate factory entries without consulting machine state.
         merged = {}
         for p in default_procs:
             merged[p.lower()] = p
-        for pname in classified.get(key, set()):
-            merged.setdefault(pname, pname)
 
         cat["match"] = {
             "process_names": sorted(merged.values(), key=str.lower),
@@ -292,37 +282,122 @@ def generate_default_config(path):
 
 # ── Persistent user config (survives PyInstaller rebuilds) ──────────
 
+USER_CONFIG_VERSION = 1
+_USER_CONFIG_KEYS = {
+    "theme": str,
+    "db_path": str,
+    "obsidian_output_path": str,
+}
+
+
+def _validated_user_config(value) -> dict:
+    """Return a versioned, allowlisted user configuration."""
+    if not isinstance(value, dict):
+        raise ValueError("user config must be a mapping")
+    version = value.get("config_version", 0)
+    if isinstance(version, bool) or not isinstance(version, int):
+        raise ValueError("invalid user config version")
+    if version > USER_CONFIG_VERSION:
+        raise ValueError("unsupported user config version")
+
+    result = {"config_version": USER_CONFIG_VERSION}
+    for key, expected_type in _USER_CONFIG_KEYS.items():
+        item = value.get(key)
+        if not isinstance(item, expected_type):
+            continue
+        if key == "theme" and item not in {"dark", "light"}:
+            continue
+        result[key] = item
+    return result
+
+
+def _read_user_config_file(path: str) -> dict:
+    import yaml
+
+    with open(path, "r", encoding="utf-8") as handle:
+        return _validated_user_config(yaml.safe_load(handle))
+
+
+def _atomic_write_user_config(path: str, value: dict, *, backup: bool) -> None:
+    import os
+    import yaml
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    temp_path = path + ".tmp"
+    backup_path = path + ".bak"
+    backup_temp_path = backup_path + ".tmp"
+    encoded = yaml.safe_dump(
+        value,
+        allow_unicode=True,
+        default_flow_style=False,
+        sort_keys=False,
+    ).encode("utf-8")
+    try:
+        if backup and os.path.isfile(path):
+            with open(path, "rb") as source:
+                previous = source.read()
+            with open(backup_temp_path, "wb") as handle:
+                handle.write(previous)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(backup_temp_path, backup_path)
+
+        with open(temp_path, "wb") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+    finally:
+        for leftover in (temp_path, backup_temp_path):
+            try:
+                os.remove(leftover)
+            except FileNotFoundError:
+                pass
+
+
 def load_user_config() -> dict:
-    """Load user_config.yaml overrides from data dir. Returns empty dict on failure."""
+    """Load validated overrides, recovering from the last known good copy."""
     import os
     import yaml
     from . import get_data_dir
+
     user_path = os.path.join(get_data_dir(), "user_config.yaml")
     if not os.path.exists(user_path):
         return {}
     try:
-        with open(user_path, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
+        with open(user_path, "r", encoding="utf-8") as handle:
+            raw = yaml.safe_load(handle)
+        loaded = _validated_user_config(raw)
+        if loaded != raw:
+            _atomic_write_user_config(user_path, loaded, backup=True)
+        return loaded
     except Exception:
-        return {}
+        try:
+            recovered = _read_user_config_file(user_path + ".bak")
+            _atomic_write_user_config(user_path, recovered, backup=False)
+            return recovered
+        except Exception:
+            return {}
 
 
 def save_user_config(overrides: dict, remove_keys: set[str] | None = None) -> None:
-    """Merge overrides into user_config.yaml in the data directory."""
+    """Validate, merge, and atomically persist runtime user choices."""
     import os
-    import yaml
     from . import get_data_dir
+
     user_path = os.path.join(get_data_dir(), "user_config.yaml")
-    existing = {}
-    if os.path.exists(user_path):
-        try:
-            with open(user_path, "r", encoding="utf-8") as f:
-                existing = yaml.safe_load(f) or {}
-        except Exception:
-            pass
+    existing = _validated_user_config(load_user_config())
     for key in remove_keys or set():
-        existing.pop(key, None)
-    existing.update(overrides)
-    os.makedirs(os.path.dirname(user_path), exist_ok=True)
-    with open(user_path, "w", encoding="utf-8") as f:
-        yaml.safe_dump(existing, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        if key in _USER_CONFIG_KEYS:
+            existing.pop(key, None)
+    if isinstance(overrides, dict):
+        candidate = {
+            key: value
+            for key, value in overrides.items()
+            if key in _USER_CONFIG_KEYS
+        }
+        validated = _validated_user_config(candidate)
+        validated.pop("config_version", None)
+        existing.update(validated)
+    existing["config_version"] = USER_CONFIG_VERSION
+    _atomic_write_user_config(user_path, existing, backup=True)
