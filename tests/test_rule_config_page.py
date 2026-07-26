@@ -5,6 +5,7 @@ import os
 import tempfile
 from pathlib import Path
 
+import pytest
 import yaml
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QWidget
@@ -67,13 +68,15 @@ def _selected_key(page: RuleConfigPage) -> str | None:
 
 
 def _build_page(tmp_path: Path, *, worker=None) -> RuleConfigPage:
+    app = _app()
     config_path = tmp_path / "config.yaml"
     db_path = tmp_path / "usage.db"
     _write_config(config_path)
     database.init_db(str(db_path)).close()
     page = RuleConfigPage(str(config_path), str(db_path), worker)
+    page._test_app = app
     page.show()
-    _app().processEvents()
+    app.processEvents()
     return page
 
 
@@ -564,3 +567,167 @@ def test_rule_editor_save_preserves_persisted_modes(monkeypatch, tmp_path):
     assert stored["title_keywords_mode"] == "inherit"
     assert stored["title_patterns_mode"] == "replace"
     assert stored["title_patterns"] == ["docs\\.example"]
+
+
+def _prepare_dirty_rule_action(
+    page: RuleConfigPage, action: str
+) -> tuple[str, dict]:
+    if action == "delete":
+        page.categories["focus"] = {
+            "display_name": "Focus",
+            "active_rule": "interactive_required",
+            "match": {"process_names": [], "title_keywords": []},
+        }
+        page._populate_list()
+        _select_category(page, "focus")
+    else:
+        _select_category(page, "coding")
+    selected_key = _selected_key(page)
+    page.edit_name.setText("Unsaved action edit")
+    return selected_key, copy.deepcopy(page.categories)
+
+
+def _patch_rule_action_scan(monkeypatch, calls: dict) -> None:
+    def scan():
+        calls["scan"] += 1
+        return ["ignored"]
+
+    monkeypatch.setattr(
+        "desktop_activity_tracker.gui.pages.rule_config.scan_installed_apps",
+        scan,
+    )
+    monkeypatch.setattr(
+        "desktop_activity_tracker.gui.pages.rule_config.classify_scanned_apps",
+        lambda apps: {"coding": {"python.exe"}},
+    )
+
+
+def _run_rule_action(page: RuleConfigPage, action: str) -> None:
+    {
+        "add": page._add_category,
+        "delete": page._delete_current,
+        "rescan": page._rescan_apps,
+    }[action]()
+
+
+def _action_proceeded(
+    page: RuleConfigPage, action: str, before: dict, calls: dict
+) -> bool:
+    if action == "add":
+        return len(page.categories) == len(before) + 1
+    if action == "delete":
+        return "focus" not in page.categories
+    return calls["scan"] == 1 and "python.exe" in {
+        process.casefold()
+        for process in page.categories["coding"]["match"]["process_names"]
+    }
+
+
+@pytest.mark.parametrize("action", ["add", "delete", "rescan"])
+def test_dirty_rule_action_cancel_preserves_editor_and_skips_action(
+    action, monkeypatch, tmp_path
+):
+    page = _build_page(tmp_path)
+    selected_key, before = _prepare_dirty_rule_action(page, action)
+    calls = {"scan": 0}
+    _patch_rule_action_scan(monkeypatch, calls)
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *args, **kwargs: QMessageBox.Cancel
+    )
+
+    _run_rule_action(page, action)
+
+    assert page.categories == before
+    assert _selected_key(page) == selected_key
+    assert page.edit_name.text() == "Unsaved action edit"
+    assert page._dirty is True
+    assert calls["scan"] == 0
+
+
+@pytest.mark.parametrize("action", ["add", "delete", "rescan"])
+def test_dirty_rule_action_failed_save_preserves_editor_and_skips_action(
+    action, monkeypatch, tmp_path
+):
+    page = _build_page(tmp_path)
+    selected_key, before = _prepare_dirty_rule_action(page, action)
+    calls = {"scan": 0}
+    _patch_rule_action_scan(monkeypatch, calls)
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *args, **kwargs: QMessageBox.Save
+    )
+    monkeypatch.setattr(
+        "desktop_activity_tracker.gui.pages.rule_config.save_rule_categories",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disk full")),
+    )
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args, **kwargs: None)
+
+    _run_rule_action(page, action)
+
+    assert page.categories == before
+    assert _selected_key(page) == selected_key
+    assert page.edit_name.text() == "Unsaved action edit"
+    assert page._dirty is True
+    assert calls["scan"] == 0
+
+
+@pytest.mark.parametrize("action", ["add", "delete", "rescan"])
+def test_dirty_rule_action_save_success_commits_edit_then_proceeds(
+    action, monkeypatch, tmp_path
+):
+    page = _build_page(tmp_path)
+    selected_key, before = _prepare_dirty_rule_action(page, action)
+    calls = {"scan": 0, "saved": []}
+    _patch_rule_action_scan(monkeypatch, calls)
+
+    def answer(*args, **kwargs):
+        if args[1] == "未保存的修改":
+            return QMessageBox.Save
+        if args[1] == "确认删除":
+            return QMessageBox.Yes
+        raise AssertionError(args[1])
+
+    monkeypatch.setattr(QMessageBox, "question", answer)
+    monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "desktop_activity_tracker.gui.pages.rule_config.save_rule_categories",
+        lambda db_path, categories: calls["saved"].append(
+            copy.deepcopy(categories)
+        ),
+    )
+
+    _run_rule_action(page, action)
+
+    assert calls["saved"][0][selected_key]["display_name"] == "Unsaved action edit"
+    assert _action_proceeded(page, action, before, calls)
+
+
+@pytest.mark.parametrize("action", ["add", "delete", "rescan"])
+def test_dirty_rule_action_discard_explicitly_then_proceeds(
+    action, monkeypatch, tmp_path
+):
+    page = _build_page(tmp_path)
+    selected_key, before = _prepare_dirty_rule_action(page, action)
+    calls = {"scan": 0, "saved": []}
+    _patch_rule_action_scan(monkeypatch, calls)
+
+    def answer(*args, **kwargs):
+        if args[1] == "未保存的修改":
+            return QMessageBox.Discard
+        if args[1] == "确认删除":
+            return QMessageBox.Yes
+        raise AssertionError(args[1])
+
+    monkeypatch.setattr(QMessageBox, "question", answer)
+    monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "desktop_activity_tracker.gui.pages.rule_config.save_rule_categories",
+        lambda db_path, categories: calls["saved"].append(
+            copy.deepcopy(categories)
+        ),
+    )
+
+    _run_rule_action(page, action)
+
+    assert _action_proceeded(page, action, before, calls)
+    if selected_key in page.categories:
+        assert page.categories[selected_key]["display_name"] != "Unsaved action edit"

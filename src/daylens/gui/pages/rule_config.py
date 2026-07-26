@@ -410,23 +410,36 @@ class RuleConfigPage(QWidget):
             return
 
         key = self.cat_list.item(row).data(Qt.UserRole)
-        if self._current_key and key != self._current_key and self._dirty:
-            reply = QMessageBox.question(
-                self,
-                "未保存的修改",
-                "当前分类有未保存的修改，是否保存？",
-                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
-                QMessageBox.Save,
-            )
-            if reply == QMessageBox.Cancel:
-                self._select_key(self._current_key)
-                return
-            if reply == QMessageBox.Save and not self._save_current():
-                self._select_key(self._current_key)
-                return
+        if (
+            self._current_key
+            and key != self._current_key
+            and not self._resolve_dirty_edits()
+        ):
+            self._select_key(self._current_key)
+            return
 
         self._select_key(key)
         self._load_category(key)
+
+    def _resolve_dirty_edits(self) -> bool:
+        """Resolve pending editor changes before any state-changing action."""
+        if not self._dirty:
+            return True
+        reply = QMessageBox.question(
+            self,
+            "未保存的修改",
+            "当前分类有未保存的修改，是否保存？",
+            QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+            QMessageBox.Save,
+        )
+        if reply == QMessageBox.Cancel:
+            return False
+        if reply == QMessageBox.Save:
+            return self._save_current()
+        if self._current_key in self.categories:
+            self._select_key(self._current_key)
+            self._load_category(self._current_key)
+        return True
 
     def _select_key(self, key: str | None) -> None:
         if key is None:
@@ -514,6 +527,8 @@ class RuleConfigPage(QWidget):
         return True
 
     def _rescan_apps(self):
+        if not self._resolve_dirty_edits():
+            return
         try:
             apps = scan_installed_apps()
             classified = classify_scanned_apps(apps)
@@ -570,6 +585,8 @@ class RuleConfigPage(QWidget):
             QMessageBox.warning(self, "测试失败", str(exc))
 
     def _add_category(self):
+        if not self._resolve_dirty_edits():
+            return
         new_key = f"custom_{len(self.categories)}"
         while new_key in self.categories:
             new_key = f"custom_{len(self.categories) + 1}"
@@ -597,6 +614,8 @@ class RuleConfigPage(QWidget):
         key = self.cat_list.item(row).data(Qt.UserRole)
         if key in self._factory_keys:
             QMessageBox.warning(self, "不可删除", "系统保留分类不可删除。")
+            return
+        if not self._resolve_dirty_edits():
             return
 
         reply = QMessageBox.question(
