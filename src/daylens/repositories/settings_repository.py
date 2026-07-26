@@ -125,7 +125,7 @@ def merge_discovered_rules(
         rules = {
             row["category_key"]: {
                 "display_name": row["display_name"] or "",
-                "active_rule": row["active_rule"] or "interactive_required",
+                "active_rule": row["active_rule"] or "",
                 "process_names": _split_rule_list(row["process_names"]),
                 "title_keywords": _split_rule_list(row["title_keywords"]),
                 "title_patterns": _split_rule_list(row["title_patterns"]),

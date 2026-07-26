@@ -168,6 +168,68 @@ def test_scanned_rules_merge_without_deleting_custom_data_and_existing_owner_win
     assert all_processes.count("shared.exe") == 1
 
 
+def test_scan_merge_keeps_blank_active_rule_inheriting_factory_and_user_value(tmp_path):
+    db_path = str(tmp_path / "usage.db")
+    database.init_db(db_path).close()
+    database.save_custom_rules(
+        db_path,
+        {
+            "video": {
+                "display_name": "视频娱乐",
+                "active_rule": "",
+                "process_names": ["legacy-player.exe"],
+                "title_keywords": [],
+                "title_patterns": [],
+            },
+            "tools": {
+                "display_name": "我的工具",
+                "active_rule": "passive_allowed",
+                "process_names": ["keep-tool.exe"],
+                "title_keywords": [],
+                "title_patterns": [],
+            },
+        },
+    )
+    config = {
+        "categories": {
+            "video": {
+                "display_name": "视频娱乐",
+                "active_rule": "passive_allowed",
+                "match": {
+                    "process_names": [],
+                    "title_keywords": [],
+                    "title_patterns": [],
+                },
+            },
+            "tools": {
+                "display_name": "系统工具",
+                "active_rule": "interactive_required",
+                "match": {
+                    "process_names": [],
+                    "title_keywords": [],
+                    "title_patterns": [],
+                },
+            },
+        }
+    }
+
+    rules_service.save_scanned_rules(
+        db_path,
+        config,
+        {
+            "video": {"new-player.exe"},
+            "tools": {"new-tool.exe"},
+        },
+    )
+
+    stored = database.load_custom_rules(db_path)
+    assert stored["video"]["active_rule"] == ""
+    assert stored["tools"]["active_rule"] == "passive_allowed"
+    database.merge_custom_rules(config, db_path)
+    assert config["categories"]["video"]["active_rule"] == "passive_allowed"
+    assert config["categories"]["tools"]["active_rule"] == "passive_allowed"
+
+
 def test_wizard_merge_uses_factory_metadata_and_marks_complete_after_success(tmp_path):
     db_path = str(tmp_path / "usage.db")
     database.init_db(db_path).close()
