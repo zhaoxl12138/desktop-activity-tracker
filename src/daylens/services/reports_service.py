@@ -6,7 +6,9 @@ import glob
 import os
 import shutil
 import sqlite3
+from dataclasses import dataclass
 from datetime import date, datetime
+from typing import Literal
 
 from .. import exporter
 
@@ -16,6 +18,73 @@ _REPORT_TYPE_NAMES = {
     "weekly": "周报",
     "monthly": "月报",
 }
+
+ReportJobKind = Literal["quick", "daily", "periodic", "backfill"]
+
+
+@dataclass(frozen=True)
+class ReportJob:
+    """Serializable inputs for one report task in the GUI worker queue."""
+
+    kind: ReportJobKind
+    db_path: str
+    reports_dir: str
+    obsidian_path: str = ""
+
+    @property
+    def key(self) -> str:
+        return f"report:{self.kind}"
+
+
+def execute_report_job(job: ReportJob) -> dict[str, object]:
+    """Execute a report job without touching GUI objects."""
+    if job.kind == "quick":
+        from .shell_service import generate_daily_report
+
+        report_path, synced_path = generate_daily_report(
+            job.db_path,
+            os.path.join(job.reports_dir, "daily"),
+            job.obsidian_path,
+        )
+        return {
+            "kind": job.kind,
+            "generated_paths": [report_path],
+            "synced_path": synced_path,
+        }
+    if job.kind == "daily":
+        report_path = auto_generate_daily_report(
+            job.db_path,
+            job.reports_dir,
+        )
+        generated = [report_path] if report_path else []
+        if report_path:
+            sync_report_to_obsidian(report_path, job.obsidian_path)
+        return {
+            "kind": job.kind,
+            "generated_paths": generated,
+        }
+    if job.kind == "periodic":
+        generated = auto_generate_current_reports(
+            job.db_path,
+            job.reports_dir,
+        )
+        for filepath in generated:
+            sync_report_to_obsidian(filepath, job.obsidian_path)
+        return {
+            "kind": job.kind,
+            "generated_paths": generated,
+        }
+    if job.kind == "backfill":
+        summary = backfill_missing_daily_reports(
+            job.db_path,
+            job.reports_dir,
+            job.obsidian_path,
+        )
+        return {
+            "kind": job.kind,
+            "summary": summary,
+        }
+    raise ValueError(f"Unsupported report job kind: {job.kind}")
 
 
 def list_report_rows(reports_dir: str, subdir: str, limit: int = 50) -> list[dict]:

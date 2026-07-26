@@ -110,11 +110,13 @@ def _section_card(title: str, desc: str = "") -> tuple[QFrame, QVBoxLayout]:
 
 
 class RuleConfigPage(QWidget):
-    def __init__(self, config_path, db_path, worker=None):
+    def __init__(self, config_path, db_path, worker=None, background_tasks=None):
         super().__init__()
         self.config_path = config_path
         self.db_path = db_path
         self.worker = worker
+        self.background_tasks = background_tasks
+        self._scan_task_key = "rules:scan"
         try:
             with open(self.config_path, "r", encoding="utf-8") as handle:
                 factory_config = yaml.safe_load(handle) or {}
@@ -161,6 +163,13 @@ class RuleConfigPage(QWidget):
         self._populate_list()
         if self.cat_list.count() > 0:
             self.cat_list.setCurrentRow(0)
+        if self.background_tasks is not None:
+            completed = getattr(self.background_tasks, "task_completed", None)
+            failed = getattr(self.background_tasks, "task_failed", None)
+            if completed is not None:
+                completed.connect(self._on_background_task_completed)
+            if failed is not None:
+                failed.connect(self._on_background_task_failed)
 
     def _build_category_panel(self) -> QFrame:
         left = QFrame()
@@ -529,9 +538,29 @@ class RuleConfigPage(QWidget):
     def _rescan_apps(self):
         if not self._resolve_dirty_edits():
             return
-        try:
+        def scan_task() -> dict:
             apps = scan_installed_apps()
-            classified = classify_scanned_apps(apps)
+            return {"apps": apps, "classified": classify_scanned_apps(apps)}
+
+        if self.background_tasks is not None:
+            if not self.background_tasks.submit(
+                self._scan_task_key,
+                scan_task,
+            ):
+                return
+            self.setEnabled(False)
+            self.btn_rescan.setEnabled(False)
+            self.btn_rescan.setText("扫描中…")
+            return
+        try:
+            self._apply_scan_result(scan_task())
+        except Exception as exc:
+            QMessageBox.warning(self, "扫描失败", str(exc))
+
+    def _apply_scan_result(self, result: dict) -> None:
+        try:
+            apps = result.get("apps", [])
+            classified = result.get("classified", {})
             candidate = copy.deepcopy(self.categories)
             added = 0
             for category_key, process_names in classified.items():
@@ -565,6 +594,23 @@ class RuleConfigPage(QWidget):
             QMessageBox.information(self, "扫描完成", f"发现 {len(apps)} 个应用，新增 {added} 条分类规则。")
         except Exception as exc:
             QMessageBox.warning(self, "扫描失败", str(exc))
+
+    def _on_background_task_completed(self, key: str, result: object) -> None:
+        if key != self._scan_task_key:
+            return
+        self.setEnabled(True)
+        self.btn_rescan.setEnabled(True)
+        self.btn_rescan.setText("重新扫描应用")
+        if isinstance(result, dict):
+            self._apply_scan_result(result)
+
+    def _on_background_task_failed(self, key: str, error: str) -> None:
+        if key != self._scan_task_key:
+            return
+        self.setEnabled(True)
+        self.btn_rescan.setEnabled(True)
+        self.btn_rescan.setText("重新扫描应用")
+        QMessageBox.warning(self, "扫描失败", error)
 
     def _debug_classification(self):
         process, ok = QInputDialog.getText(self, "测试分类", "进程名：")

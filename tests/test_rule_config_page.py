@@ -99,6 +99,31 @@ def test_rule_config_page_uses_rule_management_language():
         assert "管理分类规则与计时策略" in texts
 
 
+def test_rule_rescan_is_queued_when_application_background_queue_is_available(tmp_path):
+    class FakeQueue:
+        def __init__(self):
+            self.submissions = []
+
+        def submit(self, key, task):
+            self.submissions.append((key, task))
+            return True
+
+    app = _app()
+    config_path = tmp_path / "config.yaml"
+    db_path = tmp_path / "usage.db"
+    _write_config(config_path)
+    database.init_db(str(db_path)).close()
+    queue = FakeQueue()
+    page = RuleConfigPage(str(config_path), str(db_path), background_tasks=queue)
+    page.show()
+    app.processEvents()
+
+    page._rescan_apps()
+
+    assert [key for key, _task in queue.submissions] == ["rules:scan"]
+    assert page.btn_rescan.isEnabled() is False
+
+
 def test_rule_config_page_removes_legacy_strategy_summary_panels():
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)

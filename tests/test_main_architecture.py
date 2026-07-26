@@ -84,7 +84,9 @@ def test_main_window_handles_settings_restart_requests():
 
 
 def test_main_window_schedules_background_report_backfill():
-    assert "ReportBackfillWorker" in MAIN_WINDOW_SOURCE
+    assert "BackgroundTaskQueue" in MAIN_WINDOW_SOURCE
+    assert "ReportJob" in MAIN_WINDOW_SOURCE
+    assert 'kind="backfill"' in MAIN_WINDOW_SOURCE
     assert "QTimer.singleShot(15000, self._start_report_backfill)" in MAIN_WINDOW_SOURCE
 
 

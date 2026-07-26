@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from datetime import datetime
 
 from PySide6.QtCore import QSize, Qt, QTimer
@@ -30,10 +31,10 @@ from PySide6.QtWidgets import (
 
 from ..utils import fmt_seconds
 from ..services.dashboard_service import load_today_snapshot, resolve_display_name
-from ..services.shell_service import generate_daily_report, load_poetry_hint
+from ..services.shell_service import load_poetry_hint
 from ..services.reports_service import (
-    auto_generate_daily_report,
-    auto_generate_current_reports,
+    ReportJob,
+    execute_report_job,
 )
 from ..services.restart_service import current_launch_command, schedule_restart
 from ..services.gui_shutdown_service import stop_recording_worker_safely
@@ -41,7 +42,7 @@ from .dashboard_refresh_controller import (
     DashboardRefreshController,
     DashboardSnapshot,
 )
-from .report_backfill_worker import ReportBackfillWorker
+from .background_task_queue import BackgroundTaskQueue
 from .pages.category_stats import CategoryStatsPage
 from .pages.live_monitor import LiveMonitorPage
 from .pages.reports import ReportsPage
@@ -106,6 +107,11 @@ class MainWindow(QMainWindow):
         self._poetry_interval = 1800
         self._dashboard_snapshot: DashboardSnapshot | None = None
         self.current_theme = ui_style.apply_theme(self.config.get("theme", "dark"))
+        self.background_tasks = BackgroundTaskQueue(parent=self)
+        self.background_tasks.task_completed.connect(
+            self._on_background_task_completed
+        )
+        self.background_tasks.task_failed.connect(self._on_background_task_failed)
 
         self.setWindowTitle("DayLens")
         self.setStyleSheet(ui_style.get_global_style() + ui_style.get_input_style())
@@ -152,7 +158,6 @@ class MainWindow(QMainWindow):
         self.daily_report_timer.timeout.connect(self._auto_generate_daily_report)
         self.daily_report_timer.start(3600000)  # refresh today's report every hour
         QTimer.singleShot(10000, self._auto_generate_daily_report)
-        self._report_backfill_worker = None
         QTimer.singleShot(15000, self._start_report_backfill)
 
     def _init_pages(self) -> None:
@@ -172,8 +177,19 @@ class MainWindow(QMainWindow):
                 self.db_path, self.reports_dir,
                 self.config.get("obsidian_output_path", "").strip(),
             ),
-            "rules": RuleConfigPage(self.config_path, self.db_path, self.worker),
-            "settings": SettingsPage(self.config_path, self.db_path, self.reports_dir, self.worker),
+            "rules": RuleConfigPage(
+                self.config_path,
+                self.db_path,
+                self.worker,
+                self.background_tasks,
+            ),
+            "settings": SettingsPage(
+                self.config_path,
+                self.db_path,
+                self.reports_dir,
+                self.worker,
+                self.background_tasks,
+            ),
         }
         self.pages["settings"].config_saved.connect(self._apply_saved_config)
         self.pages["settings"].restart_requested.connect(self._restart_app)
@@ -762,36 +778,36 @@ class MainWindow(QMainWindow):
         self.lbl_page_hint.setText("聚焦今天的使用结构、效率与提醒")
 
     def _quick_report(self) -> None:
-        daily_dir = os.path.join(self.reports_dir, "daily")
-        try:
-            path, synced = generate_daily_report(self.db_path, daily_dir, self._live_obsidian_path())
-            if synced:
-                QMessageBox.information(self, "生成成功", f"日报已保存到\n{path}\n\n已同步到 Obsidian:\n{synced}")
-                return
-            QMessageBox.information(self, "生成成功", f"日报已保存到\n{path}")
-        except Exception as exc:
-            QMessageBox.warning(self, "生成失败", str(exc))
+        job = ReportJob(
+            kind="quick",
+            db_path=self.db_path,
+            reports_dir=self.reports_dir,
+            obsidian_path=self._live_obsidian_path(),
+        )
+        if not self.background_tasks.submit(job.key, lambda: execute_report_job(job)):
+            return
+        button = getattr(self, "btn_report", None)
+        if button is not None:
+            button.setEnabled(False)
+            button.setText("生成中…")
 
     def _check_report_schedule(self):
         """Periodically check if weekly/monthly reports should be auto-generated."""
         try:
-            now = __import__("time").time()
+            now = time.time()
             last = getattr(self, '_last_report_gen', 0)
             # Debounce: don't regenerate within 5 minutes
             if now - last < 290:
                 return
 
-            self._last_report_gen = now
-            generated = auto_generate_current_reports(self.db_path, self.reports_dir)
-            if generated:
-                obsidian_path = self._live_obsidian_path()
-                if obsidian_path:
-                    from ..exporter import sync_to_obsidian
-                    for filepath in generated:
-                        sync_to_obsidian(filepath, obsidian_path)
-                import sys
-                for fp in generated:
-                    print(f"[AutoReport] Generated: {fp}", file=sys.stderr)
+            job = ReportJob(
+                kind="periodic",
+                db_path=self.db_path,
+                reports_dir=self.reports_dir,
+                obsidian_path=self._live_obsidian_path(),
+            )
+            if self.background_tasks.submit(job.key, lambda: execute_report_job(job)):
+                self._last_report_gen = now
         except Exception as e:
             import sys, traceback
             print(f"[AutoReport] Error: {e}", file=sys.stderr)
@@ -799,53 +815,66 @@ class MainWindow(QMainWindow):
 
     def _auto_generate_daily_report(self):
         """Refresh today's report hourly without interrupting the GUI."""
-        path = auto_generate_daily_report(self.db_path, self.reports_dir)
-        if path:
-            obsidian_path = self._live_obsidian_path()
-            if obsidian_path:
-                try:
-                    from ..exporter import sync_to_obsidian
-                    sync_to_obsidian(path, obsidian_path)
-                except Exception as exc:
-                    import sys
-                    print(f"[AutoReport] Daily Obsidian sync failed: {exc}", file=sys.stderr)
+        job = ReportJob(
+            kind="daily",
+            db_path=self.db_path,
+            reports_dir=self.reports_dir,
+            obsidian_path=self._live_obsidian_path(),
+        )
+        self.background_tasks.submit(job.key, lambda: execute_report_job(job))
 
     def _start_report_backfill(self) -> None:
-        worker = self._report_backfill_worker
-        if worker is not None and worker.isRunning():
+        job = ReportJob(
+            kind="backfill",
+            db_path=self.db_path,
+            reports_dir=self.reports_dir,
+            obsidian_path=self._live_obsidian_path(),
+        )
+        self.background_tasks.submit(job.key, lambda: execute_report_job(job))
+
+    def _on_background_task_completed(self, key: str, result: object) -> None:
+        import sys
+
+        if key == "report:quick":
+            button = getattr(self, "btn_report", None)
+            if button is not None:
+                button.setEnabled(True)
+                button.setText("生成日报")
+            data = result if isinstance(result, dict) else {}
+            paths = data.get("generated_paths", [])
+            path = paths[0] if paths else ""
+            synced = data.get("synced_path")
+            message = f"日报已保存到\n{path}"
+            if synced:
+                message += f"\n\n已同步到 Obsidian:\n{synced}"
+            QMessageBox.information(self, "生成成功", message)
             return
-        worker = ReportBackfillWorker(
-            self.db_path,
-            self.reports_dir,
-            self._live_obsidian_path(),
-            self,
-        )
-        self._report_backfill_worker = worker
-        worker.completed.connect(self._on_report_backfill_completed)
-        worker.failed.connect(self._on_report_backfill_failed)
-        worker.finished.connect(self._cleanup_report_backfill_worker)
-        worker.start()
+        if key == "report:backfill":
+            data = result if isinstance(result, dict) else {}
+            summary = data.get("summary", {})
+            print(
+                "[AutoReport] Backfill generated "
+                f"{summary.get('generated_count', 0)}, "
+                f"failed {summary.get('failure_count', 0)}",
+                file=sys.stderr,
+            )
+            return
+        if key in {"report:daily", "report:periodic"}:
+            data = result if isinstance(result, dict) else {}
+            for filepath in data.get("generated_paths", []):
+                print(f"[AutoReport] Generated: {filepath}", file=sys.stderr)
 
-    def _on_report_backfill_completed(self, result: dict) -> None:
+    def _on_background_task_failed(self, key: str, error: str) -> None:
+        if key == "report:quick":
+            button = getattr(self, "btn_report", None)
+            if button is not None:
+                button.setEnabled(True)
+                button.setText("生成日报")
+            QMessageBox.warning(self, "生成失败", error)
+            return
         import sys
 
-        print(
-            "[AutoReport] Backfill generated "
-            f"{result.get('generated_count', 0)}, "
-            f"failed {result.get('failure_count', 0)}",
-            file=sys.stderr,
-        )
-
-    def _on_report_backfill_failed(self, error: str) -> None:
-        import sys
-
-        print(f"[AutoReport] Backfill failed: {error}", file=sys.stderr)
-
-    def _cleanup_report_backfill_worker(self) -> None:
-        worker = self._report_backfill_worker
-        self._report_backfill_worker = None
-        if worker is not None:
-            worker.deleteLater()
+        print(f"[BackgroundTask] {key} failed: {error}", file=sys.stderr)
 
     def _live_obsidian_path(self) -> str:
         """Return obsidian_output_path from in-memory config (merged with DB on startup)."""
@@ -939,10 +968,15 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _suspend_dashboard_refresh(window) -> bool:
+        for timer_name in ("report_schedule_timer", "daily_report_timer"):
+            timer = getattr(window, timer_name, None)
+            if timer is not None:
+                timer.stop()
         refresh = getattr(window, "dashboard_refresh", None)
-        if refresh is None:
-            return True
-        completed = bool(refresh.shutdown(timeout_ms=5_000))
+        completed = True if refresh is None else bool(refresh.shutdown(timeout_ms=5_000))
+        tasks = getattr(window, "background_tasks", None)
+        if completed and tasks is not None:
+            completed = bool(tasks.shutdown(timeout_ms=5_000))
         if not completed:
             MainWindow._resume_dashboard_refresh(window)
         return completed
@@ -950,11 +984,19 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _resume_dashboard_refresh(window) -> None:
         refresh = getattr(window, "dashboard_refresh", None)
-        if refresh is None:
-            return
         is_visible = getattr(window, "isVisible", None)
         foreground = bool(is_visible()) if callable(is_visible) else True
-        refresh.resume(foreground)
+        if refresh is not None:
+            refresh.resume(foreground)
+        tasks = getattr(window, "background_tasks", None)
+        if tasks is not None:
+            tasks.resume()
+        report_timer = getattr(window, "report_schedule_timer", None)
+        if report_timer is not None:
+            report_timer.start(300000)
+        daily_timer = getattr(window, "daily_report_timer", None)
+        if daily_timer is not None:
+            daily_timer.start(3600000)
 
     def _restore_recording_worker(self):
         from .worker import RecordingWorker

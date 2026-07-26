@@ -21,7 +21,7 @@ class DummyWorker:
         self.settings_updated = True
 
 
-def _build_page(tmp_path, monkeypatch):
+def _build_page(tmp_path, monkeypatch, background_tasks=None):
     old_db = tmp_path / "usage.db"
     config = {
         "db_path": str(old_db),
@@ -46,6 +46,7 @@ def _build_page(tmp_path, monkeypatch):
         str(old_db),
         str(tmp_path / "reports"),
         worker,
+        background_tasks,
     )
     monkeypatch.setattr(page, "_toggle_startup", lambda enabled: bool(enabled))
     return app, page, worker, old_db
@@ -178,4 +179,28 @@ def test_settings_data_quality_action_offers_preview_and_repair(tmp_path, monkey
             {"sample_interval_seconds": 7},
         )
     ]
+    page.deleteLater()
+
+
+def test_settings_data_quality_check_is_queued(tmp_path, monkeypatch):
+    class FakeQueue:
+        def __init__(self):
+            self.submissions = []
+
+        def submit(self, key, task):
+            self.submissions.append((key, task))
+            return True
+
+    _app, page, _worker, _old_db = _build_page(
+        tmp_path,
+        monkeypatch,
+        background_tasks=FakeQueue(),
+    )
+
+    page._check_data_quality()
+
+    assert [key for key, _task in page.background_tasks.submissions] == [
+        "settings:quality-inspect"
+    ]
+    assert page.btn_quality.isEnabled() is False
     page.deleteLater()
