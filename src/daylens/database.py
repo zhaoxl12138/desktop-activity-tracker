@@ -27,6 +27,7 @@ from .repositories.settings_repository import (
     delete_activity_logs_before,
     load_custom_rules,
     load_settings,
+    merge_discovered_rules,
     merge_custom_rules,
     merge_db_settings,
     save_custom_rules,

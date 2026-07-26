@@ -346,11 +346,10 @@ class SetupWizard(QDialog):
                 header.setText(header_text)
 
     def _on_confirm(self):
-        """Save user's classification as DB supplements. Only stores process_names
-        per category (no title_keywords — config.yaml is authoritative for those).
-        merge_custom_rules unions DB into config on every load.
-        """
-        save_wizard_classifications(self.db_path, self._apps)
+        """Merge the confirmed processes while retaining factory rule metadata."""
+        with open(self.config_path, "r", encoding="utf-8") as handle:
+            config = yaml.safe_load(handle) or {}
+        save_wizard_classifications(self.db_path, self._apps, config)
         self.accept()
 
 

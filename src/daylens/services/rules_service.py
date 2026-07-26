@@ -18,12 +18,16 @@ def load_rule_categories(config_path: str, db_path: str) -> dict[str, dict]:
         base = categories.get(key, {})
         base_match = base.get("match", {}) if isinstance(base, dict) else {}
         title_keywords = rule["title_keywords"] or list(base_match.get("title_keywords", []) or [])
+        title_patterns = rule.get("title_patterns", []) or list(
+            base_match.get("title_patterns", []) or []
+        )
         categories[key] = {
-            "display_name": rule["display_name"],
-            "active_rule": rule["active_rule"],
+            "display_name": rule["display_name"] or base.get("display_name", key),
+            "active_rule": rule["active_rule"] or base.get("active_rule", "interactive_required"),
             "match": {
                 "process_names": rule["process_names"],
                 "title_keywords": title_keywords,
+                "title_patterns": title_patterns,
             },
         }
     normalized: dict[str, dict] = {}
@@ -45,27 +49,41 @@ def save_rule_categories(db_path: str, categories: dict[str, dict]) -> None:
             "active_rule": category.get("active_rule", "interactive_required"),
             "process_names": match.get("process_names", []),
             "title_keywords": match.get("title_keywords", []),
+            "title_patterns": match.get("title_patterns", []),
         }
     database.save_custom_rules(db_path, payload)
 
 
-def save_wizard_classifications(db_path: str, app_categories: dict[str, str | None]) -> None:
+def save_wizard_classifications(
+    db_path: str,
+    app_categories: dict[str, str | None],
+    config: dict | None = None,
+) -> None:
+    factory_categories = (config or {}).get("categories", {})
     rules: dict[str, dict] = {}
     for process_name, category_key in app_categories.items():
         if category_key is None:
             continue
+        factory = factory_categories.get(category_key, {})
         category = rules.setdefault(
             category_key,
             {
-                "display_name": "",
-                "active_rule": "",
+                "display_name": factory.get("display_name", category_key),
+                "active_rule": factory.get(
+                    "active_rule", "interactive_required"
+                ),
                 "process_names": [],
+                # Empty custom lists intentionally inherit current factory
+                # title rules when categories are loaded.
                 "title_keywords": [],
+                "title_patterns": [],
             },
         )
         category["process_names"].append(process_name)
 
-    database.save_custom_rules(db_path, rules)
+    database.merge_discovered_rules(
+        db_path, rules, list(factory_categories)
+    )
     database.save_settings(db_path, {"wizard_completed": "true"})
 
 
@@ -79,8 +97,10 @@ def save_scanned_rules(db_path: str, config: dict, classified: dict[str, list[st
             "active_rule": category.get("active_rule", "interactive_required"),
             "process_names": sorted(process_names),
             "title_keywords": [],
+            "title_patterns": [],
         }
     if not rules:
         return 0
-    database.save_custom_rules(db_path, rules)
-    return sum(len(rule["process_names"]) for rule in rules.values())
+    return database.merge_discovered_rules(
+        db_path, rules, list(factory_categories)
+    )

@@ -86,7 +86,8 @@ CREATE TABLE IF NOT EXISTS custom_rules (
     display_name TEXT,
     active_rule TEXT,
     process_names TEXT,
-    title_keywords TEXT
+    title_keywords TEXT,
+    title_patterns TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS poetry_lines (
@@ -209,6 +210,20 @@ def _run_migrations(conn) -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_date_category ON activity_sessions(date, category_key)")
         conn.execute(
             "INSERT INTO schema_meta(key, value) VALUES('schema_version', '1') "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        )
+        version = 1
+    if version < 2:
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(custom_rules)").fetchall()
+        }
+        if "title_patterns" not in columns:
+            conn.execute(
+                "ALTER TABLE custom_rules "
+                "ADD COLUMN title_patterns TEXT DEFAULT ''"
+            )
+        conn.execute(
+            "INSERT INTO schema_meta(key, value) VALUES('schema_version', '2') "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
         )
     conn.commit()
