@@ -89,6 +89,8 @@ class RecordingWorker(QThread):
         self._recoverable_fatal = False
         self._health_lock = threading.Lock()
         self._monotonic_clock = monotonic_clock or time.monotonic
+        self._sample_health_started_at = self._monotonic_clock()
+        self._last_sample_monotonic = None
         self._shutdown_deadline = None
         self._recovery_spool = SessionRecoverySpool(
             db_path,
@@ -295,16 +297,11 @@ class RecordingWorker(QThread):
                     if snapshot is not None:
                         sampled_at = datetime.now()
                         self.sample_updated.emit(snapshot)
-                        status = (
-                            self.health.status
-                            if self._pending_persists
-                            else "running"
-                        )
-                        self._set_health(status, last_sample_at=sampled_at)
+                        self._record_sample_success(sampled_at)
                 except _PersistenceQueueFull:
                     raise
                 except Exception as error:
-                    self._report_error(error, "degraded")
+                    self._record_sample_failure(error)
 
                 self._sleep_check(int(self.sample_interval * 1000))
         except Exception as error:
@@ -372,6 +369,39 @@ class RecordingWorker(QThread):
         else:
             self._set_health(shutdown_safe=False)
         self._shutdown_deadline = None
+
+    def _record_sample_success(self, sampled_at: datetime) -> None:
+        self._last_sample_monotonic = self._monotonic_clock()
+        if self._pending_persists:
+            status = (
+                "degraded"
+                if any(
+                    item.attempts >= self._degraded_after_attempts
+                    for item in self._pending_persists.values()
+                )
+                else "delayed"
+            )
+            error = self.health.error
+        else:
+            status = "running"
+            error = ""
+            self._last_error = ""
+        self._set_health(
+            status,
+            last_sample_at=sampled_at,
+            error=error,
+        )
+
+    def _record_sample_failure(self, error) -> None:
+        last_success = (
+            self._last_sample_monotonic
+            if self._last_sample_monotonic is not None
+            else self._sample_health_started_at
+        )
+        elapsed = max(0.0, self._monotonic_clock() - last_success)
+        delay_threshold = max(5.0, float(self.sample_interval) * 3.0)
+        status = "sample_delayed" if elapsed >= delay_threshold else "degraded"
+        self._report_error(error, status)
 
     def _spool_unresolved(self) -> None:
         sessions = [item.session for item in self._pending_persists.values()]

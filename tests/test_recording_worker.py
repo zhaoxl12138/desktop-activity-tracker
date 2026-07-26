@@ -744,3 +744,32 @@ def test_live_queue_full_remains_recoverable_after_outer_run_catch(
     assert worker.health.status == "stopped"
     assert worker.health.recovery_status == "pending"
     assert worker.health.shutdown_safe is True
+
+
+def test_repeated_sample_failures_report_delay_and_success_recovers():
+    class Clock:
+        now = 0.0
+
+        def monotonic(self):
+            return self.now
+
+    clock = Clock()
+    worker = worker_module.RecordingWorker(
+        "config.yaml",
+        "usage.db",
+        {"tracker": {"sample_interval_seconds": 1}},
+        monotonic_clock=clock.monotonic,
+    )
+
+    worker._record_sample_failure(RuntimeError("foreground unavailable"))
+    assert worker.health.status == "degraded"
+
+    clock.now = 5.0
+    worker._record_sample_failure(RuntimeError("foreground unavailable"))
+    assert worker.health.status == "sample_delayed"
+    assert worker.health.last_sample_at is None
+
+    worker._record_sample_success(datetime(2026, 7, 26, 10, 0, 0))
+    assert worker.health.status == "running"
+    assert worker.health.last_sample_at == datetime(2026, 7, 26, 10, 0, 0)
+    assert worker.health.error == ""

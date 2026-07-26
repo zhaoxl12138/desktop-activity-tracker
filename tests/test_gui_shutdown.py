@@ -262,6 +262,54 @@ def test_main_window_restart_schedules_only_after_worker_stops(monkeypatch):
     ]
 
 
+def test_main_window_restart_arm_failure_restores_recording_worker(monkeypatch):
+    worker = FakeWorker(wait_result=True)
+    events: list[object] = []
+    replacement = object()
+    window = SimpleNamespace(
+        worker=worker,
+        _restore_recording_worker=lambda: events.append("restore") or replacement,
+    )
+    handle = SimpleNamespace(
+        arm=lambda: (_ for _ in ()).throw(OSError("arm unavailable")),
+        cancel=lambda: events.append("cancel"),
+    )
+    monkeypatch.setattr(main_window, "current_launch_command", lambda: ["daylens"])
+    monkeypatch.setattr(
+        main_window,
+        "schedule_restart",
+        lambda command, deferred: events.append(("schedule", command, deferred))
+        or handle,
+    )
+    monkeypatch.setattr(
+        main_window,
+        "stop_recording_worker_safely",
+        lambda candidate: events.append(("stop", candidate))
+        or WorkerShutdownResult(
+            completed=True,
+            worker=candidate,
+            timeout_ms=15_000,
+        ),
+    )
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda _parent, _title, message: warnings.append(message),
+    )
+
+    MainWindow._restart_app(window)
+
+    assert events == [
+        ("schedule", ["daylens"], True),
+        ("stop", worker),
+        "cancel",
+        "restore",
+    ]
+    assert window.worker is replacement
+    assert warnings == ["arm unavailable"]
+
+
 def test_tray_quit_timeout_keeps_tray_and_application_running(monkeypatch):
     worker = FakeWorker(wait_result=False)
     events: list[str] = []

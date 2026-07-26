@@ -109,7 +109,7 @@ def launch_gui() -> None:
 
     while True:
         exit_code = app.exec()
-        shutdown_result = shutdown_gui_runtime(worker)
+        shutdown_result = shutdown_gui_runtime(window.worker)
         if shutdown_result.completed:
             break
         print(f"[Shutdown] {shutdown_result.message}", file=sys.stderr)

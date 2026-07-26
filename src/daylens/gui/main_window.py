@@ -92,6 +92,7 @@ class MainWindow(QMainWindow):
         self.worker = worker
         self._theme_rebuilding = False
         self._last_sample: dict | None = None
+        self._recording_health = getattr(worker, "health", None)
         self._current_nav_key: str | None = None
         self._last_poetry_refresh = 0.0
         self._poetry_interval = 1800
@@ -112,7 +113,7 @@ class MainWindow(QMainWindow):
         self._apply_window_chrome_theme()
         self._apply_initial_geometry()
 
-        self.worker.sample_updated.connect(self._on_sample)
+        self._connect_recording_worker(self.worker)
         self.nav_list.setCurrentRow(0)
 
         self.refresh_timer = QTimer(self)
@@ -264,7 +265,7 @@ class MainWindow(QMainWindow):
         )
         status_layout.addWidget(self.sidebar_version)
 
-        self.sidebar_sample_time = QLabel(f"最后采样：{datetime.now().strftime('%H:%M:%S')}")
+        self.sidebar_sample_time = QLabel("最后采样：--")
         self.sidebar_sample_time.setStyleSheet(
             f"font-size: 11px; color: {ui_style.COLORS['text_muted']};"
         )
@@ -556,6 +557,53 @@ class MainWindow(QMainWindow):
         self.pages["today"].on_sample_updated(sample)
         self._update_sidebar_status_card()
 
+    def _connect_recording_worker(self, worker) -> None:
+        worker.sample_updated.connect(self._on_sample)
+        health_updated = getattr(worker, "health_updated", None)
+        if health_updated is not None:
+            health_updated.connect(self._on_recording_health)
+
+    def _on_recording_health(self, health) -> None:
+        self._recording_health = health
+        self._update_recording_health_ui()
+
+    def _update_recording_health_ui(self) -> None:
+        health = getattr(self, "_recording_health", None)
+        if health is None:
+            return
+        status = getattr(health, "status", "starting")
+        status_styles = {
+            "starting": ("🔵 启动中 (starting)", ui_style.COLORS["primary"]),
+            "running": ("🟢 正在记录 (running)", ui_style.COLORS["success_green"]),
+            "paused": ("🟡 暂停记录 (paused)", ui_style.COLORS["warning_yellow"]),
+            "delayed": ("🟡 写入延迟 (write delayed)", ui_style.COLORS["warning_yellow"]),
+            "sample_delayed": (
+                "🟡 采样延迟 (sample delayed)",
+                ui_style.COLORS["warning_yellow"],
+            ),
+            "degraded": ("🟠 降级运行 (degraded)", ui_style.COLORS["warning_yellow"]),
+            "stopped": ("⚪ 已停止 (stopped)", ui_style.COLORS["text_muted"]),
+            "fatal": ("🔴 记录错误 (fatal)", ui_style.COLORS["danger_red"]),
+        }
+        text, color = status_styles.get(
+            status,
+            (f"⚪ {status}", ui_style.COLORS["text_muted"]),
+        )
+        error = str(getattr(health, "error", "") or "").strip()
+        if error and status in {"sample_delayed", "degraded", "fatal"}:
+            text = f"{text} · {error}"
+        self.sidebar_record_status.setText(text)
+        self.sidebar_record_status.setStyleSheet(
+            f"font-size: 14px; color: {color}; font-weight: 800;"
+        )
+        last_sample_at = getattr(health, "last_sample_at", None)
+        sample_text = (
+            last_sample_at.strftime("%H:%M:%S")
+            if last_sample_at is not None
+            else "--"
+        )
+        self.sidebar_sample_time.setText(f"最后采样：{sample_text}")
+
     def _update_sidebar_status_card(self) -> None:
         if not hasattr(self, "sidebar_record_value"):
             return
@@ -570,7 +618,7 @@ class MainWindow(QMainWindow):
             f"连续记录：第{consecutive_days}天" if consecutive_days > 0 else "连续记录：--"
         )
         self.sidebar_version.setText("v1.5.3")
-        self.sidebar_sample_time.setText(f"最后采样：{datetime.now().strftime('%H:%M:%S')}")
+        self._update_recording_health_ui()
 
     def _toggle_pause(self) -> None:
         if self.worker.is_paused():
@@ -753,6 +801,15 @@ class MainWindow(QMainWindow):
             restart_handle.arm()
         except Exception as exc:
             restart_handle.cancel()
+            try:
+                self.worker = self._restore_recording_worker()
+            except Exception as restore_exc:
+                QMessageBox.warning(
+                    self,
+                    "记录恢复失败",
+                    f"{exc}\n\n记录线程恢复失败：{restore_exc}",
+                )
+                return
             QMessageBox.warning(self, "重启失败", str(exc))
             return
 
@@ -776,6 +833,24 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         if app is not None:
             app.quit()
+
+    def _restore_recording_worker(self):
+        from .worker import RecordingWorker
+
+        replacement = RecordingWorker(
+            self.config_path,
+            self.db_path,
+            self.config,
+        )
+        self._connect_recording_worker(replacement)
+        self._recording_health = replacement.health
+        self._update_recording_health_ui()
+        for page_key in ("rules", "settings"):
+            page = self.pages.get(page_key)
+            if page is not None and hasattr(page, "worker"):
+                page.worker = replacement
+        replacement.start()
+        return replacement
 
     def closeEvent(self, event) -> None:  # noqa: N802
         event.ignore()
