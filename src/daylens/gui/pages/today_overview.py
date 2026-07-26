@@ -675,7 +675,7 @@ class TodayOverviewPage(QWidget):
             else:
                 effective_min = total_min
             color = self._color_for_category(session.get("category_key") or "other", str(session.get("category_name", "") or ""))
-            for minute in range(max(0, start), min(1439, start + effective_min)):
+            for minute in range(max(0, start), min(1440, start + effective_min)):
                 colors[minute] = color
         return colors
 

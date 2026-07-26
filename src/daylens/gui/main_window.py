@@ -860,59 +860,39 @@ class MainWindow(QMainWindow):
         if self._theme_rebuilding:
             return
         self._theme_rebuilding = True
-        self.current_theme = ui_style.apply_theme("dark" if checked else "light")
-        self.config["theme"] = self.current_theme
-        self._persist_theme_preference()
-        self.setStyleSheet(ui_style.get_global_style() + ui_style.get_input_style())
+        old_colors = dict(ui_style.COLORS)
+        try:
+            self.current_theme = ui_style.apply_theme(
+                "dark" if checked else "light"
+            )
+            self.config["theme"] = self.current_theme
+            self._persist_theme_preference()
+            self.setStyleSheet(
+                ui_style.get_global_style() + ui_style.get_input_style()
+            )
+            self._retarget_inline_theme_colors(old_colors)
+            self._apply_window_chrome_theme()
+            self._update_top_bar()
+            self.update()
+        finally:
+            self._theme_rebuilding = False
 
-        # Rebuild shell widgets in-place without touching pages
-        old_top = self._top_bar
-        self._top_bar = self._build_top_bar()
-        self.root_layout.removeWidget(old_top)
-        self.root_layout.insertWidget(0, self._top_bar)
-        old_top.hide()
-        old_top.deleteLater()
-
-        old_sidebar = self._sidebar
-        self._sidebar = self._build_sidebar()
-        self._content_layout.removeWidget(old_sidebar)
-        self._content_layout.insertWidget(0, self._sidebar)
-        old_sidebar.hide()
-        old_sidebar.deleteLater()
-
-        # Recreate pages with new theme colors in-place on existing stack
-        current_row = self.nav_list.currentRow()
-        current_key = NAV_ITEMS[current_row][1] if current_row >= 0 else "today"
-        while self.stack.count():
-            w = self.stack.widget(0)
-            self.stack.removeWidget(w)
-            w.deleteLater()
-        display_name_mapping = {**DISPLAY_NAME_MAPPING, **self.config.get("display_name_mapping", {})}
-        self.pages = {
-            "today": TodayOverviewPage(self.db_path, display_name_mapping),
-            "live": LiveMonitorPage(),
-            "software": SoftwareStatsPage(self.db_path, self.reports_dir, display_name_mapping),
-            "category": CategoryStatsPage(self.db_path),
-            "reports": ReportsPage(
-                self.db_path, self.reports_dir,
-                self.config.get("obsidian_output_path", "").strip(),
-            ),
-            "rules": RuleConfigPage(self.config_path, self.db_path, self.worker),
-            "settings": SettingsPage(self.config_path, self.db_path, self.reports_dir, self.worker),
+    def _retarget_inline_theme_colors(self, old_colors: dict[str, str]) -> None:
+        """Update existing inline QSS without rebuilding stateful page widgets."""
+        replacements = {
+            old_colors[key]: ui_style.COLORS[key]
+            for key in old_colors.keys() & ui_style.COLORS.keys()
+            if old_colors[key] != ui_style.COLORS[key]
         }
-        self.pages["settings"].config_saved.connect(self._apply_saved_config)
-        self.pages["settings"].restart_requested.connect(self._restart_app)
-        for _, key, _ in NAV_ITEMS:
-            self.stack.addWidget(self.pages[key])
-        self.nav_list.setCurrentRow(current_row)
-        self._on_nav_changed(current_row)
-
-        self._apply_window_chrome_theme()
-        self._update_top_bar()
-        if self.worker.is_paused():
-            self._toggle_pause()
-            self._toggle_pause()
-        self._theme_rebuilding = False
+        for widget in (self, *self.findChildren(QWidget)):
+            sheet = widget.styleSheet()
+            if not sheet:
+                continue
+            updated = sheet
+            for old_value, new_value in replacements.items():
+                updated = updated.replace(old_value, new_value)
+            if updated != sheet:
+                widget.setStyleSheet(updated)
 
     def _persist_theme_preference(self) -> None:
         """Persist theme as user state; factory config remains read-only."""

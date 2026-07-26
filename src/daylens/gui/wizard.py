@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QFrame, QWidget, QMenu, QProgressBar,
     QLayout, QLayoutItem,
 )
-from PySide6.QtCore import Qt, QTimer, QRect
+from PySide6.QtCore import Qt, QTimer, QRect, QSize
 
 from ..app_scanner import (
     classify_scanned_apps, KNOWN_APPS, _scan_registry_uninstall,
@@ -406,11 +406,20 @@ class _FlowLayout(QLayout):
         self._do_layout(rect, dry_run=False)
 
     def minimumSize(self):
-        size = super().minimumSize()
-        return size.expandedTo(self.sizeHint())
+        size = QSize(0, 0)
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        margins = self.contentsMargins()
+        size += QSize(
+            margins.left() + margins.right(),
+            margins.top() + margins.bottom(),
+        )
+        return size
 
     def sizeHint(self):
-        return self.minimumSize()
+        minimum = self.minimumSize()
+        width = max(minimum.width(), self.geometry().width())
+        return QSize(width, max(minimum.height(), self.heightForWidth(width)))
 
     def _do_layout(self, rect: QRect, dry_run: bool) -> int:
         x = rect.x()
