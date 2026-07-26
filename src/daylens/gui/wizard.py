@@ -18,13 +18,14 @@ import os
 import yaml
 
 _CATEGORY_CYCLE = [
-    "coding", "ai_tools", "reading", "creative",
+    "coding", "ai_tools", "office", "reading", "creative",
     "video", "social", "tools", "browser_general",
 ]
 
 _CAT_INFO = {
     "coding":        ("💼", "工作学习",   COLORS["coding_green"]),
     "ai_tools":      ("🤖", "AI 工具",    COLORS["ai_blue"]),
+    "office":        ("📊", "办公套件",    COLORS["coding_green"]),
     "reading":       ("📖", "阅读学习",   COLORS["reading_blue"]),
     "creative":      ("🎨", "创作设计",   COLORS["creative_pink"]),
     "video":         ("📺", "娱乐休闲",   COLORS["video_orange"]),

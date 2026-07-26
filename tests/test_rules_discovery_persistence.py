@@ -10,6 +10,7 @@ from daylens.app_scanner import (
     classify_scanned_apps,
 )
 from daylens.services import rules_service
+from daylens.gui.wizard import _CATEGORY_CYCLE, _CAT_INFO
 
 
 def _factory_config() -> dict:
@@ -58,6 +59,7 @@ def test_custom_rules_round_trip_title_patterns_and_inherit_factory_lists(tmp_pa
                 "process_names": ["Calibre.exe"],
                 "title_keywords": ["我的关键词"],
                 "title_patterns": [],
+                "title_patterns_mode": "inherit",
             }
         },
     )
@@ -85,6 +87,7 @@ def test_nonempty_custom_patterns_override_factory_patterns(tmp_path):
                 "active_rule": "interactive_required",
                 "process_names": [],
                 "title_keywords": [],
+                "title_keywords_mode": "inherit",
                 "title_patterns": [r"自定义-\d+"],
             }
         },
@@ -114,6 +117,103 @@ def test_rule_editor_service_round_trips_title_patterns(tmp_path):
     assert database.load_custom_rules(db_path)["reading"]["title_patterns"] == [
         r"用户正则-\d+"
     ]
+
+
+def test_explicitly_cleared_title_rules_stay_empty_after_save_and_reload(tmp_path):
+    db_path = str(tmp_path / "usage.db")
+    config_path = tmp_path / "config.yaml"
+    database.init_db(db_path).close()
+    config_path.write_text(
+        yaml.safe_dump(_factory_config(), allow_unicode=True),
+        encoding="utf-8",
+    )
+    categories = rules_service.load_rule_categories(str(config_path), db_path)
+    categories["reading"]["match"]["title_keywords"] = []
+    categories["reading"]["match"]["title_patterns"] = []
+
+    rules_service.save_rule_categories(db_path, categories)
+    reloaded = rules_service.load_rule_categories(str(config_path), db_path)
+
+    assert reloaded["reading"]["match"]["title_keywords"] == []
+    assert reloaded["reading"]["match"]["title_patterns"] == []
+    stored = database.load_custom_rules(db_path)["reading"]
+    assert stored["title_keywords_mode"] == "replace"
+    assert stored["title_patterns_mode"] == "replace"
+
+
+def test_scanned_category_retains_unscanned_factory_processes(tmp_path):
+    db_path = str(tmp_path / "usage.db")
+    database.init_db(db_path).close()
+    config = _factory_config()
+    config["categories"]["office"]["match"]["process_names"] = [
+        "excel.exe",
+        "winword.exe",
+    ]
+
+    rules_service.save_scanned_rules(
+        db_path, config, {"office": {"EXCEL.EXE"}}
+    )
+    database.merge_custom_rules(config, db_path)
+
+    assert {
+        process.casefold()
+        for process in config["categories"]["office"]["match"]["process_names"]
+    } == {"excel.exe", "winword.exe"}
+
+
+def test_editor_process_removal_remains_explicit_after_save(tmp_path):
+    db_path = str(tmp_path / "usage.db")
+    config_path = tmp_path / "config.yaml"
+    database.init_db(db_path).close()
+    config = _factory_config()
+    config["categories"]["office"]["match"]["process_names"] = [
+        "excel.exe",
+        "winword.exe",
+    ]
+    config_path.write_text(
+        yaml.safe_dump(config, allow_unicode=True), encoding="utf-8"
+    )
+    categories = rules_service.load_rule_categories(str(config_path), db_path)
+    categories["office"]["match"]["process_names"] = ["excel.exe"]
+
+    rules_service.save_rule_categories(db_path, categories)
+    reloaded = rules_service.load_rule_categories(str(config_path), db_path)
+
+    assert reloaded["office"]["match"]["process_names"] == ["excel.exe"]
+    assert database.load_custom_rules(db_path)["office"]["process_names_mode"] == "replace"
+
+
+def test_scanner_preserves_explicit_empty_title_modes_and_custom_fields(tmp_path):
+    db_path = str(tmp_path / "usage.db")
+    database.init_db(db_path).close()
+    database.save_custom_rules(
+        db_path,
+        {
+            "reading": {
+                "display_name": "我的阅读",
+                "active_rule": "passive_allowed",
+                "process_names": ["custom-reader.exe"],
+                "process_names_mode": "replace",
+                "title_keywords": [],
+                "title_keywords_mode": "replace",
+                "title_patterns": [],
+                "title_patterns_mode": "replace",
+            }
+        },
+    )
+
+    rules_service.save_scanned_rules(
+        db_path, _factory_config(), {"reading": {"new-reader.exe"}}
+    )
+
+    stored = database.load_custom_rules(db_path)["reading"]
+    assert stored["display_name"] == "我的阅读"
+    assert stored["active_rule"] == "passive_allowed"
+    assert stored["title_keywords"] == []
+    assert stored["title_patterns"] == []
+    assert stored["process_names_mode"] == "replace"
+    assert stored["title_keywords_mode"] == "replace"
+    assert stored["title_patterns_mode"] == "replace"
 
 
 def test_scanned_rules_merge_without_deleting_custom_data_and_existing_owner_wins(tmp_path):
@@ -154,8 +254,11 @@ def test_scanned_rules_merge_without_deleting_custom_data_and_existing_owner_win
         "display_name": "我的阅读",
         "active_rule": "passive_allowed",
         "process_names": ["Shared.EXE", "private-reader.exe"],
+        "process_names_mode": "replace",
         "title_keywords": ["用户阅读词"],
+        "title_keywords_mode": "replace",
         "title_patterns": [r"用户-\d+"],
+        "title_patterns_mode": "replace",
     }
     assert stored["private"]["process_names"] == ["secret.exe"]
     assert stored["office"]["process_names"] == ["EXCEL.EXE", "fresh-conflict.exe"]
@@ -290,6 +393,12 @@ def test_known_app_keys_are_lowercase_and_office_apps_are_consistent():
         "outlook.exe",
     ):
         assert KNOWN_APPS[process] == "office"
+
+
+def test_setup_wizard_exposes_office_as_a_selectable_category():
+    assert "office" in _CATEGORY_CYCLE
+    assert "office" in _CAT_INFO
+    assert _CAT_INFO["office"][1]
 
 
 def test_scanner_lookup_is_case_insensitive_but_preserves_process_spelling():

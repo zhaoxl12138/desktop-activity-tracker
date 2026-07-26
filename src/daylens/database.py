@@ -24,6 +24,7 @@ from .repositories.session_repository import (
     update_session,
 )
 from .repositories.settings_repository import (
+    apply_custom_rules,
     delete_activity_logs_before,
     load_custom_rules,
     load_settings,

@@ -87,7 +87,10 @@ CREATE TABLE IF NOT EXISTS custom_rules (
     active_rule TEXT,
     process_names TEXT,
     title_keywords TEXT,
-    title_patterns TEXT DEFAULT ''
+    title_patterns TEXT DEFAULT '',
+    process_names_mode TEXT DEFAULT 'inherit',
+    title_keywords_mode TEXT DEFAULT 'inherit',
+    title_patterns_mode TEXT DEFAULT 'inherit'
 );
 
 CREATE TABLE IF NOT EXISTS poetry_lines (
@@ -224,6 +227,37 @@ def _run_migrations(conn) -> None:
             )
         conn.execute(
             "INSERT INTO schema_meta(key, value) VALUES('schema_version', '2') "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        )
+        version = 2
+    if version < 3:
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(custom_rules)").fetchall()
+        }
+        for column in (
+            "process_names_mode",
+            "title_keywords_mode",
+            "title_patterns_mode",
+        ):
+            if column not in columns:
+                conn.execute(
+                    f"ALTER TABLE custom_rules "
+                    f"ADD COLUMN {column} TEXT DEFAULT 'inherit'"
+                )
+        # Legacy title lists had no way to distinguish explicit empty from
+        # missing. Preserve non-empty overrides and let empty values inherit.
+        conn.execute(
+            "UPDATE custom_rules SET title_keywords_mode = "
+            "CASE WHEN COALESCE(title_keywords, '') <> '' "
+            "THEN 'replace' ELSE 'inherit' END"
+        )
+        conn.execute(
+            "UPDATE custom_rules SET title_patterns_mode = "
+            "CASE WHEN COALESCE(title_patterns, '') <> '' "
+            "THEN 'replace' ELSE 'inherit' END"
+        )
+        conn.execute(
+            "INSERT INTO schema_meta(key, value) VALUES('schema_version', '3') "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
         )
     conn.commit()

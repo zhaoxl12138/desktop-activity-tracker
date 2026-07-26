@@ -93,6 +93,9 @@ def load_custom_rules(db_path: str) -> dict[str, dict]:
             "process_names": [item for item in (row["process_names"] or "").split("\n") if item],
             "title_keywords": [item for item in (row["title_keywords"] or "").split("\n") if item],
             "title_patterns": [item for item in (row["title_patterns"] or "").split("\n") if item],
+            "process_names_mode": row["process_names_mode"] or "inherit",
+            "title_keywords_mode": row["title_keywords_mode"] or "inherit",
+            "title_patterns_mode": row["title_patterns_mode"] or "inherit",
         }
     return result
 
@@ -129,6 +132,9 @@ def merge_discovered_rules(
                 "process_names": _split_rule_list(row["process_names"]),
                 "title_keywords": _split_rule_list(row["title_keywords"]),
                 "title_patterns": _split_rule_list(row["title_patterns"]),
+                "process_names_mode": row["process_names_mode"] or "inherit",
+                "title_keywords_mode": row["title_keywords_mode"] or "inherit",
+                "title_patterns_mode": row["title_patterns_mode"] or "inherit",
             }
             for row in rows
         }
@@ -179,6 +185,15 @@ def merge_discovered_rules(
                     "title_patterns": list(
                         incoming.get("title_patterns", []) or []
                     ),
+                    "process_names_mode": incoming.get(
+                        "process_names_mode", "inherit"
+                    ),
+                    "title_keywords_mode": incoming.get(
+                        "title_keywords_mode", "inherit"
+                    ),
+                    "title_patterns_mode": incoming.get(
+                        "title_patterns_mode", "inherit"
+                    ),
                 }
             rules[category_key]["process_names"].append(process_name)
             owner[folded] = category_key
@@ -204,14 +219,18 @@ def _upsert_custom_rule(conn, key: str, rule: dict) -> None:
         """
         INSERT INTO custom_rules (
             category_key, display_name, active_rule, process_names,
-            title_keywords, title_patterns
-        ) VALUES (?, ?, ?, ?, ?, ?)
+            title_keywords, title_patterns, process_names_mode,
+            title_keywords_mode, title_patterns_mode
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(category_key) DO UPDATE SET
             display_name = excluded.display_name,
             active_rule = excluded.active_rule,
             process_names = excluded.process_names,
             title_keywords = excluded.title_keywords,
-            title_patterns = excluded.title_patterns
+            title_patterns = excluded.title_patterns,
+            process_names_mode = excluded.process_names_mode,
+            title_keywords_mode = excluded.title_keywords_mode,
+            title_patterns_mode = excluded.title_patterns_mode
         """,
         (
             key,
@@ -220,6 +239,9 @@ def _upsert_custom_rule(conn, key: str, rule: dict) -> None:
             "\n".join(rule.get("process_names", []) or []),
             "\n".join(rule.get("title_keywords", []) or []),
             "\n".join(rule.get("title_patterns", []) or []),
+            rule.get("process_names_mode", "replace"),
+            rule.get("title_keywords_mode", "replace"),
+            rule.get("title_patterns_mode", "replace"),
         ),
     )
 
@@ -228,28 +250,85 @@ def merge_custom_rules(config: dict, db_path: str) -> None:
     custom_rules = load_custom_rules(db_path)
     if not custom_rules:
         return
+    apply_custom_rules(config, custom_rules)
 
+
+def apply_custom_rules(config: dict, custom_rules: dict[str, dict]) -> None:
+    """Overlay persisted rules while respecting inherit/replace modes."""
     categories = config.setdefault("categories", {})
-    for key, rule in custom_rules.items():
+    priority = {key: index for index, key in enumerate(categories)}
+
+    def category_order(key: str) -> tuple[int, str]:
+        return (priority.get(key, len(priority)), key.casefold())
+
+    custom_owner: dict[str, str] = {}
+    normalized_custom: dict[str, list[str]] = {}
+    for key in sorted(custom_rules, key=category_order):
+        unique: list[str] = []
+        for process_name in custom_rules[key].get("process_names", []) or []:
+            folded = process_name.casefold()
+            if folded in custom_owner:
+                continue
+            custom_owner[folded] = key
+            unique.append(process_name)
+        normalized_custom[key] = unique
+
+    result: dict[str, dict] = {}
+    for key in list(categories) + [
+        key for key in custom_rules if key not in categories
+    ]:
         base_category = categories.get(key, {})
         base_match = base_category.get("match", {}) if isinstance(base_category, dict) else {}
-        title_keywords = rule["title_keywords"] or list(
-            base_match.get("title_keywords", []) or []
+        rule = custom_rules.get(key)
+        if rule is None:
+            match = dict(base_match)
+            match["process_names"] = [
+                process_name
+                for process_name in base_match.get("process_names", []) or []
+                if custom_owner.get(process_name.casefold(), key) == key
+            ]
+            category = dict(base_category)
+            category["match"] = match
+            result[key] = category
+            continue
+
+        process_names = list(normalized_custom.get(key, []))
+        if rule.get("process_names_mode", "inherit") == "inherit":
+            seen = {process.casefold() for process in process_names}
+            for process_name in base_match.get("process_names", []) or []:
+                folded = process_name.casefold()
+                if folded in seen:
+                    continue
+                if custom_owner.get(folded, key) != key:
+                    continue
+                process_names.append(process_name)
+                seen.add(folded)
+
+        if rule.get("title_keywords_mode", "inherit") == "inherit":
+            title_keywords = list(base_match.get("title_keywords", []) or [])
+        else:
+            title_keywords = list(rule.get("title_keywords", []) or [])
+        if rule.get("title_patterns_mode", "inherit") == "inherit":
+            title_patterns = list(base_match.get("title_patterns", []) or [])
+        else:
+            title_patterns = list(rule.get("title_patterns", []) or [])
+
+        match = dict(base_match)
+        match.update(
+            {
+                "process_names": process_names,
+                "title_keywords": title_keywords,
+                "title_patterns": title_patterns,
+            }
         )
-        title_patterns = rule.get("title_patterns", []) or list(
-            base_match.get("title_patterns", []) or []
-        )
-        categories[key] = {
+        result[key] = {
             "display_name": rule["display_name"]
             or base_category.get("display_name", key),
             "active_rule": rule["active_rule"]
             or base_category.get("active_rule", "interactive_required"),
-            "match": {
-                "process_names": rule["process_names"],
-                "title_keywords": title_keywords,
-                "title_patterns": title_patterns,
-            },
+            "match": match,
         }
+    config["categories"] = result
 
 
 def delete_activity_logs_before(db_path: str, cutoff_date: str) -> None:
