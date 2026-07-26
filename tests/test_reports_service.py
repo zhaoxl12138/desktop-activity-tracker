@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 from daylens import database, exporter
@@ -107,10 +108,78 @@ def test_auto_generate_refreshes_existing_current_reports(tmp_path: Path, monkey
         lambda *_: calls.append("monthly") or str(monthly),
     )
 
-    generated = reports_service.auto_generate_current_reports("usage.db", str(tmp_path))
+    generated = reports_service.auto_generate_current_reports(
+        "usage.db",
+        str(tmp_path),
+        force=True,
+    )
 
     assert calls == ["weekly", "monthly"]
     assert generated == [str(weekly), str(monthly)]
+
+
+def test_auto_reports_do_nothing_outside_weekly_and_monthly_gates(
+    tmp_path,
+    monkeypatch,
+):
+    calls = []
+    monkeypatch.setattr(
+        reports_service,
+        "generate_weekly_report",
+        lambda *_: calls.append("weekly"),
+    )
+    monkeypatch.setattr(
+        reports_service,
+        "generate_monthly_report",
+        lambda *_: calls.append("monthly"),
+    )
+
+    generated = reports_service.auto_generate_current_reports(
+        "usage.db",
+        str(tmp_path),
+        now=datetime(2026, 7, 27, 12, 0),
+    )
+
+    assert generated == []
+    assert calls == []
+
+
+def test_auto_reports_apply_weekly_and_monthly_23_hour_gates(
+    tmp_path,
+    monkeypatch,
+):
+    calls = []
+    monkeypatch.setattr(
+        reports_service,
+        "generate_weekly_report",
+        lambda *_: calls.append("weekly") or "weekly.md",
+    )
+    monkeypatch.setattr(
+        reports_service,
+        "generate_monthly_report",
+        lambda *_: calls.append("monthly") or "monthly.md",
+    )
+
+    before_weekly = reports_service.auto_generate_current_reports(
+        "usage.db",
+        str(tmp_path),
+        now=datetime(2026, 7, 26, 22, 59),
+    )
+    weekly = reports_service.auto_generate_current_reports(
+        "usage.db",
+        str(tmp_path),
+        now=datetime(2026, 7, 26, 23, 0),
+    )
+    monthly = reports_service.auto_generate_current_reports(
+        "usage.db",
+        str(tmp_path),
+        now=datetime(2026, 7, 31, 23, 0),
+    )
+
+    assert before_weekly == []
+    assert weekly == ["weekly.md"]
+    assert monthly == ["monthly.md"]
+    assert calls == ["weekly", "monthly"]
 
 
 def test_auto_generate_daily_report_refreshes_today(tmp_path: Path, monkeypatch):

@@ -3,10 +3,32 @@
 import os
 import csv
 import shutil
+import tempfile
 from datetime import datetime, timedelta
 from . import database
 from . import timeline
 from .utils import fmt_seconds, normalize_category_display_name
+
+
+def _atomic_write_text(filepath: str, content: str) -> None:
+    """Write a report through a same-directory temp file and atomic replace."""
+    directory = os.path.dirname(os.path.abspath(filepath))
+    os.makedirs(directory, exist_ok=True)
+    filename = os.path.basename(filepath)
+    fd, temp_path = tempfile.mkstemp(
+        prefix=f".{filename}.",
+        suffix=".tmp",
+        dir=directory,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, filepath)
+    finally:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
 
 
 def daily_report_path(output_dir: str, date_str: str) -> str:
@@ -49,7 +71,7 @@ def _generate_suggestions(db_path, today_date, stats):
     )
     video_sec = sum(
         c["effective_seconds"] for c in stats["by_category"]
-        if c["category_key"] == "video"
+        if c["category_key"] in {"video", "gaming"}
     )
 
     # Rule 1: Today's entertainment > 90 min
@@ -57,8 +79,17 @@ def _generate_suggestions(db_path, today_date, stats):
         suggestions.append("今日娱乐休闲时间超过90分钟，建议控制")
 
     # Rule 2: Entertainment > 90 min for 3 consecutive days
-    trend = database.query_entertainment_trend(db_path, days=3)
-    if len(trend) >= 3 and all(d["entertainment_seconds"] > 5400 for d in trend):
+    report_day = datetime.strptime(today_date, "%Y-%m-%d").date()
+    trend_dates = [
+        (report_day - timedelta(days=offset)).strftime("%Y-%m-%d")
+        for offset in (2, 1, 0)
+    ]
+    trend_stats = database.query_date_range_stats(db_path, trend_dates)
+    trend = trend_stats.get("daily", [])
+    if len(trend) >= 3 and all(
+        int(day.get("video_seconds", 0) or 0) > 5400
+        for day in trend
+    ):
         suggestions.append("娱乐休闲时间连续3天超过90分钟，建议减少视频时间")
 
     # Rule 3: Low study/work ratio with sufficient total time
@@ -290,8 +321,7 @@ def export_markdown(db_path, date_str, output_dir):
     lines.append(review)
     lines.append("")
 
-    with open(filepath, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
+    _atomic_write_text(filepath, "\n".join(lines))
 
     return filepath
 
@@ -775,8 +805,7 @@ def export_weekly_report(db_path, year, week_number, output_dir):
             "",
             "数据不足，请保持记录以获取分析报告。",
         ]
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines))
+        _atomic_write_text(filepath, "\n".join(lines))
         return filepath
 
     lines = []
@@ -872,8 +901,7 @@ def export_weekly_report(db_path, year, week_number, output_dir):
     lines.append(_gen_weekly_summary(stats, prev, best_days, peak_hours, sink, days_with_data))
     lines.append("")
 
-    with open(filepath, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
+    _atomic_write_text(filepath, "\n".join(lines))
 
     return filepath
 
@@ -915,8 +943,7 @@ def export_monthly_report(db_path, year, month, output_dir):
             "",
             "数据不足，请保持记录以获取分析报告。",
         ]
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines))
+        _atomic_write_text(filepath, "\n".join(lines))
         return filepath
 
     lines = []
@@ -1064,7 +1091,6 @@ def export_monthly_report(db_path, year, month, output_dir):
     lines.append(_gen_monthly_summary(stats, prev, best_day, top_work_apps, days_with_data, total_days))
     lines.append("")
 
-    with open(filepath, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
+    _atomic_write_text(filepath, "\n".join(lines))
 
     return filepath

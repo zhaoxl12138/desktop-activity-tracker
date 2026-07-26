@@ -9,12 +9,14 @@ sys.path.insert(0, str(SRC))
 
 from daylens import database  # noqa: E402
 from daylens.services.dashboard_service import (  # noqa: E402
+    _rolling_date_strings,
     build_day_over_day_comparison,
     build_distribution_sections,
     build_hourly_series,
     build_top_app_rows,
     load_today_snapshot,
 )
+from datetime import date
 
 
 def test_distribution_sections_exclude_tools_from_primary_breakdown():
@@ -99,3 +101,21 @@ def test_today_snapshot_no_longer_exposes_insights(tmp_path: Path):
     snapshot = load_today_snapshot(str(db_path), lambda process_name, details: process_name)
 
     assert "insights" not in snapshot
+
+
+def test_dashboard_trend_ranges_are_rolling_windows():
+    today = date(2026, 7, 1)
+
+    assert _rolling_date_strings(today, 7) == [
+        "2026-06-25",
+        "2026-06-26",
+        "2026-06-27",
+        "2026-06-28",
+        "2026-06-29",
+        "2026-06-30",
+        "2026-07-01",
+    ]
+    thirty_days = _rolling_date_strings(today, 30)
+    assert len(thirty_days) == 30
+    assert thirty_days[0] == "2026-06-02"
+    assert thirty_days[-1] == "2026-07-01"

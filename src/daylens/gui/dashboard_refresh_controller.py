@@ -32,6 +32,8 @@ class _DashboardQueryWorker(QThread):
         self.loader = loader
 
     def run(self) -> None:
+        if self.isInterruptionRequested():
+            return
         try:
             payload = self.loader()
         except Exception as exc:
@@ -78,6 +80,8 @@ class DashboardRefreshController(QObject):
         self.timer.stop()
         self._pending = False
         self.latest_generation += 1
+        if self._worker is not None:
+            self._worker.requestInterruption()
 
     def request_refresh(self) -> None:
         if self._closing or not self._foreground:
@@ -97,6 +101,7 @@ class DashboardRefreshController(QObject):
         worker = self._worker
         if worker is None:
             return True
+        worker.requestInterruption()
         completed = worker.wait(max(0, int(timeout_ms)))
         if completed:
             self._worker = None

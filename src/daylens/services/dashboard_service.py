@@ -11,6 +11,15 @@ WORK_KEYS = {"ai_tools", "coding", "office", "reading", "creative"}
 ENTERTAINMENT_KEYS = {"video", "gaming"}
 
 
+def _rolling_date_strings(end_date: date, days: int) -> list[str]:
+    """Return an inclusive rolling window ordered from oldest to newest."""
+    count = max(0, int(days))
+    return [
+        (end_date - timedelta(days=offset)).strftime("%Y-%m-%d")
+        for offset in reversed(range(count))
+    ]
+
+
 def resolve_display_name(
     process_name: str,
     app_details: list[dict],
@@ -391,16 +400,16 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
     yesterday_sessions = database.query_today_sessions(db_path, yesterday_str)
 
     today_date = date.today()
-    monday_offset = today_date.weekday()  # 0=Mon → 0 offset, 6=Sun → 6 offset
-    # Current week: Monday → today (not rolling 7 days)
-    week_days = [(today_date - timedelta(days=monday_offset - i)).strftime("%Y-%m-%d")
-                 for i in range(monday_offset + 1)]
-    # 30-day chart: from 1st of current month → today
-    month_start = today_date.replace(day=1)
-    days_in_month = (today_date - month_start).days + 1
-    thirty_days = [(month_start + timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(days_in_month)]
-    thirty_day_stats = database.query_date_range_stats(db_path, thirty_days)
-    week_day_sessions = [database.query_today_sessions(db_path, day_str) for day_str in week_days]
+    seven_day_dates = _rolling_date_strings(today_date, 7)
+    thirty_day_dates = _rolling_date_strings(today_date, 30)
+    thirty_day_stats = database.query_date_range_stats(
+        db_path,
+        thirty_day_dates,
+    )
+    seven_day_sessions = [
+        database.query_today_sessions(db_path, day_str)
+        for day_str in seven_day_dates
+    ]
 
     focus_summary, consecutive_days = build_focus_summary(db_path, today_str)
     distribution_sections = build_distribution_sections(stats, effective_seconds)
@@ -429,8 +438,11 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
             "yesterday": build_hourly_series(yesterday_sessions),
             "yesterday_work": split_yesterday["work"],
             "yesterday_entertainment": split_yesterday["entertainment"],
-            "seven_days": [build_hourly_series(day_sessions) for day_sessions in week_day_sessions],
-            "seven_day_labels": week_days,
+            "seven_days": [
+                build_hourly_series(day_sessions)
+                for day_sessions in seven_day_sessions
+            ],
+            "seven_day_labels": seven_day_dates,
             "thirty_days": [
                 round((item.get("effective_seconds", 0) or 0) / 3600.0, 1)
                 for item in thirty_day_stats.get("daily", [])

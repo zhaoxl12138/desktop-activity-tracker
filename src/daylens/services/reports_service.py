@@ -229,41 +229,69 @@ def monthly_report_exists(reports_dir: str) -> bool:
     return os.path.exists(monthly_report_path(reports_dir))
 
 
-def should_generate_weekly() -> bool:
+def should_generate_weekly(now: datetime | None = None) -> bool:
     """Check if it's time to auto-generate the weekly report (Sunday >= 23:00)."""
-    now = datetime.now()
+    now = now or datetime.now()
     return now.weekday() == 6 and now.hour >= 23
 
 
-def should_generate_monthly() -> bool:
+def should_generate_monthly(now: datetime | None = None) -> bool:
     """Check if it's time to auto-generate the monthly report (last day of month >= 23:00)."""
     import calendar
-    now = datetime.now()
+    now = now or datetime.now()
     last_day = calendar.monthrange(now.year, now.month)[1]
     return now.day == last_day and now.hour >= 23
 
 
-def auto_generate_current_reports(db_path: str, reports_dir: str) -> list[str]:
-    """Refresh weekly/monthly reports for the current period.
+def auto_generate_current_reports(
+    db_path: str,
+    reports_dir: str,
+    *,
+    now: datetime | None = None,
+    force: bool = False,
+) -> list[str]:
+    """Generate gated weekly/monthly reports or force a manual refresh.
 
     Returns list of generated file paths.
     """
+    now = now or datetime.now()
     generated = []
 
-    try:
-        path = generate_weekly_report(db_path, reports_dir)
-        if path:
-            generated.append(path)
-    except Exception as e:
-        import sys
-        print(f"[AutoReport] Weekly generation failed: {e}", file=sys.stderr)
+    iso_year, iso_week, _ = now.date().isocalendar()
+    weekly_due = (
+        force
+        or (
+            should_generate_weekly(now)
+            and not os.path.exists(
+                weekly_report_path(reports_dir, iso_year, iso_week)
+            )
+        )
+    )
+    if weekly_due:
+        try:
+            path = generate_weekly_report(db_path, reports_dir)
+            if path:
+                generated.append(path)
+        except Exception as e:
+            import sys
+            print(f"[AutoReport] Weekly generation failed: {e}", file=sys.stderr)
 
-    try:
-        path = generate_monthly_report(db_path, reports_dir)
-        if path:
-            generated.append(path)
-    except Exception as e:
-        import sys
-        print(f"[AutoReport] Monthly generation failed: {e}", file=sys.stderr)
+    monthly_due = (
+        force
+        or (
+            should_generate_monthly(now)
+            and not os.path.exists(
+                monthly_report_path(reports_dir, now.year, now.month)
+            )
+        )
+    )
+    if monthly_due:
+        try:
+            path = generate_monthly_report(db_path, reports_dir)
+            if path:
+                generated.append(path)
+        except Exception as e:
+            import sys
+            print(f"[AutoReport] Monthly generation failed: {e}", file=sys.stderr)
 
     return generated
