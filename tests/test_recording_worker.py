@@ -773,3 +773,44 @@ def test_repeated_sample_failures_report_delay_and_success_recovers():
     assert worker.health.status == "running"
     assert worker.health.last_sample_at == datetime(2026, 7, 26, 10, 0, 0)
     assert worker.health.error == ""
+
+
+def test_queue_full_fatal_becomes_safe_when_cleanup_persists_every_session():
+    first = _session("first")
+    tail = _session("tail")
+    worker = worker_module.RecordingWorker(
+        "config.yaml",
+        "usage.db",
+        {
+            "tracker": {
+                "persistence_retry_queue_size": 1,
+                "persistence_shutdown_retry_attempts": 1,
+            }
+        },
+    )
+    worker._store = FakeStore(
+        [
+            OSError("offline"),
+            OSError("offline"),
+            None,
+            None,
+        ]
+    )
+
+    assert worker._persist_or_queue(first) is True
+    with pytest.raises(RuntimeError, match="retry queue is full"):
+        worker._persist_or_queue(tail)
+
+    tracker = SessionTracker(
+        config={"tracker": {"min_session_seconds": 1}},
+        classifier=StaticClassifier(),
+        on_session_end=worker._persist_or_queue,
+    )
+    tracker._current = tail
+    worker._tracker = tracker
+
+    worker._cleanup()
+
+    assert worker.health.status == "stopped"
+    assert worker.health.pending_persists == 0
+    assert worker.health.shutdown_safe is True

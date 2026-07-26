@@ -54,20 +54,19 @@ def test_safe_shutdown_timeout_returns_actionable_failure_and_keeps_worker():
     assert worker.calls == ["budget", "stop", ("wait", 15_000)]
 
 
-def test_safe_shutdown_rejects_joined_worker_with_fatal_health():
+def test_safe_shutdown_allows_joined_fatal_worker_when_no_data_is_volatile():
     worker = FakeWorker(wait_result=True)
     worker.health = SimpleNamespace(
         status="fatal",
         pending_persists=0,
         recovery_path=r"D:\Data\usage.db.session-recovery.json",
         recovery_status="failed",
+        shutdown_safe=True,
     )
 
     result = stop_recording_worker_safely(worker)
 
-    assert result.completed is False
-    assert "fatal" in result.message
-    assert "session-recovery.json" in result.message
+    assert result.completed is True
 
 
 def test_safe_shutdown_rejects_joined_worker_with_volatile_pending_sessions():
@@ -77,6 +76,7 @@ def test_safe_shutdown_rejects_joined_worker_with_volatile_pending_sessions():
         pending_persists=2,
         recovery_path=r"D:\Data\usage.db.session-recovery.json",
         recovery_status="failed",
+        shutdown_safe=False,
     )
 
     result = stop_recording_worker_safely(worker)
@@ -84,6 +84,23 @@ def test_safe_shutdown_rejects_joined_worker_with_volatile_pending_sessions():
     assert result.completed is False
     assert "2" in result.message
     assert "failed" in result.message
+
+
+def test_safe_shutdown_rejects_explicitly_unsafe_fatal_without_pending_count():
+    worker = FakeWorker(wait_result=True)
+    worker.health = SimpleNamespace(
+        status="fatal",
+        pending_persists=0,
+        recovery_path=r"D:\Data\usage.db.session-recovery.json",
+        recovery_status="failed",
+        shutdown_safe=False,
+    )
+
+    result = stop_recording_worker_safely(worker)
+
+    assert result.completed is False
+    assert "fatal" in result.message
+    assert "session-recovery.json" in result.message
 
 
 def test_main_window_quit_timeout_does_not_quit_or_discard_worker(monkeypatch):

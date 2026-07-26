@@ -364,10 +364,15 @@ class RecordingWorker(QThread):
             except Exception as error:
                 self._mark_fatal(error)
 
+        if self._recoverable_fatal and not self._pending_persist_count():
+            self._fatal = False
+            self._recoverable_fatal = False
+
+        shutdown_safe = self._pending_persist_count() == 0
         if not self._fatal:
             self._set_health("stopped", error="", shutdown_safe=True)
         else:
-            self._set_health(shutdown_safe=False)
+            self._set_health(shutdown_safe=shutdown_safe)
         self._shutdown_deadline = None
 
     def _record_sample_success(self, sampled_at: datetime) -> None:

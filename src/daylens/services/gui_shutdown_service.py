@@ -78,7 +78,7 @@ def stop_recording_worker_safely(
             getattr(health, "recovery_status", "") or ""
         )
         explicitly_safe = getattr(health, "shutdown_safe", None)
-        if status == "fatal" or pending or explicitly_safe is False:
+        if pending or explicitly_safe is False:
             details = [f"status={status or 'unknown'}"]
             if pending:
                 details.append(f"volatile pending sessions={pending}")
