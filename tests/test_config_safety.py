@@ -9,6 +9,7 @@ import yaml
 
 import daylens
 from daylens import database
+from daylens import utils as daylens_utils
 from daylens.gui.main_window import MainWindow
 from daylens.runtime import load_config
 from daylens.services import settings_service
@@ -110,6 +111,24 @@ def test_load_user_config_migrates_legacy_allowlisted_values(tmp_path, monkeypat
     assert yaml.safe_load(user_path.read_text(encoding="utf-8")) == loaded
 
 
+def test_legacy_user_config_remains_available_when_migration_write_fails(
+    tmp_path, monkeypatch
+):
+    user_path = _use_temp_data_dir(monkeypatch, tmp_path)
+    user_path.write_text("theme: light\n", encoding="utf-8")
+    monkeypatch.setattr(
+        daylens_utils,
+        "_atomic_write_user_config",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            OSError("read-only data directory")
+        ),
+    )
+
+    loaded = load_user_config()
+
+    assert loaded["theme"] == "light"
+
+
 def test_save_page_config_never_rewrites_factory_config(tmp_path, monkeypatch):
     config_path = tmp_path / "config.yaml"
     factory = "theme: dark\ndb_path: data/usage.db\ncategories: {}\n"
@@ -197,6 +216,34 @@ def test_default_relative_database_path_uses_selected_data_directory(
     resolved = database.get_db_path({"db_path": "data/usage.db"})
 
     assert resolved == str(selected_data / "usage.db")
+
+
+def test_settings_service_resolves_default_database_to_selected_data_directory(
+    tmp_path, monkeypatch
+):
+    selected_data = tmp_path / "local" / "DayLens"
+    monkeypatch.setattr(daylens, "get_data_dir", lambda: str(selected_data))
+    monkeypatch.setattr(
+        settings_service.database,
+        "merge_db_settings",
+        lambda *_args: None,
+    )
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "db_path: data/usage.db\ntheme: dark\ncategories: {}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(settings_service, "load_user_config", lambda: {})
+
+    loaded = settings_service.load_page_config(
+        str(config_path),
+        str(selected_data / "usage.db"),
+    )
+
+    assert settings_service.normalize_database_path("data/usage.db") == str(
+        selected_data / "usage.db"
+    )
+    assert loaded["db_path"] == str(selected_data / "usage.db")
 
 
 def test_generate_default_config_is_deterministic_without_app_scan(

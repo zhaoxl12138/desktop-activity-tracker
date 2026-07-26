@@ -3,12 +3,17 @@ from __future__ import annotations
 import yaml
 import pytest
 
+import daylens
 from daylens import database
 from daylens.services import settings_service
 
 
 def test_normalize_database_path_resolves_relative_path(monkeypatch, tmp_path):
-    monkeypatch.setattr(settings_service, "get_app_root", lambda: str(tmp_path))
+    monkeypatch.setattr(
+        daylens,
+        "get_data_dir",
+        lambda: str(tmp_path / "data"),
+    )
 
     result = settings_service.normalize_database_path("data/new.db")
 

@@ -368,9 +368,6 @@ def load_user_config() -> dict:
         with open(user_path, "r", encoding="utf-8") as handle:
             raw = yaml.safe_load(handle)
         loaded = _validated_user_config(raw)
-        if loaded != raw:
-            _atomic_write_user_config(user_path, loaded, backup=True)
-        return loaded
     except Exception:
         try:
             recovered = _read_user_config_file(user_path + ".bak")
@@ -378,6 +375,15 @@ def load_user_config() -> dict:
             return recovered
         except Exception:
             return {}
+
+    if loaded != raw:
+        try:
+            _atomic_write_user_config(user_path, loaded, backup=True)
+        except Exception:
+            # The primary was valid and is safe to use for this run. Migration
+            # is best-effort and can be retried when the directory is writable.
+            pass
+    return loaded
 
 
 def save_user_config(overrides: dict, remove_keys: set[str] | None = None) -> None:

@@ -14,12 +14,12 @@ from ..utils import load_user_config, save_user_config
 
 
 def normalize_database_path(path: str) -> str:
-    """Return an absolute database path rooted at the DayLens app directory."""
+    """Return the effective absolute database path for this installation."""
     expanded = os.path.expandvars(os.path.expanduser(path.strip()))
     if not expanded:
         raise ValueError("数据库路径不能为空")
     if not os.path.isabs(expanded):
-        expanded = os.path.join(get_app_root(), expanded)
+        expanded = database.get_db_path({"db_path": expanded})
     return os.path.abspath(expanded)
 
 
@@ -39,7 +39,11 @@ def load_page_config(config_path: str, db_path: str) -> dict:
             if key in user_config and user_config[key]:
                 config[key] = user_config[key]
 
-    effective_db_path = config.get("db_path", db_path)
+    configured_db_path = config.get("db_path", db_path)
+    effective_db_path = normalize_database_path(
+        configured_db_path if isinstance(configured_db_path, str) else db_path
+    )
+    config["db_path"] = effective_db_path
     database.merge_db_settings(config, effective_db_path)
     return config
 
