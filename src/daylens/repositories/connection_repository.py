@@ -246,6 +246,11 @@ def _run_migrations(conn) -> None:
                 )
         # Legacy title lists had no way to distinguish explicit empty from
         # missing. Preserve non-empty overrides and let empty values inherit.
+        # Legacy process lists already had replacement semantics, so preserve
+        # removals conservatively across the schema upgrade.
+        conn.execute(
+            "UPDATE custom_rules SET process_names_mode = 'replace'"
+        )
         conn.execute(
             "UPDATE custom_rules SET title_keywords_mode = "
             "CASE WHEN COALESCE(title_keywords, '') <> '' "

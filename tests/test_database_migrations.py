@@ -106,3 +106,55 @@ def test_v2_empty_legacy_title_rules_migrate_to_inherit_mode(tmp_path):
     reading_match = config["categories"]["reading"]["match"]
     assert reading_match["title_keywords"] == ["用户关键词"]
     assert reading_match["title_patterns"] == [r"第\d+章"]
+
+
+def test_v2_legacy_process_list_remains_an_explicit_replacement(tmp_path):
+    db = tmp_path / "migration.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        INSERT INTO schema_meta(key, value) VALUES('schema_version', '2');
+        CREATE TABLE custom_rules (
+            category_key TEXT PRIMARY KEY,
+            display_name TEXT,
+            active_rule TEXT,
+            process_names TEXT,
+            title_keywords TEXT,
+            title_patterns TEXT DEFAULT ''
+        );
+        INSERT INTO custom_rules VALUES(
+            'office', '办公套件', 'interactive_required',
+            'excel.exe', '', ''
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    migrated = init_db(str(db))
+    mode = migrated.execute(
+        "SELECT process_names_mode FROM custom_rules "
+        "WHERE category_key='office'"
+    ).fetchone()[0]
+    migrated.close()
+    config = {
+        "categories": {
+            "office": {
+                "display_name": "办公套件",
+                "active_rule": "interactive_required",
+                "match": {
+                    "process_names": ["excel.exe", "winword.exe"],
+                    "title_keywords": [],
+                    "title_patterns": [],
+                },
+            }
+        }
+    }
+
+    merge_custom_rules(config, str(db))
+
+    assert mode == "replace"
+    assert config["categories"]["office"]["match"]["process_names"] == [
+        "excel.exe"
+    ]
