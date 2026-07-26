@@ -16,6 +16,16 @@ def load_rule_categories(config_path: str, db_path: str) -> dict[str, dict]:
     custom = database.load_custom_rules(db_path)
     database.apply_custom_rules(config, custom)
     categories = config.get("categories", {})
+    for key, rule in custom.items():
+        if key not in categories:
+            continue
+        match = categories[key].setdefault("match", {})
+        for mode_key in (
+            "process_names_mode",
+            "title_keywords_mode",
+            "title_patterns_mode",
+        ):
+            match[mode_key] = rule.get(mode_key, "inherit")
     normalized: dict[str, dict] = {}
     for key, category in categories.items():
         display_name = normalize_rule_category_display_name(key, category.get("display_name", ""))
@@ -34,11 +44,11 @@ def save_rule_categories(db_path: str, categories: dict[str, dict]) -> None:
             "display_name": category.get("display_name", ""),
             "active_rule": category.get("active_rule", "interactive_required"),
             "process_names": match.get("process_names", []),
-            "process_names_mode": "replace",
+            "process_names_mode": match.get("process_names_mode", "replace"),
             "title_keywords": match.get("title_keywords", []),
-            "title_keywords_mode": "replace",
+            "title_keywords_mode": match.get("title_keywords_mode", "replace"),
             "title_patterns": match.get("title_patterns", []),
-            "title_patterns_mode": "replace",
+            "title_patterns_mode": match.get("title_patterns_mode", "replace"),
         }
     database.save_custom_rules(db_path, payload)
 
