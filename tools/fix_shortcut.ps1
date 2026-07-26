@@ -1,17 +1,22 @@
-$exe = "D:\OfficeSoftware\DayLens\release\DayLens.exe"
+param(
+    [string]$InstallDir = (Join-Path $PSScriptRoot "..\release")
+)
+
+$exe = Join-Path (Resolve-Path $InstallDir) "DayLens.exe"
 $ws = New-Object -ComObject WScript.Shell
 
 # Desktop shortcut
-$desktop = $ws.CreateShortcut("C:\Users\Administrator\Desktop\DayLens.lnk")
+$desktop = $ws.CreateShortcut((Join-Path ([Environment]::GetFolderPath("Desktop")) "DayLens.lnk"))
 $desktop.TargetPath = $exe
-$desktop.WorkingDirectory = "D:\OfficeSoftware\DayLens\release"
+$desktop.WorkingDirectory = Split-Path $exe
 $desktop.IconLocation = "$exe,0"
 $desktop.Save()
 
 # Startup folder shortcut (auto-start on boot)
-$startup = $ws.CreateShortcut("C:\Users\Administrator\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\DayLens.lnk")
+$startupDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup"
+$startup = $ws.CreateShortcut((Join-Path $startupDir "DayLens.lnk"))
 $startup.TargetPath = $exe
-$startup.WorkingDirectory = "D:\OfficeSoftware\DayLens\release"
+$startup.WorkingDirectory = Split-Path $exe
 $startup.IconLocation = "$exe,0"
 $startup.Save()
 

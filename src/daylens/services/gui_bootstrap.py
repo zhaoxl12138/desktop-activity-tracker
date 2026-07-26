@@ -18,6 +18,10 @@ from .gui_shutdown_service import (
     WorkerShutdownResult,
     stop_recording_worker_safely,
 )
+from .instance_lock import acquire_recording_lock
+
+
+DUPLICATE_INSTANCE_MESSAGE = "程序已在运行中，请查看系统托盘图标。"
 
 
 def auto_scan_and_save_rules(config: dict, db_path: str) -> None:
@@ -34,24 +38,27 @@ def auto_scan_and_save_rules(config: dict, db_path: str) -> None:
         print(f"[INFO] 首次运行，已自动分类 {saved_count} 个应用")
 
 
-def ensure_single_instance() -> tuple[bool, object | None]:
-    import atexit
+def _activate_existing_window() -> None:
+    """Bring the existing DayLens window to the foreground on duplicate launch."""
     import ctypes
     from ctypes import wintypes
 
-    mutex_name = "Global\\DayLens_SingleInstance"
-    kernel32 = ctypes.windll.kernel32
-    kernel32.CreateMutexW.argtypes = [wintypes.LPCVOID, wintypes.BOOL, wintypes.LPCWSTR]
-    kernel32.CreateMutexW.restype = wintypes.HANDLE
+    user32 = ctypes.windll.user32
+    user32.FindWindowW.restype = wintypes.HWND
+    hwnd = user32.FindWindowW(None, "DayLens")
+    if hwnd:
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        user32.SetForegroundWindow(hwnd)
+    else:
+        user32.MessageBoxW(0, DUPLICATE_INSTANCE_MESSAGE, "DayLens", 0x40)
 
-    handle = kernel32.CreateMutexW(None, True, mutex_name)
-    if kernel32.GetLastError() == 183:
-        if handle:
-            kernel32.CloseHandle(handle)
-        ctypes.windll.user32.MessageBoxW(0, "程序已在运行中，请查看系统托盘图标。", "DayLens", 0x40)
+
+def ensure_single_instance() -> tuple[bool, object | None]:
+    acquired, lock = acquire_recording_lock()
+    if not acquired:
+        _activate_existing_window()
         return False, None
-    atexit.register(kernel32.CloseHandle, handle)
-    return True, handle
+    return True, lock
 
 
 def shutdown_gui_runtime(worker: object | None) -> WorkerShutdownResult:

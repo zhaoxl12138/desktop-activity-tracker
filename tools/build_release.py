@@ -12,31 +12,82 @@ ROOT = Path(__file__).resolve().parents[1]
 DIST_DIR = ROOT / "dist"
 BUILD_TEMP_DIR = ROOT / "build_temp"
 RELEASE_DIR = ROOT / "release"
+RELEASE_STAGING_DIR = ROOT / "release_staging"
+RELEASE_PREVIOUS_DIR = ROOT / "release_previous"
 SPEC_PATH = ROOT / "DayLens.spec"
 DIST_APP_DIR = DIST_DIR / "DayLens"
 RELEASE_EXE = RELEASE_DIR / "DayLens.exe"
 
 
-def _kill_running() -> None:
-    """Force-kill all DayLens.exe processes so build artifacts are unlocked."""
-    killed = False
+def _stop_running_gracefully() -> None:
+    """Request a normal close, using force only when a process will not exit."""
     for _ in range(3):
         result = subprocess.run(
-            ["taskkill", "/f", "/im", "DayLens.exe"],
+            ["taskkill", "/im", "DayLens.exe"],
             capture_output=True, text=True,
         )
-        if "SUCCESS" in result.stdout:
-            killed = True
-            time.sleep(0.5)
+        if "SUCCESS" not in result.stdout:
+            return
+        time.sleep(0.5)
+
+    for _ in range(5):
+        result = subprocess.run(
+            ["tasklist", "/fi", "IMAGENAME eq DayLens.exe"],
+            capture_output=True, text=True,
+        )
+        if "DayLens.exe" not in result.stdout:
+            return
+        time.sleep(0.5)
+
+    subprocess.run(
+        ["taskkill", "/f", "/im", "DayLens.exe"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _smoke_test(exe_path: Path) -> None:
+    """Start the freshly built executable through its parser and require exit 0."""
+    subprocess.run(
+        [str(exe_path), "--help"],
+        cwd=exe_path.parent,
+        capture_output=True,
+        timeout=20,
+        check=True,
+    )
+
+
+def _publish_staging() -> None:
+    """Atomically swap the prepared release, retaining the old version for rollback."""
+    if RELEASE_PREVIOUS_DIR.exists():
+        shutil.rmtree(RELEASE_PREVIOUS_DIR)
+    if RELEASE_DIR.exists():
+        os.replace(RELEASE_DIR, RELEASE_PREVIOUS_DIR)
+    try:
+        os.replace(RELEASE_STAGING_DIR, RELEASE_DIR)
+    except Exception:
+        if RELEASE_PREVIOUS_DIR.exists() and not RELEASE_DIR.exists():
+            os.replace(RELEASE_PREVIOUS_DIR, RELEASE_DIR)
+        raise
+    if RELEASE_PREVIOUS_DIR.exists():
+        shutil.rmtree(RELEASE_PREVIOUS_DIR)
+
+
+def _copy_dist_to_staging() -> None:
+    _reset_directory(RELEASE_STAGING_DIR)
+    for item in DIST_APP_DIR.iterdir():
+        target = RELEASE_STAGING_DIR / item.name
+        if item.is_dir():
+            shutil.copytree(item, target, dirs_exist_ok=True)
         else:
-            break
-    if killed:
-        print("DayLens process terminated.")
+            shutil.copy2(item, target)
 
 
 def _reset_directory(path: Path) -> None:
     if path.exists():
         for _ in range(5):
+            time.sleep(0.5)
             try:
                 shutil.rmtree(path)
                 break
@@ -46,9 +97,8 @@ def _reset_directory(path: Path) -> None:
 
 
 def build_release() -> None:
-    _kill_running()
     _reset_directory(BUILD_TEMP_DIR)
-    _reset_directory(RELEASE_DIR)
+    _reset_directory(DIST_DIR)
 
     subprocess.run(
         [
@@ -69,17 +119,16 @@ def build_release() -> None:
     if not DIST_APP_DIR.exists():
         raise FileNotFoundError(f"Missing bundled app directory: {DIST_APP_DIR}")
 
-    for item in DIST_APP_DIR.iterdir():
-        target = RELEASE_DIR / item.name
-        if item.is_dir():
-            shutil.copytree(item, target, dirs_exist_ok=True)
-        else:
-            shutil.copy2(item, target)
+    if not (DIST_APP_DIR / "DayLens.exe").exists():
+        raise FileNotFoundError(f"Missing bundled executable: {DIST_APP_DIR / 'DayLens.exe'}")
 
-    if not RELEASE_EXE.exists():
-        raise FileNotFoundError(f"Missing release executable: {RELEASE_EXE}")
+    _copy_dist_to_staging()
+    staging_exe = RELEASE_STAGING_DIR / "DayLens.exe"
+    _smoke_test(staging_exe)
+    _stop_running_gracefully()
+    _publish_staging()
 
-    _create_desktop_shortcut(str(RELEASE_EXE))
+    _create_desktop_shortcut(str(RELEASE_DIR / "DayLens.exe"))
     print(f"Release prepared at: {RELEASE_DIR}")
 
 

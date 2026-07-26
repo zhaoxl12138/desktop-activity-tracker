@@ -14,10 +14,15 @@ from ..classifier import Classifier
 from ..session_tracker import SessionTracker
 from .session_recovery_service import SessionRecoverySpool
 from .session_runtime_service import SessionRuntimeStore
+from .instance_lock import acquire_recording_lock
 from ..window_detector import get_foreground_window_info
 
 
 def handle_start(config: dict, config_path: str) -> None:
+    acquired, _recording_lock = acquire_recording_lock()
+    if not acquired:
+        print("DayLens 已在运行中，未启动第二个记录实例。", file=sys.stderr)
+        return
     tracker_cfg = config.get("tracker", {})
     sample_interval = tracker_cfg.get("sample_interval_seconds", config.get("sample_interval_seconds", 1))
     flush_interval = tracker_cfg.get("flush_interval_seconds", config.get("flush_interval_seconds", 5))
@@ -36,6 +41,7 @@ def handle_start(config: dict, config_path: str) -> None:
         recovery_spool.replay(store)
     except Exception as exc:
         store.close()
+        _recording_lock.close()
         raise RuntimeError(
             f"session recovery failed: {recovery_spool.path}"
         ) from exc
@@ -108,6 +114,7 @@ def handle_start(config: dict, config_path: str) -> None:
         if current_tail is not None:
             unresolved_tail = current_tail
         if unresolved_tail is None:
+            _recording_lock.close()
             raise RuntimeError(
                 "shutdown session persistence failed and no recoverable "
                 "session remained in memory"
@@ -115,6 +122,7 @@ def handle_start(config: dict, config_path: str) -> None:
         try:
             recovery_spool.store_sessions([unresolved_tail])
         except Exception as exc:
+            _recording_lock.close()
             raise RuntimeError(
                 "shutdown session persistence and recovery spool both failed"
             ) from exc
@@ -124,8 +132,10 @@ def handle_start(config: dict, config_path: str) -> None:
         )
         print(f"[ERROR] {recovery_message}", file=sys.stderr)
         store.close()
+        _recording_lock.close()
         raise RuntimeError(recovery_message) from shutdown_error
     store.close()
+    _recording_lock.close()
     print("数据库已安全关闭。")
 
 
