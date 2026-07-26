@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 from ...services import category_stats_service
 from ...utils import fmt_seconds
 from ..style import CATEGORY_COLOR_MAP, COLORS
+from ..widgets.elided_label import ElidedLabel
 
 
 class _CategoryCard(QFrame):
@@ -72,7 +73,7 @@ class _CategoryCard(QFrame):
         dot.setStyleSheet(f"background: {color}; border-radius: 5px;")
         info_layout.addWidget(dot)
 
-        self._name_lbl = QLabel(cat_name)
+        self._name_lbl = ElidedLabel(cat_name)
         self._name_lbl.setFont(QFont("Microsoft YaHei", 10, QFont.Bold))
         self._name_lbl.setStyleSheet(f"color: {COLORS['text']};")
         self._name_lbl.setFixedWidth(90)
@@ -128,8 +129,10 @@ class _CategoryCard(QFrame):
             self.clicked.emit(self._key)
         super().mousePressEvent(event)
 
-    def update_values(self, secs, total_eff):
+    def update_values(self, secs, total_eff, cat_name=None):
         pct = int(secs / total_eff * 100) if total_eff > 0 else 0
+        if cat_name is not None:
+            self._name_lbl.setText(str(cat_name))
         self._bar.setValue(pct)
         self._time_lbl.setText(fmt_seconds(secs))
         self._pct_lbl.setText(f"{pct}%")
@@ -211,6 +214,7 @@ class CategoryStatsPage(QWidget):
         self._current_date = ""
         self._is_active = False
         self._last_signature = None
+        self._empty_label: QLabel | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 24)
@@ -288,13 +292,15 @@ class CategoryStatsPage(QWidget):
 
             if not categories:
                 self._clear_all_cards()
-                no_data = QLabel("暂无数据")
-                no_data.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 14px;")
-                no_data.setAlignment(Qt.AlignCenter)
-                self.cards_container.insertWidget(0, no_data)
-                self.cards_container.addStretch()
+                self._empty_label = QLabel("暂无数据")
+                self._empty_label.setStyleSheet(
+                    f"color: {COLORS['text_muted']}; font-size: 14px;"
+                )
+                self._empty_label.setAlignment(Qt.AlignCenter)
+                self.cards_container.insertWidget(0, self._empty_label)
                 return
 
+            self._clear_empty_state()
             new_keys = {category.get("category_key", "other") for category in categories}
             existing_keys = set(self._cards.keys())
             for key in existing_keys - new_keys:
@@ -307,7 +313,7 @@ class CategoryStatsPage(QWidget):
                 name = category.get("category_name", "其他")
                 secs = category.get("effective_seconds", 0) or 0
                 if key in self._cards:
-                    self._cards[key].update_values(secs, total_eff)
+                    self._cards[key].update_values(secs, total_eff, name)
                 else:
                     color = CATEGORY_COLOR_MAP.get(key, COLORS["idle_gray"])
                     card = _CategoryCard(key, name, secs, total_eff, color)
@@ -336,6 +342,15 @@ class CategoryStatsPage(QWidget):
                 item.widget().deleteLater()
         self._cards.clear()
         self._expanded_key = None
+        self._empty_label = None
+        self.cards_container.addStretch()
+
+    def _clear_empty_state(self) -> None:
+        if self._empty_label is None:
+            return
+        self.cards_container.removeWidget(self._empty_label)
+        self._empty_label.deleteLater()
+        self._empty_label = None
 
     def _on_card_clicked(self, cat_key):
         if self._expanded_key == cat_key:

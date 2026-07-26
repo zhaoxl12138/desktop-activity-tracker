@@ -10,8 +10,10 @@ from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QFont, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QBoxLayout,
     QCheckBox,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -47,6 +49,7 @@ from .pages.rule_config import RuleConfigPage
 from .pages.settings import SettingsPage
 from .pages.software_stats import SoftwareStatsPage
 from .pages.today_overview import TodayOverviewPage
+from .widgets.elided_label import ElidedLabel
 from . import style as ui_style
 
 
@@ -135,6 +138,7 @@ class MainWindow(QMainWindow):
         self.dashboard_refresh.failed.connect(self._on_dashboard_refresh_failed)
         self._apply_window_chrome_theme()
         self._apply_initial_geometry()
+        self._update_responsive_top_bar()
 
         self._connect_recording_worker(self.worker)
         self.nav_list.setCurrentRow(0)
@@ -351,8 +355,10 @@ class MainWindow(QMainWindow):
         top_line.addStretch()
         title_wrap.addLayout(top_line)
 
-        self.lbl_page_hint = QLabel("聚焦今天的使用结构、效率与提醒")
-        self.lbl_page_hint.setWordWrap(True)
+        self.lbl_page_hint = ElidedLabel(
+            "聚焦今天的使用结构、效率与提醒",
+            max_lines=2,
+        )
         self.lbl_page_hint.setMinimumHeight(42)
         self.lbl_page_hint.setMaximumHeight(56)
         self.lbl_page_hint.setSizePolicy(
@@ -371,18 +377,22 @@ class MainWindow(QMainWindow):
         self.capsule_labels: dict[str, QLabel] = {}
         self.capsule_icons: dict[str, QLabel] = {}
         layout.addStretch()
-        layout.addWidget(self._build_summary_capsules())
+        self._summary_capsule = self._build_summary_capsules()
+        layout.addWidget(self._summary_capsule)
         layout.addStretch()
 
         self.btn_pause = QPushButton("暂停记录")
         self.btn_pause.setStyleSheet(ui_style.get_button_secondary_style())
         self.btn_pause.clicked.connect(self._toggle_pause)
-        layout.addWidget(self.btn_pause)
 
         self.btn_report = QPushButton("生成日报")
         self.btn_report.setStyleSheet(ui_style.get_button_primary_style())
         self.btn_report.clicked.connect(self._quick_report)
-        layout.addWidget(self.btn_report)
+        self._top_action_layout = QBoxLayout(QBoxLayout.LeftToRight)
+        self._top_action_layout.setSpacing(10)
+        self._top_action_layout.addWidget(self.btn_pause)
+        self._top_action_layout.addWidget(self.btn_report)
+        layout.addLayout(self._top_action_layout)
 
         self._update_top_bar()
         return bar
@@ -398,9 +408,12 @@ class MainWindow(QMainWindow):
             }}
             """
         )
-        layout = QHBoxLayout(capsule)
+        layout = QGridLayout(capsule)
         layout.setContentsMargins(20, 12, 20, 12)
-        layout.setSpacing(20)
+        layout.setHorizontalSpacing(14)
+        layout.setVerticalSpacing(8)
+        self._summary_capsule_grid = layout
+        self.summary_capsule_items: list[QFrame] = []
 
         for index, (emoji, label, key) in enumerate(
             [
@@ -411,16 +424,14 @@ class MainWindow(QMainWindow):
             ]
         ):
             item, value_label, icon_label, text_label = self._make_capsule(emoji, label)
-            item.setFixedWidth(170)
-            layout.addWidget(item)
+            item.setMinimumWidth(120)
+            item.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            layout.addWidget(item, 0, index)
+            layout.setColumnStretch(index, 1)
+            self.summary_capsule_items.append(item)
             self.capsule_values[key] = value_label
             self.capsule_icons[key] = icon_label
             self.capsule_labels[key] = text_label
-            if index < 3:
-                line = QFrame()
-                line.setFixedWidth(1)
-                line.setStyleSheet(f"background: {ui_style.COLORS['border']};")
-                layout.addWidget(line)
         return capsule
 
     def _make_capsule(self, emoji: str, label_text: str) -> tuple[QFrame, QLabel, QLabel, QLabel]:
@@ -495,9 +506,42 @@ class MainWindow(QMainWindow):
         if available is None:
             return
 
+        target_width = min(
+            self.FIXED_SIZE.width(),
+            max(self.minimumWidth(), int(available.width() * 0.95)),
+        )
+        target_height = min(
+            self.FIXED_SIZE.height(),
+            max(self.minimumHeight(), int(available.height() * 0.95)),
+        )
+        self.resize(target_width, target_height)
         frame = self.frameGeometry()
         frame.moveCenter(available.center())
         self.move(frame.topLeft())
+
+    def _update_responsive_top_bar(self) -> None:
+        if not hasattr(self, "_summary_capsule_grid"):
+            return
+        compact = self.width() < 1400
+        if getattr(self, "_top_bar_compact", None) == compact:
+            return
+        self._top_bar_compact = compact
+
+        grid = self._summary_capsule_grid
+        for item in self.summary_capsule_items:
+            grid.removeWidget(item)
+        for index, item in enumerate(self.summary_capsule_items):
+            row = index // 2 if compact else 0
+            column = index % 2 if compact else index
+            grid.addWidget(item, row, column)
+        for column in range(4):
+            grid.setColumnStretch(column, 1 if column < (2 if compact else 4) else 0)
+
+        self._top_action_layout.setDirection(
+            QBoxLayout.TopToBottom if compact else QBoxLayout.LeftToRight
+        )
+        self._top_bar.setMinimumHeight(154 if compact else 140)
+        self._summary_capsule_grid.invalidate()
 
     def _apply_window_chrome_theme(self) -> None:
         if sys.platform != "win32":
@@ -945,6 +989,10 @@ class MainWindow(QMainWindow):
         if refresh is not None:
             refresh.set_foreground(False)
         super().hideEvent(event)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._update_responsive_top_bar()
 
     def _toggle_theme(self, checked: bool) -> None:
         if self._theme_rebuilding:

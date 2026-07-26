@@ -306,3 +306,18 @@ def test_trend_widget_keeps_thirty_day_mode_unchanged():
     assert widget.canvas._mode == "30d"
     assert widget.canvas._points == thirty
     assert widget.canvas._uses_hour_units() is True
+def test_timeline_session_label_preserves_full_title_for_font_elision():
+    app = _app()
+    widget = TimelineWidget()
+    long_title = "这是一个非常非常长但不能在数据层按字符截断的窗口标题"
+
+    label = widget._session_display_label(
+        {
+            "process_name": "demo.exe",
+            "normalized_title": long_title,
+        }
+    )
+
+    assert label == f"demo.exe({long_title})"
+    widget.deleteLater()
+    app.processEvents()

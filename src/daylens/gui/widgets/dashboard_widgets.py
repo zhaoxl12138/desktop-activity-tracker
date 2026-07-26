@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from ...utils import fmt_seconds
 from .. import style as ui_style
+from .elided_label import ElidedLabel
 from ..style import COLORS, get_category_color
 
 
@@ -355,8 +356,6 @@ class TimelineWidget(QFrame):
             return base_name
         if normalized_title in {"program manager", "desktop", "start", "任务管理器"}:
             return base_name
-        if len(title) > 20:
-            title = title[:20] + "…"
         return f"{base_name}({title})"
 
     @staticmethod
@@ -408,7 +407,7 @@ class TimelineWidget(QFrame):
         top_row.setContentsMargins(0, 0, 0, 0)
         top_row.setSpacing(8)
 
-        app_label = QLabel(self._session_display_label(session))
+        app_label = ElidedLabel(self._session_display_label(session))
         app_label.setStyleSheet(f"font-size: 13px; color: {COLORS['text']}; font-weight: 800;")
         app_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         top_row.addWidget(app_label, 1)
@@ -754,10 +753,6 @@ class SessionTop3Widget(QFrame):
         process_name = str(session.get("process_name", "") or "")
         display_name = self._display_name_mapping.get(process_name, process_name) or process_name or "未知"
         window_title = str(session.get("normalized_title", "") or session.get("window_title", "") or "").strip()
-        if window_title and window_title.lower() != display_name.lower():
-            title_text = f"{display_name} ({_compact_app_name(window_title, limit=22)})"
-        else:
-            title_text = display_name
 
         if is_podium:
             app_style = (
@@ -769,7 +764,11 @@ class SessionTop3Widget(QFrame):
                 f"font-size: 13px; color: {COLORS['text']}; font-weight: 600;"
                 f"border: none; background: transparent;"
             )
-        app_label = QLabel(title_text)
+        app_label = ElidedLabel(
+            f"{display_name} ({window_title})"
+            if window_title and window_title.lower() != display_name.lower()
+            else display_name
+        )
         app_label.setAlignment(Qt.AlignCenter)
         app_label.setStyleSheet(app_style)
         app_label.setToolTip(f"{display_name} — {window_title}" if window_title else display_name)
@@ -1505,7 +1504,7 @@ class TopAppListWidget(QFrame):
         icon_label.setStyleSheet(f"background: {COLORS['panel_bg_alt']}; border-radius: 6px;")
         layout.addWidget(icon_label)
 
-        name_label = QLabel("--")
+        name_label = ElidedLabel("--")
         name_label.setMinimumWidth(96)
         name_label.setStyleSheet(f"font-size: 13px; color: {COLORS['text']}; font-weight: 600;")
         layout.addWidget(name_label)
@@ -1553,8 +1552,9 @@ class TopAppListWidget(QFrame):
             process_name, display_name, seconds, icon = items[index]
             row, icon_lbl, name_lbl, bar, dur_lbl = self._build_row(index + 1)
             icon_lbl.setPixmap(icon.pixmap(26, 26) if icon else QIcon().pixmap(18, 18))
-            name_lbl.setText(_compact_app_name(display_name))
-            name_lbl.setToolTip(process_name if display_name != process_name else "")
+            name_lbl.setText(display_name)
+            if not name_lbl.toolTip() and display_name != process_name:
+                name_lbl.setToolTip(f"{display_name} — {process_name}")
             bar.setValue(int(round((seconds / max_seconds) * 100)))
             dur_lbl.setText(fmt_seconds(seconds))
             self.rows_container.addWidget(row)
@@ -1587,7 +1587,7 @@ class DistributionLegend(QWidget):
             icon.setStyleSheet(f"color: {color}; font-size: 14px; font-weight: 700;")
             row_layout.addWidget(icon)
 
-            name_label = QLabel(name)
+            name_label = ElidedLabel(name)
             name_label.setMinimumWidth(72)
             name_label.setStyleSheet(
                 f"font-size: 14px; font-weight: 700; color: {COLORS['text']};"
@@ -1630,15 +1630,6 @@ class DistributionLegend(QWidget):
 
             self.layout.addWidget(row)
             self._rows.append(row)
-
-
-def _compact_app_name(name: str, limit: int = 18) -> str:
-    if not name:
-        return "--"
-    if len(name) <= limit:
-        return name
-    return f"{name[: limit - 1]}..."
-
 
 def _timeline_duration_text(session: dict) -> str:
     seconds = (

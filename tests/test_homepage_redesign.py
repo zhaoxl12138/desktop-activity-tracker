@@ -102,8 +102,17 @@ def test_homepage_shell_matches_reference_structure():
         window.show()
         app.processEvents()
 
-        assert window.size().width() == 1600
-        assert window.size().height() == 900
+        available = window.screen().availableGeometry()
+        expected_width = min(
+            1600,
+            max(window.minimumWidth(), int(available.width() * 0.95)),
+        )
+        expected_height = min(
+            900,
+            max(window.minimumHeight(), int(available.height() * 0.95)),
+        )
+        assert window.size().width() == expected_width
+        assert window.size().height() == expected_height
         assert window.minimumSize().width() == 1100
         assert window.minimumSize().height() == 700
         assert window.maximumSize().width() > 1100

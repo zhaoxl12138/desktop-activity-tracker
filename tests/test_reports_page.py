@@ -99,6 +99,46 @@ def test_switching_report_type_clears_previous_selection(tmp_path: Path):
     assert "选择一份报告" in page.detail_title.text()
 
 
+def test_periodic_refresh_preserves_selected_report_when_list_is_unchanged(
+    tmp_path: Path,
+):
+    reports_dir = tmp_path / "reports"
+    report_path = _create_report(reports_dir, "daily", "2026-06-24.md")
+    app = _app()
+    page = ReportsPage(str(tmp_path / "usage.db"), str(reports_dir))
+    page.show()
+    app.processEvents()
+    page.tab_daily.selectRow(0)
+    app.processEvents()
+
+    page.refresh()
+    app.processEvents()
+
+    assert page.selected_report is not None
+    assert page.selected_report["file_path"] == str(report_path)
+    assert page.tab_daily.selectionModel().selectedRows()
+
+
+def test_refresh_restores_selected_report_after_another_file_is_added(
+    tmp_path: Path,
+):
+    reports_dir = tmp_path / "reports"
+    selected = _create_report(reports_dir, "daily", "2026-06-24.md")
+    app = _app()
+    page = ReportsPage(str(tmp_path / "usage.db"), str(reports_dir))
+    page.show()
+    app.processEvents()
+    page.tab_daily.selectRow(0)
+    app.processEvents()
+
+    _create_report(reports_dir, "daily", "2026-06-25.md")
+    page.refresh()
+    app.processEvents()
+
+    assert page.selected_report is not None
+    assert page.selected_report["file_path"] == str(selected)
+
+
 def test_download_uses_selected_report_and_save_path(tmp_path: Path, monkeypatch):
     reports_dir = tmp_path / "reports"
     source = _create_report(reports_dir, "daily", "2026-06-24.md", "# 原始日报")

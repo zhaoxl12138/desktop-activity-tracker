@@ -62,7 +62,8 @@ def get_random_poetry(read_conn, db_path: str) -> dict | None:
         else:
             full = "\n".join(row["content"] for row in rows[:2])
 
-        # Reformat: exactly 2 lines, each ≤ 20 chars
+        # Reformat to exactly two logical lines. Visual elision belongs to the
+        # Qt label because character counts do not represent rendered width.
         if "。" in full:
             text = full.replace("\n", "")
             sentences = [s for s in text.split("。") if s]
@@ -70,14 +71,8 @@ def get_random_poetry(read_conn, db_path: str) -> dict | None:
         else:
             text = full  # keep original DB line breaks
 
-        raw_lines = [l for l in text.split("\n") if l]
-        out = []
-        for line in raw_lines:
-            line = line[:20]
-            if len(out) < 2:
-                out.append(line)
-            else:
-                out[1] = (out[1] + line)[:20]
+        raw_lines = [line for line in text.split("\n") if line]
+        out = raw_lines[:2]
         while len(out) < 2:
             out.append("")
         full = "\n".join(out[:2])
