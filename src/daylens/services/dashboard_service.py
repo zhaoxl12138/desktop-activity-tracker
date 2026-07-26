@@ -11,6 +11,39 @@ WORK_KEYS = {"ai_tools", "coding", "office", "reading", "creative"}
 ENTERTAINMENT_KEYS = {"video", "gaming"}
 
 
+def resolve_display_name(
+    process_name: str,
+    app_details: list[dict],
+    display_name_mapping: dict[str, str],
+) -> str:
+    """Resolve an application label without touching any Qt widget state."""
+    wrapper_processes = {
+        "WindowsTerminal.exe",
+        "cmd.exe",
+        "powershell.exe",
+        "Code.exe",
+        "Cursor.exe",
+    }
+    if process_name in wrapper_processes:
+        top_title = ""
+        top_seconds = 0
+        for detail in app_details:
+            if detail.get("process_name") != process_name:
+                continue
+            seconds = int(detail.get("effective_seconds", 0) or 0)
+            if seconds > top_seconds:
+                top_seconds = seconds
+                top_title = str(detail.get("window_title", "") or "")
+        for keyword, label in (
+            ("Claude Code", "Claude Code"),
+            ("Codex", "Codex"),
+            ("Cursor", "Cursor"),
+        ):
+            if keyword.casefold() in top_title.casefold():
+                return label
+    return display_name_mapping.get(process_name) or process_name
+
+
 def category_seconds(stats: dict) -> dict[str, int]:
     totals = {"work": 0, "social": 0, "entertainment": 0, "tools": 0}
     for item in stats.get("by_category", []):

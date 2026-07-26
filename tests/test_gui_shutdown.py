@@ -137,6 +137,77 @@ def test_main_window_quit_timeout_does_not_quit_or_discard_worker(monkeypatch):
     assert window.worker is worker
 
 
+def test_main_window_quit_stops_dashboard_before_recording_worker(monkeypatch):
+    worker = FakeWorker(wait_result=True)
+    events: list[object] = []
+    dashboard = SimpleNamespace(
+        shutdown=lambda timeout_ms: events.append(("dashboard", timeout_ms)) or True,
+        resume=lambda foreground: events.append(("resume", foreground)),
+    )
+    window = SimpleNamespace(
+        worker=worker,
+        dashboard_refresh=dashboard,
+        isVisible=lambda: True,
+    )
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.Yes)
+    monkeypatch.setattr(
+        main_window,
+        "stop_recording_worker_safely",
+        lambda candidate: events.append(("worker", candidate))
+        or WorkerShutdownResult(completed=True, worker=candidate, timeout_ms=15_000),
+    )
+    monkeypatch.setattr(
+        main_window.QApplication,
+        "instance",
+        staticmethod(lambda: SimpleNamespace(quit=lambda: events.append("quit"))),
+    )
+
+    MainWindow._quit_app(window)
+
+    assert events == [
+        ("dashboard", 5_000),
+        ("worker", worker),
+        "quit",
+    ]
+
+
+def test_main_window_resumes_dashboard_when_recording_shutdown_is_aborted(
+    monkeypatch,
+):
+    worker = FakeWorker(wait_result=False)
+    events: list[object] = []
+    dashboard = SimpleNamespace(
+        shutdown=lambda timeout_ms: events.append(("dashboard", timeout_ms)) or True,
+        resume=lambda foreground: events.append(("resume", foreground)),
+    )
+    window = SimpleNamespace(
+        worker=worker,
+        dashboard_refresh=dashboard,
+        isVisible=lambda: True,
+    )
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.Yes)
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        main_window,
+        "stop_recording_worker_safely",
+        lambda candidate: events.append(("worker", candidate))
+        or WorkerShutdownResult(
+            completed=False,
+            worker=candidate,
+            timeout_ms=15_000,
+            message="still stopping",
+        ),
+    )
+
+    MainWindow._quit_app(window)
+
+    assert events == [
+        ("dashboard", 5_000),
+        ("worker", worker),
+        ("resume", True),
+    ]
+
+
 def test_main_window_restart_schedule_failure_does_not_stop_worker(monkeypatch):
     worker = FakeWorker(wait_result=True)
     window = SimpleNamespace(worker=worker)
@@ -352,6 +423,44 @@ def test_tray_quit_timeout_keeps_tray_and_application_running(monkeypatch):
 
     assert events == ["warning"]
     assert manager.main_window.worker is worker
+
+
+def test_tray_quit_stops_dashboard_before_recording_worker(monkeypatch):
+    worker = FakeWorker(wait_result=True)
+    events: list[object] = []
+    manager = TrayManager.__new__(TrayManager)
+    manager.main_window = SimpleNamespace(
+        worker=worker,
+        dashboard_refresh=SimpleNamespace(
+            shutdown=lambda timeout_ms: events.append(
+                ("dashboard", timeout_ms)
+            )
+            or True,
+            resume=lambda foreground: events.append(("resume", foreground)),
+        ),
+        isVisible=lambda: False,
+    )
+    manager.tray = SimpleNamespace(hide=lambda: events.append("hide"))
+    manager.app = SimpleNamespace(quit=lambda: events.append("quit"))
+    monkeypatch.setattr(
+        tray_manager,
+        "stop_recording_worker_safely",
+        lambda candidate: events.append(("worker", candidate))
+        or WorkerShutdownResult(
+            completed=True,
+            worker=candidate,
+            timeout_ms=15_000,
+        ),
+    )
+
+    manager._quit()
+
+    assert events == [
+        ("dashboard", 5_000),
+        ("worker", worker),
+        "hide",
+        "quit",
+    ]
 
 
 def test_bootstrap_timeout_does_not_close_shared_runtime(monkeypatch):

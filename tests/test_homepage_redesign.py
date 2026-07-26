@@ -128,14 +128,17 @@ def test_homepage_shell_matches_reference_structure():
         assert window.pages["today"]._color_for_category("other") == ui_style.get_category_color("other")
         assert window.pages["today"]._color_for_category("idle") == ui_style.COLORS["timeline_idle"]
         assert window.pages["today"]._color_for_category("idle_leave") == ui_style.COLORS["timeline_idle"]
-        assert window.pages["today"].timer.isActive() is True
+        assert window.dashboard_refresh.timer.isActive() is True
 
         window.nav_list.setCurrentRow(1)
         app.processEvents()
-        assert window.pages["today"].timer.isActive() is False
+        assert window.dashboard_refresh.timer.isActive() is True
 
         window.nav_list.setCurrentRow(0)
         app.processEvents()
-        assert window.pages["today"].timer.isActive() is True
+        assert window.dashboard_refresh.timer.isActive() is True
 
         window.close()
+        app.processEvents()
+        assert window.dashboard_refresh.timer.isActive() is False
+        assert window.dashboard_refresh.shutdown(timeout_ms=1_000) is True

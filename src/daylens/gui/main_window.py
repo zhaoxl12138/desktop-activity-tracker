@@ -27,13 +27,18 @@ from PySide6.QtWidgets import (
 )
 
 from ..utils import fmt_seconds
-from ..services.shell_service import generate_daily_report, load_poetry_hint, load_shell_summary
+from ..services.dashboard_service import load_today_snapshot, resolve_display_name
+from ..services.shell_service import generate_daily_report, load_poetry_hint
 from ..services.reports_service import (
     auto_generate_daily_report,
     auto_generate_current_reports,
 )
 from ..services.restart_service import current_launch_command, schedule_restart
 from ..services.gui_shutdown_service import stop_recording_worker_safely
+from .dashboard_refresh_controller import (
+    DashboardRefreshController,
+    DashboardSnapshot,
+)
 from .report_backfill_worker import ReportBackfillWorker
 from .pages.category_stats import CategoryStatsPage
 from .pages.live_monitor import LiveMonitorPage
@@ -96,6 +101,7 @@ class MainWindow(QMainWindow):
         self._current_nav_key: str | None = None
         self._last_poetry_refresh = 0.0
         self._poetry_interval = 1800
+        self._dashboard_snapshot: DashboardSnapshot | None = None
         self.current_theme = ui_style.apply_theme(self.config.get("theme", "dark"))
 
         self.setWindowTitle("DayLens")
@@ -110,15 +116,28 @@ class MainWindow(QMainWindow):
         )
         self._init_pages()
         self._build_ui()
+        dashboard_mapping = dict(self.display_name_mapping)
+        dashboard_db_path = self.db_path
+        self.dashboard_refresh = DashboardRefreshController(
+            lambda: load_today_snapshot(
+                dashboard_db_path,
+                lambda process_name, app_details: resolve_display_name(
+                    process_name,
+                    app_details,
+                    dashboard_mapping,
+                ),
+            ),
+            parent=self,
+        )
+        self.dashboard_refresh.snapshot_ready.connect(
+            self._on_dashboard_snapshot
+        )
+        self.dashboard_refresh.failed.connect(self._on_dashboard_refresh_failed)
         self._apply_window_chrome_theme()
         self._apply_initial_geometry()
 
         self._connect_recording_worker(self.worker)
         self.nav_list.setCurrentRow(0)
-
-        self.refresh_timer = QTimer(self)
-        self.refresh_timer.timeout.connect(self._update_top_bar)
-        self.refresh_timer.start(5000)
 
         # Auto-generate weekly/monthly reports
         QTimer.singleShot(5000, self._check_report_schedule)
@@ -135,7 +154,11 @@ class MainWindow(QMainWindow):
     def _init_pages(self) -> None:
         """Create page widgets once. Reused across theme toggles."""
         self.stack = QStackedWidget()
-        display_name_mapping = {**DISPLAY_NAME_MAPPING, **self.config.get("display_name_mapping", {})}
+        display_name_mapping = {
+            **DISPLAY_NAME_MAPPING,
+            **self.config.get("display_name_mapping", {}),
+        }
+        self.display_name_mapping = display_name_mapping
         self.pages = {
             "today": TodayOverviewPage(self.db_path, display_name_mapping),
             "live": LiveMonitorPage(),
@@ -640,18 +663,34 @@ class MainWindow(QMainWindow):
             f"font-size: 14px; color: {color}; font-weight: 800;"
         )
 
+    def _on_dashboard_snapshot(self, snapshot: DashboardSnapshot) -> None:
+        if not isinstance(snapshot, DashboardSnapshot):
+            return
+        self.pages["today"].apply_snapshot(snapshot.payload)
+        self._dashboard_snapshot = snapshot
+        self._update_top_bar()
+
+    @staticmethod
+    def _on_dashboard_refresh_failed(message: str) -> None:
+        print(f"[DashboardRefresh] {message}", file=sys.stderr)
+
     def _update_top_bar(self) -> None:
         self.lbl_today.setText(self._today_text())
         today = datetime.now().strftime("%Y-%m-%d")
         today_page = self.pages.get("today")
-        if today_page is not None and today_page.last_stats_date == today:
-            stats = today_page.last_stats
-        else:
-            stats = None
-        if today_page is not None and today_page.last_stats_date == today and today_page.last_shell_summary:
+        if (
+            today_page is not None
+            and today_page.last_stats_date == today
+            and today_page.last_shell_summary
+        ):
             summary = today_page.last_shell_summary
         else:
-            summary = load_shell_summary(self.db_path, stats)
+            summary = {
+                "effective_seconds": 0,
+                "work_seconds": 0,
+                "entertainment_seconds": 0,
+                "social_seconds": 0,
+            }
         self.capsule_values["total"].setText(fmt_seconds(summary["effective_seconds"]))
         self.capsule_values["work"].setText(fmt_seconds(summary["work_seconds"]))
         self.capsule_values["ent"].setText(fmt_seconds(summary["entertainment_seconds"]))
@@ -791,9 +830,19 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "重启失败", str(exc))
             return
 
+        if not MainWindow._suspend_dashboard_refresh(self):
+            restart_handle.cancel()
+            QMessageBox.warning(
+                self,
+                "重启失败",
+                "首页后台查询仍在运行，请稍后重试。",
+            )
+            return
+
         result = stop_recording_worker_safely(self.worker)
         if not result.completed:
             restart_handle.cancel()
+            MainWindow._resume_dashboard_refresh(self)
             QMessageBox.warning(self, "Cannot restart safely", result.message)
             return
 
@@ -804,12 +853,14 @@ class MainWindow(QMainWindow):
             try:
                 self.worker = self._restore_recording_worker()
             except Exception as restore_exc:
+                MainWindow._resume_dashboard_refresh(self)
                 QMessageBox.warning(
                     self,
                     "记录恢复失败",
                     f"{exc}\n\n记录线程恢复失败：{restore_exc}",
                 )
                 return
+            MainWindow._resume_dashboard_refresh(self)
             QMessageBox.warning(self, "重启失败", str(exc))
             return
 
@@ -826,13 +877,40 @@ class MainWindow(QMainWindow):
         )
         if reply != QMessageBox.Yes:
             return
+        if not MainWindow._suspend_dashboard_refresh(self):
+            QMessageBox.warning(
+                self,
+                "无法安全退出",
+                "首页后台查询仍在运行，请稍后重试。",
+            )
+            return
         result = stop_recording_worker_safely(self.worker)
         if not result.completed:
+            MainWindow._resume_dashboard_refresh(self)
             QMessageBox.warning(self, "Cannot quit safely", result.message)
             return
         app = QApplication.instance()
         if app is not None:
             app.quit()
+
+    @staticmethod
+    def _suspend_dashboard_refresh(window) -> bool:
+        refresh = getattr(window, "dashboard_refresh", None)
+        if refresh is None:
+            return True
+        completed = bool(refresh.shutdown(timeout_ms=5_000))
+        if not completed:
+            MainWindow._resume_dashboard_refresh(window)
+        return completed
+
+    @staticmethod
+    def _resume_dashboard_refresh(window) -> None:
+        refresh = getattr(window, "dashboard_refresh", None)
+        if refresh is None:
+            return
+        is_visible = getattr(window, "isVisible", None)
+        foreground = bool(is_visible()) if callable(is_visible) else True
+        refresh.resume(foreground)
 
     def _restore_recording_worker(self):
         from .worker import RecordingWorker
@@ -855,6 +933,18 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # noqa: N802
         event.ignore()
         self.hide()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        refresh = getattr(self, "dashboard_refresh", None)
+        if refresh is not None:
+            refresh.set_foreground(True)
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        refresh = getattr(self, "dashboard_refresh", None)
+        if refresh is not None:
+            refresh.set_foreground(False)
+        super().hideEvent(event)
 
     def _toggle_theme(self, checked: bool) -> None:
         if self._theme_rebuilding:

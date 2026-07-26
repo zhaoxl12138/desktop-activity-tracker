@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import os
-import time
 from datetime import date, datetime, timedelta
 
 import psutil
-from PySide6.QtCore import QFileInfo, Qt, QTimer
+from PySide6.QtCore import QFileInfo, Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QFileIconProvider,
@@ -19,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from ... import get_app_root
-from ...services.dashboard_service import load_today_snapshot
+from ...services.dashboard_service import resolve_display_name
 from ...utils import normalize_category_display_name
 from .. import style as ui_style
 from ..widgets.dashboard_widgets import (
@@ -55,9 +54,6 @@ class TodayOverviewPage(QWidget):
         self._icon_provider = QFileIconProvider()
         self._icon_cache: dict[str, QIcon | None] = {}
         self._is_active = False
-        self._refresh_scheduled = False
-        self._last_refresh_at = 0.0
-        self._refresh_interval_seconds = 5.0
 
         root = QVBoxLayout(self)
         root.setContentsMargins(18, 18, 18, 18)
@@ -94,45 +90,15 @@ class TodayOverviewPage(QWidget):
         right_layout.addWidget(self.top_app_card, 6)
         columns.addWidget(right_panel, 4)
 
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self._refresh_if_active)
-        self.timer.setInterval(5000)
         self.insight_card = None
         self.insight_grid_widget = None
         self.insight_empty_label = None
 
     def activate(self, force: bool = False) -> None:
         self._is_active = True
-        if not self.timer.isActive():
-            self.timer.start()
-        if force or self._needs_refresh():
-            self.schedule_refresh(force=force)
 
     def deactivate(self) -> None:
         self._is_active = False
-        self._refresh_scheduled = False
-        if hasattr(self, "timer"):
-            self.timer.stop()
-
-    def schedule_refresh(self, force: bool = False) -> None:
-        if self._refresh_scheduled:
-            return
-        self._refresh_scheduled = True
-        QTimer.singleShot(0, lambda: self._run_scheduled_refresh(force))
-
-    def _run_scheduled_refresh(self, force: bool) -> None:
-        self._refresh_scheduled = False
-        if not self._is_active and not force:
-            return
-        if force or self._needs_refresh():
-            self.refresh()
-
-    def _needs_refresh(self) -> bool:
-        return (time.time() - self._last_refresh_at) >= self._refresh_interval_seconds
-
-    def _refresh_if_active(self) -> None:
-        if self._is_active:
-            self.refresh()
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -434,9 +400,8 @@ class TodayOverviewPage(QWidget):
         layout.addWidget(self.session_top3_widget, 1)
         return card
 
-    def refresh(self) -> None:
-        snapshot = load_today_snapshot(self.db_path, self._resolve_display)
-        self._last_refresh_at = time.time()
+    def apply_snapshot(self, snapshot: dict[str, object]) -> None:
+        """Render an already-loaded dashboard snapshot on the GUI thread."""
         self.last_stats_date = str(snapshot["today"])
         self.last_stats = dict(snapshot["stats"])
         totals = snapshot["totals"]
@@ -706,35 +671,11 @@ class TodayOverviewPage(QWidget):
         return ui_style.get_category_color("other")
 
     def _resolve_display(self, process_name: str, app_details: list[dict]) -> str:
-        wrapper_processes = {"WindowsTerminal.exe", "cmd.exe", "powershell.exe", "Code.exe", "Cursor.exe"}
-
-        # Wrapper processes: resolve actual app from window title first
-        if process_name in wrapper_processes:
-            top_title = ""
-            top_seconds = 0
-            for detail in app_details:
-                if detail.get("process_name") != process_name:
-                    continue
-                seconds = detail.get("effective_seconds", 0) or 0
-                if seconds > top_seconds:
-                    top_seconds = seconds
-                    top_title = detail.get("window_title", "") or ""
-
-            for keyword, label in [
-                ("Claude Code", "Claude Code"),
-                ("Codex", "Codex"),
-                ("Cursor", "Cursor"),
-            ]:
-                if keyword.lower() in top_title.lower():
-                    return label
-            # Fallback: use display mapping or process name
-            return self.display_name_mapping.get(process_name) or process_name
-
-        # Non-wrapper: use static display name mapping
-        mapped_name = self.display_name_mapping.get(process_name)
-        if mapped_name and mapped_name != process_name:
-            return mapped_name
-        return mapped_name or process_name
+        return resolve_display_name(
+            process_name,
+            app_details,
+            self.display_name_mapping,
+        )
 
 
 def _compact_duration(total_seconds: int) -> str:

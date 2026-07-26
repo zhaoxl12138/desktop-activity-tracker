@@ -198,6 +198,18 @@ class TrayManager:
         os.startfile(reports_dir)
 
     def _quit(self) -> None:
+        from .main_window import MainWindow
+
+        if (
+            self.main_window is not None
+            and not MainWindow._suspend_dashboard_refresh(self.main_window)
+        ):
+            if self.tray is not None:
+                self.tray.showMessage(
+                    "DayLens",
+                    "首页后台查询仍在运行，请稍后重试。",
+                )
+            return
         worker = (
             self.main_window.worker
             if self.main_window and hasattr(self.main_window, "worker")
@@ -205,6 +217,8 @@ class TrayManager:
         )
         result = stop_recording_worker_safely(worker)
         if not result.completed:
+            if self.main_window is not None:
+                MainWindow._resume_dashboard_refresh(self.main_window)
             if self.tray is not None:
                 self.tray.showMessage("DayLens", result.message)
             return
