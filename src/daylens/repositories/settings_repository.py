@@ -16,6 +16,13 @@ SETTING_KEYS = [
     "wizard_completed",
 ]
 
+_INTEGER_SETTING_RANGES = {
+    "sample_interval_seconds": (1, 60),
+    "idle_threshold_seconds": (10, 600),
+    "flush_interval_seconds": (1, 300),
+    "min_session_seconds": (0, 600),
+}
+
 
 def load_settings(db_path: str) -> dict[str, str] | None:
     if not os.path.exists(db_path):
@@ -61,19 +68,30 @@ def merge_db_settings(config: dict, db_path: str) -> None:
         if key not in db_settings or not db_settings[key]:
             continue
         value = db_settings[key]
-        if key in (
-            "sample_interval_seconds",
-            "idle_threshold_seconds",
-            "flush_interval_seconds",
-            "min_session_seconds",
-        ):
+        if key in _INTEGER_SETTING_RANGES:
             try:
-                config[key] = int(value)
-            except ValueError:
+                parsed = int(value)
+            except (TypeError, ValueError):
                 continue
-            config.setdefault("tracker", {})[key] = config[key]
+            minimum, maximum = _INTEGER_SETTING_RANGES[key]
+            if not minimum <= parsed <= maximum:
+                continue
+            config[key] = parsed
+            config.setdefault("tracker", {})[key] = parsed
         elif key == "startup_enabled":
-            config[key] = value.lower() in ("true", "1", "yes")
+            normalized = value.lower()
+            if normalized not in {"true", "1", "yes", "false", "0", "no"}:
+                continue
+            config[key] = normalized in ("true", "1", "yes")
+        elif key == "wizard_completed":
+            normalized = value.lower()
+            if normalized not in {"true", "1", "yes", "false", "0", "no"}:
+                continue
+            config[key] = "true" if normalized in {"true", "1", "yes"} else "false"
+        elif key == "theme":
+            if value not in {"dark", "light"}:
+                continue
+            config[key] = value
         else:
             config[key] = value
 

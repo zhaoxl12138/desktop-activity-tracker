@@ -246,6 +246,60 @@ def test_load_config_merges_factory_user_then_database(tmp_path, monkeypatch):
     assert loaded["tracker"]["sample_interval_seconds"] == 7
 
 
+def test_invalid_database_settings_cannot_override_validated_config(
+    tmp_path, monkeypatch
+):
+    config_path = tmp_path / "config.yaml"
+    db_path = tmp_path / "usage.db"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "theme": "dark",
+                "db_path": str(db_path),
+                "sample_interval_seconds": 3,
+                "tracker": {
+                    "sample_interval_seconds": 3,
+                    "idle_threshold_seconds": 60,
+                },
+                "categories": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    _use_temp_data_dir(monkeypatch, tmp_path)
+    save_user_config({"theme": "light", "db_path": str(db_path)})
+    database.init_db(str(db_path)).close()
+    conn = __import__("sqlite3").connect(db_path)
+    conn.executemany(
+        "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
+        [
+            ("theme", "neon"),
+            ("sample_interval_seconds", "-4"),
+            ("idle_threshold_seconds", "999999"),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    loaded = load_config(str(config_path))
+
+    assert loaded["theme"] == "light"
+    assert loaded["sample_interval_seconds"] == 3
+    assert loaded["tracker"]["sample_interval_seconds"] == 3
+    assert loaded["tracker"]["idle_threshold_seconds"] == 60
+
+
+def test_tracked_factory_config_contains_no_personal_absolute_paths():
+    factory_path = Path(__file__).resolve().parents[1] / "config" / "config.yaml"
+    factory = yaml.safe_load(factory_path.read_text(encoding="utf-8"))
+
+    assert factory["db_path"] == "data/usage.db"
+    assert factory.get("obsidian_output_path", "") == ""
+    serialized = factory_path.read_text(encoding="utf-8").casefold()
+    assert "d:\\officesoftware" not in serialized
+    assert "c:\\users\\administrator" not in serialized
+
+
 def test_load_page_config_ignores_invalid_user_mapping(tmp_path, monkeypatch):
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
