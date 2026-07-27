@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import time
+from datetime import date
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -60,7 +61,7 @@ class FakeRefreshController(QObject):
 
 def _snapshot_payload() -> dict[str, object]:
     return {
-        "today": "2026-07-26",
+        "today": date.today().strftime("%Y-%m-%d"),
         "stats": {},
         "totals": {
             "effective_seconds": 420,
