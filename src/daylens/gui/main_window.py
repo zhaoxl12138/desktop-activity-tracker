@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from datetime import datetime
 
 from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QFont, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QBoxLayout,
     QCheckBox,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -27,13 +30,19 @@ from PySide6.QtWidgets import (
 )
 
 from ..utils import fmt_seconds
-from ..services.shell_service import generate_daily_report, load_poetry_hint, load_shell_summary
+from ..services.dashboard_service import load_today_snapshot, resolve_display_name
+from ..services.shell_service import load_poetry_hint
 from ..services.reports_service import (
-    auto_generate_daily_report,
-    auto_generate_current_reports,
+    ReportJob,
+    execute_report_job,
 )
 from ..services.restart_service import current_launch_command, schedule_restart
-from .report_backfill_worker import ReportBackfillWorker
+from ..services.gui_shutdown_service import stop_recording_worker_safely
+from .dashboard_refresh_controller import (
+    DashboardRefreshController,
+    DashboardSnapshot,
+)
+from .background_task_queue import BackgroundTaskQueue
 from .pages.category_stats import CategoryStatsPage
 from .pages.live_monitor import LiveMonitorPage
 from .pages.reports import ReportsPage
@@ -41,6 +50,7 @@ from .pages.rule_config import RuleConfigPage
 from .pages.settings import SettingsPage
 from .pages.software_stats import SoftwareStatsPage
 from .pages.today_overview import TodayOverviewPage
+from .widgets.elided_label import ElidedLabel
 from . import style as ui_style
 
 
@@ -91,10 +101,17 @@ class MainWindow(QMainWindow):
         self.worker = worker
         self._theme_rebuilding = False
         self._last_sample: dict | None = None
+        self._recording_health = getattr(worker, "health", None)
         self._current_nav_key: str | None = None
         self._last_poetry_refresh = 0.0
         self._poetry_interval = 1800
+        self._dashboard_snapshot: DashboardSnapshot | None = None
         self.current_theme = ui_style.apply_theme(self.config.get("theme", "dark"))
+        self.background_tasks = BackgroundTaskQueue(parent=self)
+        self.background_tasks.task_completed.connect(
+            self._on_background_task_completed
+        )
+        self.background_tasks.task_failed.connect(self._on_background_task_failed)
 
         self.setWindowTitle("DayLens")
         self.setStyleSheet(ui_style.get_global_style() + ui_style.get_input_style())
@@ -108,15 +125,29 @@ class MainWindow(QMainWindow):
         )
         self._init_pages()
         self._build_ui()
+        dashboard_mapping = dict(self.display_name_mapping)
+        dashboard_db_path = self.db_path
+        self.dashboard_refresh = DashboardRefreshController(
+            lambda: load_today_snapshot(
+                dashboard_db_path,
+                lambda process_name, app_details: resolve_display_name(
+                    process_name,
+                    app_details,
+                    dashboard_mapping,
+                ),
+            ),
+            parent=self,
+        )
+        self.dashboard_refresh.snapshot_ready.connect(
+            self._on_dashboard_snapshot
+        )
+        self.dashboard_refresh.failed.connect(self._on_dashboard_refresh_failed)
         self._apply_window_chrome_theme()
         self._apply_initial_geometry()
+        self._update_responsive_top_bar()
 
-        self.worker.sample_updated.connect(self._on_sample)
+        self._connect_recording_worker(self.worker)
         self.nav_list.setCurrentRow(0)
-
-        self.refresh_timer = QTimer(self)
-        self.refresh_timer.timeout.connect(self._update_top_bar)
-        self.refresh_timer.start(5000)
 
         # Auto-generate weekly/monthly reports
         QTimer.singleShot(5000, self._check_report_schedule)
@@ -127,13 +158,16 @@ class MainWindow(QMainWindow):
         self.daily_report_timer.timeout.connect(self._auto_generate_daily_report)
         self.daily_report_timer.start(3600000)  # refresh today's report every hour
         QTimer.singleShot(10000, self._auto_generate_daily_report)
-        self._report_backfill_worker = None
         QTimer.singleShot(15000, self._start_report_backfill)
 
     def _init_pages(self) -> None:
         """Create page widgets once. Reused across theme toggles."""
         self.stack = QStackedWidget()
-        display_name_mapping = {**DISPLAY_NAME_MAPPING, **self.config.get("display_name_mapping", {})}
+        display_name_mapping = {
+            **DISPLAY_NAME_MAPPING,
+            **self.config.get("display_name_mapping", {}),
+        }
+        self.display_name_mapping = display_name_mapping
         self.pages = {
             "today": TodayOverviewPage(self.db_path, display_name_mapping),
             "live": LiveMonitorPage(),
@@ -143,8 +177,19 @@ class MainWindow(QMainWindow):
                 self.db_path, self.reports_dir,
                 self.config.get("obsidian_output_path", "").strip(),
             ),
-            "rules": RuleConfigPage(self.config_path, self.db_path, self.worker),
-            "settings": SettingsPage(self.config_path, self.db_path, self.reports_dir, self.worker),
+            "rules": RuleConfigPage(
+                self.config_path,
+                self.db_path,
+                self.worker,
+                self.background_tasks,
+            ),
+            "settings": SettingsPage(
+                self.config_path,
+                self.db_path,
+                self.reports_dir,
+                self.worker,
+                self.background_tasks,
+            ),
         }
         self.pages["settings"].config_saved.connect(self._apply_saved_config)
         self.pages["settings"].restart_requested.connect(self._restart_app)
@@ -263,7 +308,7 @@ class MainWindow(QMainWindow):
         )
         status_layout.addWidget(self.sidebar_version)
 
-        self.sidebar_sample_time = QLabel(f"最后采样：{datetime.now().strftime('%H:%M:%S')}")
+        self.sidebar_sample_time = QLabel("最后采样：--")
         self.sidebar_sample_time.setStyleSheet(
             f"font-size: 11px; color: {ui_style.COLORS['text_muted']};"
         )
@@ -326,8 +371,10 @@ class MainWindow(QMainWindow):
         top_line.addStretch()
         title_wrap.addLayout(top_line)
 
-        self.lbl_page_hint = QLabel("聚焦今天的使用结构、效率与提醒")
-        self.lbl_page_hint.setWordWrap(True)
+        self.lbl_page_hint = ElidedLabel(
+            "聚焦今天的使用结构、效率与提醒",
+            max_lines=2,
+        )
         self.lbl_page_hint.setMinimumHeight(42)
         self.lbl_page_hint.setMaximumHeight(56)
         self.lbl_page_hint.setSizePolicy(
@@ -346,18 +393,22 @@ class MainWindow(QMainWindow):
         self.capsule_labels: dict[str, QLabel] = {}
         self.capsule_icons: dict[str, QLabel] = {}
         layout.addStretch()
-        layout.addWidget(self._build_summary_capsules())
+        self._summary_capsule = self._build_summary_capsules()
+        layout.addWidget(self._summary_capsule)
         layout.addStretch()
 
         self.btn_pause = QPushButton("暂停记录")
         self.btn_pause.setStyleSheet(ui_style.get_button_secondary_style())
         self.btn_pause.clicked.connect(self._toggle_pause)
-        layout.addWidget(self.btn_pause)
 
         self.btn_report = QPushButton("生成日报")
         self.btn_report.setStyleSheet(ui_style.get_button_primary_style())
         self.btn_report.clicked.connect(self._quick_report)
-        layout.addWidget(self.btn_report)
+        self._top_action_layout = QBoxLayout(QBoxLayout.LeftToRight)
+        self._top_action_layout.setSpacing(10)
+        self._top_action_layout.addWidget(self.btn_pause)
+        self._top_action_layout.addWidget(self.btn_report)
+        layout.addLayout(self._top_action_layout)
 
         self._update_top_bar()
         return bar
@@ -373,9 +424,12 @@ class MainWindow(QMainWindow):
             }}
             """
         )
-        layout = QHBoxLayout(capsule)
+        layout = QGridLayout(capsule)
         layout.setContentsMargins(20, 12, 20, 12)
-        layout.setSpacing(20)
+        layout.setHorizontalSpacing(24)
+        layout.setVerticalSpacing(10)
+        self._summary_capsule_grid = layout
+        self.summary_capsule_items: list[QFrame] = []
 
         for index, (emoji, label, key) in enumerate(
             [
@@ -386,16 +440,14 @@ class MainWindow(QMainWindow):
             ]
         ):
             item, value_label, icon_label, text_label = self._make_capsule(emoji, label)
-            item.setFixedWidth(170)
-            layout.addWidget(item)
+            item.setMinimumWidth(150)
+            item.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            layout.addWidget(item, 0, index)
+            layout.setColumnStretch(index, 1)
+            self.summary_capsule_items.append(item)
             self.capsule_values[key] = value_label
             self.capsule_icons[key] = icon_label
             self.capsule_labels[key] = text_label
-            if index < 3:
-                line = QFrame()
-                line.setFixedWidth(1)
-                line.setStyleSheet(f"background: {ui_style.COLORS['border']};")
-                layout.addWidget(line)
         return capsule
 
     def _make_capsule(self, emoji: str, label_text: str) -> tuple[QFrame, QLabel, QLabel, QLabel]:
@@ -409,30 +461,32 @@ class MainWindow(QMainWindow):
             }}
             """
         )
-        h = QHBoxLayout(capsule)
-        h.setContentsMargins(0, 0, 0, 0)
-        h.setSpacing(10)
+        h = QVBoxLayout(capsule)
+        h.setContentsMargins(8, 4, 8, 4)
+        h.setSpacing(4)
+        h.setAlignment(Qt.AlignHCenter)
 
         emoji_lbl = QLabel(emoji)
         emoji_lbl.setStyleSheet("font-size: 24px; background: transparent;")
-        h.addWidget(emoji_lbl)
+        emoji_lbl.setAlignment(Qt.AlignHCenter)
+        h.addWidget(emoji_lbl, 0, Qt.AlignHCenter)
 
-        text_wrap = QVBoxLayout()
-        text_wrap.setSpacing(2)
         text_lbl = QLabel(label_text)
         text_lbl.setStyleSheet(
             f"font-size: 12px; color: {ui_style.COLORS['text']};"
             " font-weight: 700; background: transparent;"
         )
-        text_wrap.addWidget(text_lbl)
+        text_lbl.setAlignment(Qt.AlignHCenter)
+        h.addWidget(text_lbl, 0, Qt.AlignHCenter)
 
         value_lbl = QLabel("--")
         value_lbl.setStyleSheet(
             f"font-size: 23px; color: {ui_style.COLORS['text']};"
             " font-weight: 900; background: transparent;"
         )
-        text_wrap.addWidget(value_lbl)
-        h.addLayout(text_wrap)
+        value_lbl.setAlignment(Qt.AlignHCenter)
+        value_lbl.setMinimumHeight(30)
+        h.addWidget(value_lbl, 0, Qt.AlignHCenter)
 
         return capsule, value_lbl, emoji_lbl, text_lbl
 
@@ -470,9 +524,42 @@ class MainWindow(QMainWindow):
         if available is None:
             return
 
+        target_width = min(
+            self.FIXED_SIZE.width(),
+            max(self.minimumWidth(), int(available.width() * 0.95)),
+        )
+        target_height = min(
+            self.FIXED_SIZE.height(),
+            max(self.minimumHeight(), int(available.height() * 0.95)),
+        )
+        self.resize(target_width, target_height)
         frame = self.frameGeometry()
         frame.moveCenter(available.center())
         self.move(frame.topLeft())
+
+    def _update_responsive_top_bar(self) -> None:
+        if not hasattr(self, "_summary_capsule_grid"):
+            return
+        compact = self.width() < 1400
+        if getattr(self, "_top_bar_compact", None) == compact:
+            return
+        self._top_bar_compact = compact
+
+        grid = self._summary_capsule_grid
+        for item in self.summary_capsule_items:
+            grid.removeWidget(item)
+        for index, item in enumerate(self.summary_capsule_items):
+            row = index // 2 if compact else 0
+            column = index % 2 if compact else index
+            grid.addWidget(item, row, column)
+        for column in range(4):
+            grid.setColumnStretch(column, 1 if column < (2 if compact else 4) else 0)
+
+        self._top_action_layout.setDirection(
+            QBoxLayout.TopToBottom if compact else QBoxLayout.LeftToRight
+        )
+        self._top_bar.setMinimumHeight(154 if compact else 140)
+        self._summary_capsule_grid.invalidate()
 
     def _apply_window_chrome_theme(self) -> None:
         if sys.platform != "win32":
@@ -555,6 +642,53 @@ class MainWindow(QMainWindow):
         self.pages["today"].on_sample_updated(sample)
         self._update_sidebar_status_card()
 
+    def _connect_recording_worker(self, worker) -> None:
+        worker.sample_updated.connect(self._on_sample)
+        health_updated = getattr(worker, "health_updated", None)
+        if health_updated is not None:
+            health_updated.connect(self._on_recording_health)
+
+    def _on_recording_health(self, health) -> None:
+        self._recording_health = health
+        self._update_recording_health_ui()
+
+    def _update_recording_health_ui(self) -> None:
+        health = getattr(self, "_recording_health", None)
+        if health is None:
+            return
+        status = getattr(health, "status", "starting")
+        status_styles = {
+            "starting": ("🔵 启动中 (starting)", ui_style.COLORS["primary"]),
+            "running": ("🟢 正在记录 (running)", ui_style.COLORS["success_green"]),
+            "paused": ("🟡 暂停记录 (paused)", ui_style.COLORS["warning_yellow"]),
+            "delayed": ("🟡 写入延迟 (write delayed)", ui_style.COLORS["warning_yellow"]),
+            "sample_delayed": (
+                "🟡 采样延迟 (sample delayed)",
+                ui_style.COLORS["warning_yellow"],
+            ),
+            "degraded": ("🟠 降级运行 (degraded)", ui_style.COLORS["warning_yellow"]),
+            "stopped": ("⚪ 已停止 (stopped)", ui_style.COLORS["text_muted"]),
+            "fatal": ("🔴 记录错误 (fatal)", ui_style.COLORS["danger_red"]),
+        }
+        text, color = status_styles.get(
+            status,
+            (f"⚪ {status}", ui_style.COLORS["text_muted"]),
+        )
+        error = str(getattr(health, "error", "") or "").strip()
+        if error and status in {"sample_delayed", "degraded", "fatal"}:
+            text = f"{text} · {error}"
+        self.sidebar_record_status.setText(text)
+        self.sidebar_record_status.setStyleSheet(
+            f"font-size: 14px; color: {color}; font-weight: 800;"
+        )
+        last_sample_at = getattr(health, "last_sample_at", None)
+        sample_text = (
+            last_sample_at.strftime("%H:%M:%S")
+            if last_sample_at is not None
+            else "--"
+        )
+        self.sidebar_sample_time.setText(f"最后采样：{sample_text}")
+
     def _update_sidebar_status_card(self) -> None:
         if not hasattr(self, "sidebar_record_value"):
             return
@@ -569,7 +703,7 @@ class MainWindow(QMainWindow):
             f"连续记录：第{consecutive_days}天" if consecutive_days > 0 else "连续记录：--"
         )
         self.sidebar_version.setText("v1.5.3")
-        self.sidebar_sample_time.setText(f"最后采样：{datetime.now().strftime('%H:%M:%S')}")
+        self._update_recording_health_ui()
 
     def _toggle_pause(self) -> None:
         if self.worker.is_paused():
@@ -591,18 +725,34 @@ class MainWindow(QMainWindow):
             f"font-size: 14px; color: {color}; font-weight: 800;"
         )
 
+    def _on_dashboard_snapshot(self, snapshot: DashboardSnapshot) -> None:
+        if not isinstance(snapshot, DashboardSnapshot):
+            return
+        self.pages["today"].apply_snapshot(snapshot.payload)
+        self._dashboard_snapshot = snapshot
+        self._update_top_bar()
+
+    @staticmethod
+    def _on_dashboard_refresh_failed(message: str) -> None:
+        print(f"[DashboardRefresh] {message}", file=sys.stderr)
+
     def _update_top_bar(self) -> None:
         self.lbl_today.setText(self._today_text())
         today = datetime.now().strftime("%Y-%m-%d")
         today_page = self.pages.get("today")
-        if today_page is not None and today_page.last_stats_date == today:
-            stats = today_page.last_stats
-        else:
-            stats = None
-        if today_page is not None and today_page.last_stats_date == today and today_page.last_shell_summary:
+        if (
+            today_page is not None
+            and today_page.last_stats_date == today
+            and today_page.last_shell_summary
+        ):
             summary = today_page.last_shell_summary
         else:
-            summary = load_shell_summary(self.db_path, stats)
+            summary = {
+                "effective_seconds": 0,
+                "work_seconds": 0,
+                "entertainment_seconds": 0,
+                "social_seconds": 0,
+            }
         self.capsule_values["total"].setText(fmt_seconds(summary["effective_seconds"]))
         self.capsule_values["work"].setText(fmt_seconds(summary["work_seconds"]))
         self.capsule_values["ent"].setText(fmt_seconds(summary["entertainment_seconds"]))
@@ -630,36 +780,36 @@ class MainWindow(QMainWindow):
         self.lbl_page_hint.setText("聚焦今天的使用结构、效率与提醒")
 
     def _quick_report(self) -> None:
-        daily_dir = os.path.join(self.reports_dir, "daily")
-        try:
-            path, synced = generate_daily_report(self.db_path, daily_dir, self._live_obsidian_path())
-            if synced:
-                QMessageBox.information(self, "生成成功", f"日报已保存到\n{path}\n\n已同步到 Obsidian:\n{synced}")
-                return
-            QMessageBox.information(self, "生成成功", f"日报已保存到\n{path}")
-        except Exception as exc:
-            QMessageBox.warning(self, "生成失败", str(exc))
+        job = ReportJob(
+            kind="quick",
+            db_path=self.db_path,
+            reports_dir=self.reports_dir,
+            obsidian_path=self._live_obsidian_path(),
+        )
+        if not self.background_tasks.submit(job.key, lambda: execute_report_job(job)):
+            return
+        button = getattr(self, "btn_report", None)
+        if button is not None:
+            button.setEnabled(False)
+            button.setText("生成中…")
 
     def _check_report_schedule(self):
         """Periodically check if weekly/monthly reports should be auto-generated."""
         try:
-            now = __import__("time").time()
+            now = time.time()
             last = getattr(self, '_last_report_gen', 0)
             # Debounce: don't regenerate within 5 minutes
             if now - last < 290:
                 return
 
-            self._last_report_gen = now
-            generated = auto_generate_current_reports(self.db_path, self.reports_dir)
-            if generated:
-                obsidian_path = self._live_obsidian_path()
-                if obsidian_path:
-                    from ..exporter import sync_to_obsidian
-                    for filepath in generated:
-                        sync_to_obsidian(filepath, obsidian_path)
-                import sys
-                for fp in generated:
-                    print(f"[AutoReport] Generated: {fp}", file=sys.stderr)
+            job = ReportJob(
+                kind="periodic",
+                db_path=self.db_path,
+                reports_dir=self.reports_dir,
+                obsidian_path=self._live_obsidian_path(),
+            )
+            if self.background_tasks.submit(job.key, lambda: execute_report_job(job)):
+                self._last_report_gen = now
         except Exception as e:
             import sys, traceback
             print(f"[AutoReport] Error: {e}", file=sys.stderr)
@@ -667,53 +817,66 @@ class MainWindow(QMainWindow):
 
     def _auto_generate_daily_report(self):
         """Refresh today's report hourly without interrupting the GUI."""
-        path = auto_generate_daily_report(self.db_path, self.reports_dir)
-        if path:
-            obsidian_path = self._live_obsidian_path()
-            if obsidian_path:
-                try:
-                    from ..exporter import sync_to_obsidian
-                    sync_to_obsidian(path, obsidian_path)
-                except Exception as exc:
-                    import sys
-                    print(f"[AutoReport] Daily Obsidian sync failed: {exc}", file=sys.stderr)
+        job = ReportJob(
+            kind="daily",
+            db_path=self.db_path,
+            reports_dir=self.reports_dir,
+            obsidian_path=self._live_obsidian_path(),
+        )
+        self.background_tasks.submit(job.key, lambda: execute_report_job(job))
 
     def _start_report_backfill(self) -> None:
-        worker = self._report_backfill_worker
-        if worker is not None and worker.isRunning():
+        job = ReportJob(
+            kind="backfill",
+            db_path=self.db_path,
+            reports_dir=self.reports_dir,
+            obsidian_path=self._live_obsidian_path(),
+        )
+        self.background_tasks.submit(job.key, lambda: execute_report_job(job))
+
+    def _on_background_task_completed(self, key: str, result: object) -> None:
+        import sys
+
+        if key == "report:quick":
+            button = getattr(self, "btn_report", None)
+            if button is not None:
+                button.setEnabled(True)
+                button.setText("生成日报")
+            data = result if isinstance(result, dict) else {}
+            paths = data.get("generated_paths", [])
+            path = paths[0] if paths else ""
+            synced = data.get("synced_path")
+            message = f"日报已保存到\n{path}"
+            if synced:
+                message += f"\n\n已同步到 Obsidian:\n{synced}"
+            QMessageBox.information(self, "生成成功", message)
             return
-        worker = ReportBackfillWorker(
-            self.db_path,
-            self.reports_dir,
-            self._live_obsidian_path(),
-            self,
-        )
-        self._report_backfill_worker = worker
-        worker.completed.connect(self._on_report_backfill_completed)
-        worker.failed.connect(self._on_report_backfill_failed)
-        worker.finished.connect(self._cleanup_report_backfill_worker)
-        worker.start()
+        if key == "report:backfill":
+            data = result if isinstance(result, dict) else {}
+            summary = data.get("summary", {})
+            print(
+                "[AutoReport] Backfill generated "
+                f"{summary.get('generated_count', 0)}, "
+                f"failed {summary.get('failure_count', 0)}",
+                file=sys.stderr,
+            )
+            return
+        if key in {"report:daily", "report:periodic"}:
+            data = result if isinstance(result, dict) else {}
+            for filepath in data.get("generated_paths", []):
+                print(f"[AutoReport] Generated: {filepath}", file=sys.stderr)
 
-    def _on_report_backfill_completed(self, result: dict) -> None:
+    def _on_background_task_failed(self, key: str, error: str) -> None:
+        if key == "report:quick":
+            button = getattr(self, "btn_report", None)
+            if button is not None:
+                button.setEnabled(True)
+                button.setText("生成日报")
+            QMessageBox.warning(self, "生成失败", error)
+            return
         import sys
 
-        print(
-            "[AutoReport] Backfill generated "
-            f"{result.get('generated_count', 0)}, "
-            f"failed {result.get('failure_count', 0)}",
-            file=sys.stderr,
-        )
-
-    def _on_report_backfill_failed(self, error: str) -> None:
-        import sys
-
-        print(f"[AutoReport] Backfill failed: {error}", file=sys.stderr)
-
-    def _cleanup_report_backfill_worker(self) -> None:
-        worker = self._report_backfill_worker
-        self._report_backfill_worker = None
-        if worker is not None:
-            worker.deleteLater()
+        print(f"[BackgroundTask] {key} failed: {error}", file=sys.stderr)
 
     def _live_obsidian_path(self) -> str:
         """Return obsidian_output_path from in-memory config (merged with DB on startup)."""
@@ -731,14 +894,51 @@ class MainWindow(QMainWindow):
 
     def _restart_app(self) -> None:
         try:
-            schedule_restart(current_launch_command())
+            command = current_launch_command()
         except Exception as exc:
             QMessageBox.warning(self, "重启失败", str(exc))
             return
 
-        if self.worker:
-            self.worker.stop()
-            self.worker.wait(5000)
+        try:
+            restart_handle = schedule_restart(command, deferred=True)
+        except Exception as exc:
+            QMessageBox.warning(self, "重启失败", str(exc))
+            return
+
+        if not MainWindow._suspend_dashboard_refresh(self):
+            restart_handle.cancel()
+            QMessageBox.warning(
+                self,
+                "重启失败",
+                "首页后台查询仍在运行，请稍后重试。",
+            )
+            return
+
+        result = stop_recording_worker_safely(self.worker)
+        if not result.completed:
+            restart_handle.cancel()
+            MainWindow._resume_dashboard_refresh(self)
+            QMessageBox.warning(self, "Cannot restart safely", result.message)
+            return
+
+        try:
+            restart_handle.arm()
+        except Exception as exc:
+            restart_handle.cancel()
+            try:
+                self.worker = self._restore_recording_worker()
+            except Exception as restore_exc:
+                MainWindow._resume_dashboard_refresh(self)
+                QMessageBox.warning(
+                    self,
+                    "记录恢复失败",
+                    f"{exc}\n\n记录线程恢复失败：{restore_exc}",
+                )
+                return
+            MainWindow._resume_dashboard_refresh(self)
+            QMessageBox.warning(self, "重启失败", str(exc))
+            return
+
         app = QApplication.instance()
         if app is not None:
             app.quit()
@@ -752,98 +952,131 @@ class MainWindow(QMainWindow):
         )
         if reply != QMessageBox.Yes:
             return
-        if self.worker:
-            self.worker.stop()
-            self.worker.wait(5000)
-        QApplication.instance().quit()
+        if not MainWindow._suspend_dashboard_refresh(self):
+            QMessageBox.warning(
+                self,
+                "无法安全退出",
+                "首页后台查询仍在运行，请稍后重试。",
+            )
+            return
+        result = stop_recording_worker_safely(self.worker)
+        if not result.completed:
+            MainWindow._resume_dashboard_refresh(self)
+            QMessageBox.warning(self, "Cannot quit safely", result.message)
+            return
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+
+    @staticmethod
+    def _suspend_dashboard_refresh(window) -> bool:
+        for timer_name in ("report_schedule_timer", "daily_report_timer"):
+            timer = getattr(window, timer_name, None)
+            if timer is not None:
+                timer.stop()
+        refresh = getattr(window, "dashboard_refresh", None)
+        completed = True if refresh is None else bool(refresh.shutdown(timeout_ms=5_000))
+        tasks = getattr(window, "background_tasks", None)
+        if completed and tasks is not None:
+            completed = bool(tasks.shutdown(timeout_ms=5_000))
+        if not completed:
+            MainWindow._resume_dashboard_refresh(window)
+        return completed
+
+    @staticmethod
+    def _resume_dashboard_refresh(window) -> None:
+        refresh = getattr(window, "dashboard_refresh", None)
+        is_visible = getattr(window, "isVisible", None)
+        foreground = bool(is_visible()) if callable(is_visible) else True
+        if refresh is not None:
+            refresh.resume(foreground)
+        tasks = getattr(window, "background_tasks", None)
+        if tasks is not None:
+            tasks.resume()
+        report_timer = getattr(window, "report_schedule_timer", None)
+        if report_timer is not None:
+            report_timer.start(300000)
+        daily_timer = getattr(window, "daily_report_timer", None)
+        if daily_timer is not None:
+            daily_timer.start(3600000)
+
+    def _restore_recording_worker(self):
+        from .worker import RecordingWorker
+
+        replacement = RecordingWorker(
+            self.config_path,
+            self.db_path,
+            self.config,
+        )
+        self._connect_recording_worker(replacement)
+        self._recording_health = replacement.health
+        self._update_recording_health_ui()
+        for page_key in ("rules", "settings"):
+            page = self.pages.get(page_key)
+            if page is not None and hasattr(page, "worker"):
+                page.worker = replacement
+        replacement.start()
+        return replacement
 
     def closeEvent(self, event) -> None:  # noqa: N802
         event.ignore()
         self.hide()
 
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        refresh = getattr(self, "dashboard_refresh", None)
+        if refresh is not None:
+            refresh.set_foreground(True)
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        refresh = getattr(self, "dashboard_refresh", None)
+        if refresh is not None:
+            refresh.set_foreground(False)
+        super().hideEvent(event)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._update_responsive_top_bar()
+
     def _toggle_theme(self, checked: bool) -> None:
         if self._theme_rebuilding:
             return
         self._theme_rebuilding = True
-        self.current_theme = ui_style.apply_theme("dark" if checked else "light")
-        self.config["theme"] = self.current_theme
-        self._persist_theme_preference()
-        self.setStyleSheet(ui_style.get_global_style() + ui_style.get_input_style())
+        old_colors = dict(ui_style.COLORS)
+        try:
+            self.current_theme = ui_style.apply_theme(
+                "dark" if checked else "light"
+            )
+            self.config["theme"] = self.current_theme
+            self._persist_theme_preference()
+            self.setStyleSheet(
+                ui_style.get_global_style() + ui_style.get_input_style()
+            )
+            self._retarget_inline_theme_colors(old_colors)
+            self._apply_window_chrome_theme()
+            self._update_top_bar()
+            self.update()
+        finally:
+            self._theme_rebuilding = False
 
-        # Rebuild shell widgets in-place without touching pages
-        old_top = self._top_bar
-        self._top_bar = self._build_top_bar()
-        self.root_layout.removeWidget(old_top)
-        self.root_layout.insertWidget(0, self._top_bar)
-        old_top.hide()
-        old_top.deleteLater()
-
-        old_sidebar = self._sidebar
-        self._sidebar = self._build_sidebar()
-        self._content_layout.removeWidget(old_sidebar)
-        self._content_layout.insertWidget(0, self._sidebar)
-        old_sidebar.hide()
-        old_sidebar.deleteLater()
-
-        # Recreate pages with new theme colors in-place on existing stack
-        current_row = self.nav_list.currentRow()
-        current_key = NAV_ITEMS[current_row][1] if current_row >= 0 else "today"
-        while self.stack.count():
-            w = self.stack.widget(0)
-            self.stack.removeWidget(w)
-            w.deleteLater()
-        display_name_mapping = {**DISPLAY_NAME_MAPPING, **self.config.get("display_name_mapping", {})}
-        self.pages = {
-            "today": TodayOverviewPage(self.db_path, display_name_mapping),
-            "live": LiveMonitorPage(),
-            "software": SoftwareStatsPage(self.db_path, self.reports_dir, display_name_mapping),
-            "category": CategoryStatsPage(self.db_path),
-            "reports": ReportsPage(
-                self.db_path, self.reports_dir,
-                self.config.get("obsidian_output_path", "").strip(),
-            ),
-            "rules": RuleConfigPage(self.config_path, self.db_path, self.worker),
-            "settings": SettingsPage(self.config_path, self.db_path, self.reports_dir, self.worker),
+    def _retarget_inline_theme_colors(self, old_colors: dict[str, str]) -> None:
+        """Update existing inline QSS without rebuilding stateful page widgets."""
+        replacements = {
+            old_colors[key]: ui_style.COLORS[key]
+            for key in old_colors.keys() & ui_style.COLORS.keys()
+            if old_colors[key] != ui_style.COLORS[key]
         }
-        self.pages["settings"].config_saved.connect(self._apply_saved_config)
-        self.pages["settings"].restart_requested.connect(self._restart_app)
-        for _, key, _ in NAV_ITEMS:
-            self.stack.addWidget(self.pages[key])
-        self.nav_list.setCurrentRow(current_row)
-        self._on_nav_changed(current_row)
-
-        self._apply_window_chrome_theme()
-        self._update_top_bar()
-        if self.worker.is_paused():
-            self._toggle_pause()
-            self._toggle_pause()
-        self._theme_rebuilding = False
+        for widget in (self, *self.findChildren(QWidget)):
+            sheet = widget.styleSheet()
+            if not sheet:
+                continue
+            updated = sheet
+            for old_value, new_value in replacements.items():
+                updated = updated.replace(old_value, new_value)
+            if updated != sheet:
+                widget.setStyleSheet(updated)
 
     def _persist_theme_preference(self) -> None:
-        """Write only the theme key back, atomically via temp file."""
-        import os
-        import re
-
-        try:
-            with open(self.config_path, "r", encoding="utf-8") as f:
-                content = f.read()
-        except FileNotFoundError:
-            return
-
-        theme_line = f"theme: {self.current_theme}"
-        if re.search(r'^theme:', content, re.MULTILINE):
-            content = re.sub(r'^theme:.*$', theme_line, content, flags=re.MULTILINE)
-        else:
-            content = content.rstrip() + "\n" + theme_line + "\n"
-
-        tmp_path = self.config_path + ".tmp"
-        try:
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                f.write(content)
-            os.replace(tmp_path, self.config_path)
-        except Exception as e:
-            print(f"[MainWindow] _persist_theme_preference write error: {e}")
-
-        # Also persist to data/user_config.yaml
+        """Persist theme as user state; factory config remains read-only."""
         from ..utils import save_user_config
         save_user_config({"theme": self.current_theme})

@@ -139,9 +139,14 @@ class SoftwareStatsPage(QWidget):
             self._last_rows_signature = signature
             self.table.setRowCount(len(rows))
             for index, row in enumerate(rows):
-                self.table.setItem(index, 0, QTableWidgetItem(str(row["software"])))
-                self.table.setItem(index, 1, QTableWidgetItem(str(row["title"])))
+                software_item = QTableWidgetItem(str(row["software"]))
+                software_item.setToolTip(str(row["software"]))
+                self.table.setItem(index, 0, software_item)
+                title_item = QTableWidgetItem(str(row["title"]))
+                title_item.setToolTip(str(row["title"]))
+                self.table.setItem(index, 1, title_item)
                 cat_item = QTableWidgetItem(f"● {row['category_name']}")
+                cat_item.setToolTip(str(row["category_name"]))
                 cat_item.setForeground(QBrush(QColor(get_category_color(str(row["category_key"])))))
                 self.table.setItem(index, 2, cat_item)
                 self.table.setItem(index, 3, QTableWidgetItem(str(row["duration"])))

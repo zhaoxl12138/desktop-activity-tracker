@@ -30,14 +30,18 @@ def load_poetry_hint(db_path: str, fallback_hint: str) -> str:
     if row:
         author = str(row.get("author", "") or "").strip()
         raw = str(row.get("content", "") or "").replace("\r", "\n")
-        lines = [" ".join(line.split())[:20] for line in raw.split("\n") if line.strip()]
+        lines = [
+            " ".join(line.split())
+            for line in raw.split("\n")
+            if line.strip()
+        ]
         lines = [line for line in lines if line]
         if not lines:
             return fallback_hint
         if len(lines) == 1:
             return f"{lines[0]} ——{author}" if author else lines[0]
         suffix = f" ——{author}" if author else ""
-        return "\n".join(lines[:1] + [lines[1][:max(1, 20 - len(suffix))] + suffix])
+        return "\n".join(lines[:1] + [lines[1] + suffix])
     return fallback_hint
 
 

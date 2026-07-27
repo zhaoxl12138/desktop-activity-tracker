@@ -83,7 +83,9 @@ def test_load_poetry_hint_cleans_extra_blank_lines(monkeypatch):
     assert shell_service.load_poetry_hint("dummy.db", "fallback") == "第一行\n第二行 ——李白"
 
 
-def test_get_random_poetry_truncates_each_line_to_twenty_chars(tmp_path):
+def test_get_random_poetry_preserves_full_lines_for_font_aware_ui_elision(
+    tmp_path,
+):
     db_path = tmp_path / "poetry.db"
     conn = sqlite3.connect(db_path)
     conn.execute(
@@ -112,4 +114,28 @@ def test_get_random_poetry_truncates_each_line_to_twenty_chars(tmp_path):
     assert row is not None
     lines = row["content"].split("\n")
     assert len(lines) == 2
-    assert all(len(line) <= 20 for line in lines)
+    assert lines == [
+        "这是第一句特别长特别长特别长特别长甲乙丙丁",
+        "这是第二句特别长特别长特别长特别长甲乙丙丁",
+    ]
+
+
+def test_load_poetry_hint_does_not_apply_character_count_truncation(
+    monkeypatch,
+):
+    first = "这是第一句特别长特别长特别长特别长甲乙丙丁"
+    second = "这是第二句特别长特别长特别长特别长甲乙丙丁"
+    monkeypatch.setattr(
+        shell_service.database,
+        "get_random_poetry",
+        lambda _db_path: {
+            "author": "李白",
+            "content": f"{first}\n{second}",
+            "origin": "长诗",
+            "category": "",
+        },
+    )
+
+    assert shell_service.load_poetry_hint("dummy.db", "fallback") == (
+        f"{first}\n{second} ——李白"
+    )

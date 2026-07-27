@@ -14,35 +14,186 @@ switch_reason = 'entertainment_idle'
 AND idle_seconds > 0
 AND effective_seconds + idle_seconds > duration_seconds + 1
 """
+SAMPLING_TOLERANCE_SECONDS = 1
+DEFAULT_WALL_CLOCK_TOLERANCE_SECONDS = 300
 
 
-def inspect_data_quality(db_path: str, date_str: str | None = None) -> dict[str, object]:
+def inspect_data_quality(
+    db_path: str,
+    date_str: str | None = None,
+    *,
+    sample_interval_seconds: float = 1,
+    wall_clock_tolerance_seconds: float | None = None,
+) -> dict[str, object]:
     """Return consistency issues and a simple confidence score."""
-    conn = sqlite3.connect(db_path)
+    if wall_clock_tolerance_seconds is None:
+        wall_clock_tolerance_seconds = max(
+            DEFAULT_WALL_CLOCK_TOLERANCE_SECONDS,
+            2 * max(0, float(sample_interval_seconds)),
+        )
+    else:
+        wall_clock_tolerance_seconds = max(
+            0,
+            float(wall_clock_tolerance_seconds),
+        )
+    composition_tolerance_seconds = max(
+        SAMPLING_TOLERANCE_SECONDS,
+        float(sample_interval_seconds),
+    )
+    read_only_uri = f"{Path(db_path).resolve().as_uri()}?mode=ro"
+    conn = sqlite3.connect(read_only_uri, uri=True)
     try:
         where = "WHERE date = ?" if date_str else ""
         args = (date_str,) if date_str else ()
         rows = conn.execute(
-            f"SELECT session_id,start_time,end_time,duration_seconds,effective_seconds,idle_seconds "
+            f"SELECT session_id,start_time,end_time,date,duration_seconds,effective_seconds,idle_seconds "
             f"FROM activity_sessions {where}", args,
         ).fetchall()
         issues: list[dict[str, object]] = []
         seen: set[str] = set()
-        for sid, start, end, duration, effective, idle in rows:
+        affected_rows: set[int] = set()
+        affected_dates: set[str] = set()
+        unattributed_seconds = 0
+        overattributed_seconds = 0
+        wall_clock_impact_seconds = 0
+        impact_seconds = 0
+
+        def add_issue(row_index, row_date, issue):
+            nonlocal impact_seconds
+            issues.append(issue)
+            affected_rows.add(row_index)
+            if row_date:
+                affected_dates.add(str(row_date))
+            impact_seconds += int(issue.get("impact_seconds", 0) or 0)
+
+        for row_index, (sid, start, end, row_date, duration, effective, idle) in enumerate(rows):
             if sid in seen:
-                issues.append({"type": "duplicate_session_id", "session_id": sid})
+                add_issue(
+                    row_index,
+                    row_date,
+                    {
+                        "type": "duplicate_session_id",
+                        "session_id": sid,
+                        "date": str(row_date),
+                        "impact_seconds": 0,
+                    },
+                )
             seen.add(sid)
             duration = int(duration or 0)
             effective = int(effective or 0)
             idle = int(idle or 0)
             if duration < 0 or effective < 0 or idle < 0:
-                issues.append({"type": "negative_duration", "session_id": sid})
-            if duration + 1 < effective + idle:
-                issues.append({"type": "duration_mismatch", "session_id": sid})
-            if end < start:
-                issues.append({"type": "invalid_time_range", "session_id": sid})
-        score = 100 if not rows else max(0, round(100 * (1 - len(issues) / len(rows))))
-        return {"checked_sessions": len(rows), "issue_count": len(issues), "score": score, "issues": issues}
+                negative_impact = sum(
+                    abs(value) for value in (duration, effective, idle) if value < 0
+                )
+                add_issue(
+                    row_index,
+                    row_date,
+                    {
+                        "type": "negative_duration",
+                        "session_id": sid,
+                        "date": str(row_date),
+                        "impact_seconds": negative_impact,
+                    },
+                )
+
+            components = effective + idle
+            if components > duration + composition_tolerance_seconds:
+                mismatch = components - duration
+                overattributed_seconds += mismatch
+                add_issue(
+                    row_index,
+                    row_date,
+                    {
+                        "type": "duration_mismatch",
+                        "direction": "components_exceed_duration",
+                        "session_id": sid,
+                        "date": str(row_date),
+                        "impact_seconds": mismatch,
+                    },
+                )
+            elif duration > components + composition_tolerance_seconds:
+                mismatch = duration - components
+                unattributed_seconds += mismatch
+                add_issue(
+                    row_index,
+                    row_date,
+                    {
+                        "type": "duration_mismatch",
+                        "direction": "duration_exceeds_components",
+                        "session_id": sid,
+                        "date": str(row_date),
+                        "impact_seconds": mismatch,
+                    },
+                )
+
+            try:
+                start_time = datetime.fromisoformat(str(start))
+                end_time = datetime.fromisoformat(str(end))
+            except (TypeError, ValueError):
+                add_issue(
+                    row_index,
+                    row_date,
+                    {
+                        "type": "invalid_time_range",
+                        "session_id": sid,
+                        "date": str(row_date),
+                        "impact_seconds": 0,
+                    },
+                )
+                continue
+
+            wall_span = (end_time - start_time).total_seconds()
+            if wall_span < 0:
+                add_issue(
+                    row_index,
+                    row_date,
+                    {
+                        "type": "invalid_time_range",
+                        "session_id": sid,
+                        "date": str(row_date),
+                        "impact_seconds": int(round(abs(wall_span))),
+                    },
+                )
+                continue
+
+            wall_impact = int(round(abs(wall_span - duration)))
+            if wall_impact > wall_clock_tolerance_seconds:
+                wall_clock_impact_seconds += wall_impact
+                add_issue(
+                    row_index,
+                    row_date,
+                    {
+                        "type": "wall_clock_mismatch",
+                        "session_id": sid,
+                        "date": str(row_date),
+                        "impact_seconds": wall_impact,
+                    },
+                )
+
+        if not rows or not affected_rows:
+            score = 100
+        else:
+            score = max(
+                0,
+                min(
+                    99,
+                    int(100 * (1 - len(affected_rows) / len(rows))),
+                ),
+            )
+        return {
+            "checked_sessions": len(rows),
+            "issue_count": len(issues),
+            "score": score,
+            "issues": issues,
+            "affected_dates": sorted(affected_dates),
+            "unattributed_seconds": unattributed_seconds,
+            "overattributed_seconds": overattributed_seconds,
+            "wall_clock_impact_seconds": wall_clock_impact_seconds,
+            "wall_clock_tolerance_seconds": wall_clock_tolerance_seconds,
+            "composition_tolerance_seconds": composition_tolerance_seconds,
+            "impact_seconds": impact_seconds,
+        }
     finally:
         conn.close()
 

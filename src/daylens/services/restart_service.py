@@ -6,6 +6,36 @@ import json
 import os
 import subprocess
 import sys
+from dataclasses import dataclass, field
+from typing import IO
+
+
+@dataclass
+class RestartHandle:
+    """Control whether an already-created restart waiter may relaunch DayLens."""
+
+    process: subprocess.Popen
+    _stdin: IO[str]
+    _signalled: bool = field(default=False, init=False)
+
+    def _signal(self, action: str) -> None:
+        if self._signalled:
+            return
+        self._stdin.write(f"{action}\n")
+        self._stdin.flush()
+        self._stdin.close()
+        self._signalled = True
+
+    def arm(self) -> None:
+        self._signal("ARM")
+
+    def cancel(self) -> None:
+        try:
+            self._signal("CANCEL")
+        except Exception:
+            terminate = getattr(self.process, "terminate", None)
+            if terminate is not None:
+                terminate()
 
 
 def database_path_changed(current: str, requested: str) -> bool:
@@ -22,8 +52,13 @@ def current_launch_command() -> list[str]:
     return [sys.executable, os.path.abspath(sys.argv[0]), *sys.argv[1:]]
 
 
-def schedule_restart(command: list[str], current_pid: int | None = None) -> None:
-    """Start a hidden waiter that relaunches DayLens after this process exits."""
+def schedule_restart(
+    command: list[str],
+    current_pid: int | None = None,
+    *,
+    deferred: bool = False,
+) -> RestartHandle:
+    """Create a hidden waiter and optionally arm it immediately."""
     if not command:
         raise ValueError("Restart command must not be empty")
 
@@ -31,13 +66,15 @@ def schedule_restart(command: list[str], current_pid: int | None = None) -> None
     env["DAYLENS_RESTART_COMMAND"] = json.dumps(command, ensure_ascii=False)
     pid = current_pid or os.getpid()
     script = (
+        "$action = [Console]::In.ReadLine(); "
+        "if ($action -ne 'ARM') { exit 0 }; "
         "$launch = @(ConvertFrom-Json $env:DAYLENS_RESTART_COMMAND); "
         f"Wait-Process -Id {pid} -ErrorAction SilentlyContinue; "
         "if ($launch.Count -gt 1) { "
         "Start-Process -FilePath ([string]$launch[0]) -ArgumentList @($launch[1..($launch.Count - 1)]) "
         "} else { Start-Process -FilePath ([string]$launch[0]) }"
     )
-    subprocess.Popen(
+    process = subprocess.Popen(
         [
             "powershell.exe",
             "-NoProfile",
@@ -48,5 +85,13 @@ def schedule_restart(command: list[str], current_pid: int | None = None) -> None
             script,
         ],
         env=env,
+        stdin=subprocess.PIPE,
+        text=True,
         creationflags=subprocess.CREATE_NO_WINDOW,
     )
+    if process.stdin is None:
+        raise RuntimeError("Restart waiter did not expose its control pipe")
+    handle = RestartHandle(process, process.stdin)
+    if not deferred:
+        handle.arm()
+    return handle

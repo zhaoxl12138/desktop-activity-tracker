@@ -7,6 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QPushButton
 
+from daylens.gui.pages import settings as settings_page_module
 from daylens.gui.pages.settings import SettingsPage
 from daylens.gui.main_window import MainWindow
 from daylens.services import settings_service
@@ -20,7 +21,7 @@ class DummyWorker:
         self.settings_updated = True
 
 
-def _build_page(tmp_path, monkeypatch):
+def _build_page(tmp_path, monkeypatch, background_tasks=None):
     old_db = tmp_path / "usage.db"
     config = {
         "db_path": str(old_db),
@@ -45,6 +46,7 @@ def _build_page(tmp_path, monkeypatch):
         str(old_db),
         str(tmp_path / "reports"),
         worker,
+        background_tasks,
     )
     monkeypatch.setattr(page, "_toggle_startup", lambda enabled: bool(enabled))
     return app, page, worker, old_db
@@ -150,8 +152,55 @@ def test_report_directory_is_read_only_without_browse_action(tmp_path, monkeypat
 
 def test_settings_data_quality_action_offers_preview_and_repair(tmp_path, monkeypatch):
     _app, page, _worker, _old_db = _build_page(tmp_path, monkeypatch)
+    inspections = []
+    page.config["tracker"]["sample_interval_seconds"] = 7
+    monkeypatch.setattr(
+        settings_page_module,
+        "inspect_data_quality",
+        lambda path, **kwargs: inspections.append((path, kwargs)) or {
+            "issue_count": 0,
+            "checked_sessions": 0,
+            "score": 100,
+        },
+    )
+    monkeypatch.setattr(
+        settings_page_module,
+        "preview_repairable_sessions",
+        lambda _path: {"repairable_count": 0},
+    )
 
     labels = [button.text() for button in page.findChildren(QPushButton)]
+    page._check_data_quality()
 
     assert "预览并修复数据" in labels
+    assert inspections == [
+        (
+            page.db_path,
+            {"sample_interval_seconds": 7},
+        )
+    ]
+    page.deleteLater()
+
+
+def test_settings_data_quality_check_is_queued(tmp_path, monkeypatch):
+    class FakeQueue:
+        def __init__(self):
+            self.submissions = []
+
+        def submit(self, key, task):
+            self.submissions.append((key, task))
+            return True
+
+    _app, page, _worker, _old_db = _build_page(
+        tmp_path,
+        monkeypatch,
+        background_tasks=FakeQueue(),
+    )
+
+    page._check_data_quality()
+
+    assert [key for key, _task in page.background_tasks.submissions] == [
+        "settings:quality-inspect"
+    ]
+    assert page.btn_quality.isEnabled() is False
     page.deleteLater()

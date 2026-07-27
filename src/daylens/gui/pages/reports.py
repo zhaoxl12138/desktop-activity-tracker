@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QItemSelectionModel, Qt, QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
@@ -269,6 +269,8 @@ class ReportsPage(QWidget):
             (self.tab_weekly, "weekly", "周报"),
             (self.tab_monthly, "monthly", "月报"),
         ]
+        current_table = self.tabs.currentWidget()
+        current_table_changed = False
         for index, (table, subdir, title) in enumerate(table_specs):
             rows = reports_service.list_report_rows(self.reports_dir, subdir, limit=50)
             signature = tuple(
@@ -277,7 +279,11 @@ class ReportsPage(QWidget):
             )
             if self._last_signature is not None and self._last_signature[index] == signature:
                 continue
+            selected_paths = self._selected_file_paths(table)
+            if table is current_table:
+                current_table_changed = True
             table.blockSignals(True)
+            table.clearSelection()
             table.clearContents()
             table.setRowCount(len(rows))
             for row_index, report in enumerate(rows):
@@ -288,13 +294,28 @@ class ReportsPage(QWidget):
                 table.setItem(row_index, 2, QTableWidgetItem(report["size_text"]))
                 table.setItem(row_index, 3, QTableWidgetItem(report["modified_text"]))
                 table.setRowHeight(row_index, 46)
-            table.clearSelection()
+                if report.get("file_path") in selected_paths:
+                    table.selectionModel().select(
+                        table.model().index(row_index, 0),
+                        QItemSelectionModel.Select | QItemSelectionModel.Rows,
+                    )
             table.blockSignals(False)
             self.tabs.setTabText(index, f"{title}  {len(rows)}")
             if self._last_signature is None:
                 self._last_signature = [None, None, None]
             self._last_signature[index] = signature
-        self._clear_selection()
+        if current_table_changed:
+            self._select_from_table(current_table)
+
+    @staticmethod
+    def _selected_file_paths(table: QTableWidget) -> set[str]:
+        paths = set()
+        for index in table.selectionModel().selectedRows():
+            item = table.item(index.row(), 0)
+            report = item.data(Qt.UserRole) if item is not None else None
+            if report and report.get("file_path"):
+                paths.add(str(report["file_path"]))
+        return paths
 
     def _select_from_table(self, table: QTableWidget) -> None:
         if table is not self.tabs.currentWidget():

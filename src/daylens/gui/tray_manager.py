@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from .. import get_app_root
 from ..gui import style as ui_style
 from ..services.shell_service import build_tray_tooltip, generate_daily_report
+from ..services.gui_shutdown_service import stop_recording_worker_safely
 
 
 class TrayManager:
@@ -197,9 +198,30 @@ class TrayManager:
         os.startfile(reports_dir)
 
     def _quit(self) -> None:
-        if self.main_window and hasattr(self.main_window, "worker"):
-            self.main_window.worker.stop()
-            self.main_window.worker.wait(5000)
+        from .main_window import MainWindow
+
+        if (
+            self.main_window is not None
+            and not MainWindow._suspend_dashboard_refresh(self.main_window)
+        ):
+            if self.tray is not None:
+                self.tray.showMessage(
+                    "DayLens",
+                    "首页后台查询仍在运行，请稍后重试。",
+                )
+            return
+        worker = (
+            self.main_window.worker
+            if self.main_window and hasattr(self.main_window, "worker")
+            else None
+        )
+        result = stop_recording_worker_safely(worker)
+        if not result.completed:
+            if self.main_window is not None:
+                MainWindow._resume_dashboard_refresh(self.main_window)
+            if self.tray is not None:
+                self.tray.showMessage("DayLens", result.message)
+            return
         if self.tray is not None:
             self.tray.hide()
         self.app.quit()

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
 
 WAL_CHECKPOINT_INTERVAL = 100
 
 _shared_read_conn = None
 _shared_read_db_path = None
+_shared_read_thread_id = None
 
 
 class TrackedConnection(sqlite3.Connection):
@@ -84,7 +86,11 @@ CREATE TABLE IF NOT EXISTS custom_rules (
     display_name TEXT,
     active_rule TEXT,
     process_names TEXT,
-    title_keywords TEXT
+    title_keywords TEXT,
+    title_patterns TEXT DEFAULT '',
+    process_names_mode TEXT DEFAULT 'inherit',
+    title_keywords_mode TEXT DEFAULT 'inherit',
+    title_patterns_mode TEXT DEFAULT 'inherit'
 );
 
 CREATE TABLE IF NOT EXISTS poetry_lines (
@@ -105,8 +111,11 @@ class ReadConnectionContext:
         self.own = False
 
     def __enter__(self):
-        global _shared_read_conn, _shared_read_db_path
-        if _shared_read_conn is not None and _shared_read_db_path == self.db_path:
+        if (
+            _shared_read_conn is not None
+            and _shared_read_db_path == self.db_path
+            and _shared_read_thread_id == threading.get_ident()
+        ):
             self.conn = _shared_read_conn
         else:
             self.conn = sqlite3.connect(self.db_path)
@@ -121,7 +130,7 @@ class ReadConnectionContext:
 
 
 def init_shared_read_conn(db_path: str) -> None:
-    global _shared_read_conn, _shared_read_db_path
+    global _shared_read_conn, _shared_read_db_path, _shared_read_thread_id
     if _shared_read_conn is not None and _shared_read_db_path != db_path:
         _shared_read_conn.close()
         _shared_read_conn = None
@@ -130,14 +139,16 @@ def init_shared_read_conn(db_path: str) -> None:
         _shared_read_conn.row_factory = sqlite3.Row
         _shared_read_conn.execute("PRAGMA journal_mode=WAL")
         _shared_read_db_path = db_path
+        _shared_read_thread_id = threading.get_ident()
 
 
 def close_shared_read_conn() -> None:
-    global _shared_read_conn, _shared_read_db_path
+    global _shared_read_conn, _shared_read_db_path, _shared_read_thread_id
     if _shared_read_conn:
         _shared_read_conn.close()
         _shared_read_conn = None
         _shared_read_db_path = None
+        _shared_read_thread_id = None
 
 
 def read_conn(db_path: str) -> ReadConnectionContext:
@@ -202,6 +213,56 @@ def _run_migrations(conn) -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_date_category ON activity_sessions(date, category_key)")
         conn.execute(
             "INSERT INTO schema_meta(key, value) VALUES('schema_version', '1') "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        )
+        version = 1
+    if version < 2:
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(custom_rules)").fetchall()
+        }
+        if "title_patterns" not in columns:
+            conn.execute(
+                "ALTER TABLE custom_rules "
+                "ADD COLUMN title_patterns TEXT DEFAULT ''"
+            )
+        conn.execute(
+            "INSERT INTO schema_meta(key, value) VALUES('schema_version', '2') "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        )
+        version = 2
+    if version < 3:
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(custom_rules)").fetchall()
+        }
+        for column in (
+            "process_names_mode",
+            "title_keywords_mode",
+            "title_patterns_mode",
+        ):
+            if column not in columns:
+                conn.execute(
+                    f"ALTER TABLE custom_rules "
+                    f"ADD COLUMN {column} TEXT DEFAULT 'inherit'"
+                )
+        # Legacy title lists had no way to distinguish explicit empty from
+        # missing. Preserve non-empty overrides and let empty values inherit.
+        # Legacy process lists already had replacement semantics, so preserve
+        # removals conservatively across the schema upgrade.
+        conn.execute(
+            "UPDATE custom_rules SET process_names_mode = 'replace'"
+        )
+        conn.execute(
+            "UPDATE custom_rules SET title_keywords_mode = "
+            "CASE WHEN COALESCE(title_keywords, '') <> '' "
+            "THEN 'replace' ELSE 'inherit' END"
+        )
+        conn.execute(
+            "UPDATE custom_rules SET title_patterns_mode = "
+            "CASE WHEN COALESCE(title_patterns, '') <> '' "
+            "THEN 'replace' ELSE 'inherit' END"
+        )
+        conn.execute(
+            "INSERT INTO schema_meta(key, value) VALUES('schema_version', '3') "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
         )
     conn.commit()

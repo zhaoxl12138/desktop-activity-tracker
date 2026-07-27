@@ -57,12 +57,18 @@ def _is_valid_exe_name(name: str) -> bool:
 
 
 def _extract_exe_from_path(raw: str) -> str | None:
-    """Given a registry value like 'C:\\Path\\app.exe,0', return the basename."""
+    """Extract the first executable from a registry icon/command value."""
     if not raw:
         return None
-    path = raw.strip().strip('"')
-    if ',' in path:
-        path = path.rsplit(',', 1)[0].strip().strip('"')
+    value = os.path.expandvars(str(raw).strip())
+    quoted = re.match(r'^\s*"([^"]+?\.exe)"', value, re.IGNORECASE)
+    if quoted:
+        path = quoted.group(1)
+    else:
+        unquoted = re.match(r"^\s*(.+?\.exe)(?=\s|,|$)", value, re.IGNORECASE)
+        if not unquoted:
+            return None
+        path = unquoted.group(1).strip()
     if not _is_valid_exe_name(path):
         return None
     return os.path.basename(path).lower()
@@ -309,13 +315,14 @@ KNOWN_APPS: dict[str, str] = {
     "acrobat.exe": "reading",
     "foxit pdf reader.exe": "reading",
     "foxitphantom.exe": "reading",
-    "wps.exe": "reading",
-    "wpp.exe": "reading",
-    "wpspdf.exe": "reading",
+    "wps.exe": "office",
+    "wpp.exe": "office",
+    "et.exe": "office",
+    "wpspdf.exe": "office",
     "microsoftedge.exe": "browser_general",
-    "winword.exe": "reading",
-    "powerpnt.exe": "reading",
-    "excel.exe": "reading",
+    "winword.exe": "office",
+    "powerpnt.exe": "office",
+    "excel.exe": "office",
     "kindle.exe": "reading",
     "微信读书.exe": "reading",
     "weread.exe": "reading",
@@ -327,7 +334,7 @@ KNOWN_APPS: dict[str, str] = {
     "margin note.exe": "reading",
     "bear.exe": "reading",
     "craft.exe": "reading",
-    "onenote.exe": "reading",
+    "onenote.exe": "office",
     "evernote.exe": "reading",
     "joplin.exe": "reading",
 
@@ -421,7 +428,7 @@ KNOWN_APPS: dict[str, str] = {
     "whatsapp.exe": "social",
     "line.exe": "social",
     "thunderbird.exe": "social",
-    "outlook.exe": "social",
+    "outlook.exe": "office",
     "foxmail.exe": "social",
     "mailmaster.exe": "social",
     "spark desktop.exe": "social",
@@ -438,9 +445,9 @@ KNOWN_APPS: dict[str, str] = {
     "everything.exe": "tools",
     "listary.exe": "tools",
     "flow launcher.exe": "tools",
-    "uTools.exe": "tools",
+    "utools.exe": "tools",
     "wox.exe": "tools",
-    "powerToys.exe": "tools",
+    "powertoys.exe": "tools",
     "powertoys.settings.exe": "tools",
     "powertoys.run.exe": "tools",
     "baidunetdisk.exe": "tools",
@@ -566,11 +573,14 @@ _PATH_KEYWORDS: dict[str, list[str]] = {
         "unity", "unreal engine", "godot", "cocos",
         "cubemx", "mplab", "atmel", "nordic", "espressif", "renesas",
     ],
+    "office": [
+        "wps office", "microsoft office", "libreoffice", "openoffice",
+        "word", "excel", "powerpoint", "onenote", "outlook",
+    ],
     "reading": [
         "obsidian", "logseq", "notion", "typora", "zotero", "calibre",
         "pdf", "ebook", "kindle", "read", "document", "note",
-        "wps office", "microsoft office", "libreoffice", "openoffice",
-        "word", "excel", "powerpoint", "onenote", "evernote",
+        "evernote",
         "知网", "cajviewer", "cnki",
     ],
     "video": [
@@ -598,7 +608,7 @@ _PATH_KEYWORDS: dict[str, list[str]] = {
         "wechat", "weixin", "qq", "telegram", "dingtalk", "feishu", "lark",
         "slack", "discord", "skype", "teams", "zoom", "signal",
         "whatsapp", "line", "messenger", "im", "chat", "talk",
-        "outlook", "thunderbird", "foxmail", "mailmaster", "mail",
+        "thunderbird", "foxmail", "mailmaster", "mail",
     ],
     "tools": [
         "everything", "listary", "wiztree", "spacesniffer", "windirstat",
@@ -621,7 +631,8 @@ _NAME_KEYWORDS: dict[str, list[str]] = {
         "studio", "ide", "editor", "terminal", "console", "shell",
         "git", "dev", "build", "compile", "debug", "code",
     ],
-    "reading": ["read", "pdf", "ebook", "note", "doc", "wps"],
+    "office": ["word", "excel", "powerpoint", "outlook", "wps"],
+    "reading": ["read", "pdf", "ebook", "note", "doc"],
     "video": ["player", "video", "music", "audio", "media", "stream", "play", "game", "steam", "launcher"],
     "creative": ["design", "draw", "paint", "animate", "render", "compose"],
     "social": ["chat", "msg", "talk", "im", "mail", "message"],
@@ -676,7 +687,7 @@ def classify_scanned_apps(apps: dict[str, str | None]) -> dict[str, set[str]]:
 
     for pname, install_path in apps.items():
         # 1. Exact knowledge base match
-        cat = KNOWN_APPS.get(pname)
+        cat = KNOWN_APPS.get(pname.lower())
         # 2. Heuristic fallback
         if cat is None:
             cat = _heuristic_classify(pname, install_path)

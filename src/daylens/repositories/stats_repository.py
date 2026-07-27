@@ -177,7 +177,7 @@ def query_date_range_from_sessions(read_conn, db_path: str, dates: list[str]) ->
             f"""
             SELECT date,
                    SUM(CASE WHEN category_key IN ('ai_tools','coding','office','reading','creative') THEN effective_seconds ELSE 0 END) as work_seconds,
-                   SUM(CASE WHEN category_key = 'video' THEN effective_seconds ELSE 0 END) as video_seconds
+                   SUM(CASE WHEN category_key IN ('video','gaming') THEN effective_seconds ELSE 0 END) as video_seconds
             FROM activity_sessions
             WHERE date IN ({placeholders})
             GROUP BY date
@@ -207,7 +207,7 @@ def query_date_range_from_sessions(read_conn, db_path: str, dates: list[str]) ->
                    COUNT(*) as samples
             FROM activity_sessions
             WHERE date IN ({placeholders}) AND effective_seconds > 0
-            GROUP BY process_name
+            GROUP BY process_name, category_key
             ORDER BY effective_seconds DESC
             LIMIT 20
             """,
@@ -238,9 +238,9 @@ def query_date_range_from_logs(read_conn, db_path: str, dates: list[str]) -> dic
         work_video_rows = conn.execute(
             f"""
             SELECT date,
-                   SUM(CASE WHEN category_key IN ('ai_tools','coding','reading') AND is_effective
+                   SUM(CASE WHEN category_key IN ('ai_tools','coding','office','reading','creative') AND is_effective
                        THEN duration_seconds ELSE 0 END) as work_seconds,
-                   SUM(CASE WHEN category_key = 'video' AND is_effective
+                   SUM(CASE WHEN category_key IN ('video','gaming') AND is_effective
                        THEN duration_seconds ELSE 0 END) as video_seconds
             FROM activity_logs
             WHERE date IN ({placeholders})
@@ -271,7 +271,7 @@ def query_date_range_from_logs(read_conn, db_path: str, dates: list[str]) -> dic
                    COUNT(*) as samples
             FROM activity_logs
             WHERE date IN ({placeholders}) AND is_effective = 1
-            GROUP BY process_name
+            GROUP BY process_name, category_key
             ORDER BY effective_seconds DESC
             LIMIT 20
             """,

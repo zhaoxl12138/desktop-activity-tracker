@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import copy
 from datetime import datetime, timedelta
 
 import yaml
@@ -13,12 +14,12 @@ from ..utils import load_user_config, save_user_config
 
 
 def normalize_database_path(path: str) -> str:
-    """Return an absolute database path rooted at the DayLens app directory."""
+    """Return the effective absolute database path for this installation."""
     expanded = os.path.expandvars(os.path.expanduser(path.strip()))
     if not expanded:
         raise ValueError("数据库路径不能为空")
     if not os.path.isabs(expanded):
-        expanded = os.path.join(get_app_root(), expanded)
+        expanded = database.get_db_path({"db_path": expanded})
     return os.path.abspath(expanded)
 
 
@@ -29,12 +30,20 @@ def load_page_config(config_path: str, db_path: str) -> dict:
     except (FileNotFoundError, yaml.YAMLError):
         config = {}
 
-    user_config = load_user_config()
-    for key in ("obsidian_output_path", "theme", "db_path"):
-        if key in user_config and user_config[key]:
-            config[key] = user_config[key]
+    if not isinstance(config, dict):
+        config = {}
 
-    effective_db_path = config.get("db_path", db_path)
+    user_config = load_user_config()
+    if isinstance(user_config, dict):
+        for key in ("obsidian_output_path", "theme", "db_path"):
+            if key in user_config and user_config[key]:
+                config[key] = user_config[key]
+
+    configured_db_path = config.get("db_path", db_path)
+    effective_db_path = normalize_database_path(
+        configured_db_path if isinstance(configured_db_path, str) else db_path
+    )
+    config["db_path"] = effective_db_path
     database.merge_db_settings(config, effective_db_path)
     return config
 
@@ -52,7 +61,7 @@ def save_page_config(
 ) -> dict:
     normalized_db_path = normalize_database_path(new_db_path)
 
-    updated = dict(config)
+    updated = copy.deepcopy(config)
     updated["sample_interval_seconds"] = sample_interval
     updated["idle_threshold_seconds"] = idle_threshold
     updated["db_path"] = normalized_db_path
@@ -67,9 +76,6 @@ def save_page_config(
     effective_db_path = updated.get("db_path", db_path)
     connection = database.init_db(effective_db_path)
     database.close_db(connection)
-
-    with open(config_path, "w", encoding="utf-8") as handle:
-        yaml.safe_dump(updated, handle, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
     database.save_settings(effective_db_path, updated)
     persisted = {

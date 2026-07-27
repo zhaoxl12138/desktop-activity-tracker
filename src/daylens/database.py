@@ -24,9 +24,11 @@ from .repositories.session_repository import (
     update_session,
 )
 from .repositories.settings_repository import (
+    apply_custom_rules,
     delete_activity_logs_before,
     load_custom_rules,
     load_settings,
+    merge_discovered_rules,
     merge_custom_rules,
     merge_db_settings,
     save_custom_rules,
@@ -50,7 +52,14 @@ from .repositories.stats_repository import (
 def get_db_path(config: dict) -> str:
     db_path = config.get("db_path", "data/usage.db")
     if not os.path.isabs(db_path):
-        db_path = os.path.join(get_app_root(), db_path)
+        normalized = str(db_path).replace("\\", "/")
+        if normalized == "data" or normalized.startswith("data/"):
+            from . import get_data_dir
+
+            relative = normalized.removeprefix("data/").removeprefix("data")
+            db_path = os.path.join(get_data_dir(), relative or "usage.db")
+        else:
+            db_path = os.path.join(get_app_root(), db_path)
     return db_path
 
 

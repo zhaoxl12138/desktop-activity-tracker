@@ -61,12 +61,15 @@ class SettingsPage(QWidget):
     restart_requested = Signal()
     config_saved = Signal(dict)
 
-    def __init__(self, config_path, db_path, reports_dir, worker=None):
+    def __init__(self, config_path, db_path, reports_dir, worker=None, background_tasks=None):
         super().__init__()
         self.config_path = config_path
         self.db_path = db_path
         self.reports_dir = reports_dir
         self.worker = worker
+        self.background_tasks = background_tasks
+        self._quality_inspect_key = "settings:quality-inspect"
+        self._quality_repair_key = "settings:quality-repair"
         self._load_config()
 
         outer = QVBoxLayout(self)
@@ -200,11 +203,11 @@ class SettingsPage(QWidget):
         btn_clean.clicked.connect(self._clean_old)
         g3l.addWidget(btn_clean, 0, Qt.AlignLeft)
 
-        btn_quality = QPushButton("预览并修复数据")
-        btn_quality.setStyleSheet(ui_style.get_button_secondary_style())
-        btn_quality.setCursor(Qt.PointingHandCursor)
-        btn_quality.clicked.connect(self._check_data_quality)
-        g3l.addWidget(btn_quality, 0, Qt.AlignLeft)
+        self.btn_quality = QPushButton("预览并修复数据")
+        self.btn_quality.setStyleSheet(ui_style.get_button_secondary_style())
+        self.btn_quality.setCursor(Qt.PointingHandCursor)
+        self.btn_quality.clicked.connect(self._check_data_quality)
+        g3l.addWidget(self.btn_quality, 0, Qt.AlignLeft)
 
         layout.addWidget(g3)
 
@@ -218,6 +221,13 @@ class SettingsPage(QWidget):
 
         scroll.setWidget(content)
         outer.addWidget(scroll)
+        if self.background_tasks is not None:
+            completed = getattr(self.background_tasks, "task_completed", None)
+            failed = getattr(self.background_tasks, "task_failed", None)
+            if completed is not None:
+                completed.connect(self._on_background_task_completed)
+            if failed is not None:
+                failed.connect(self._on_background_task_failed)
 
     def _load_config(self):
         try:
@@ -323,50 +333,125 @@ class SettingsPage(QWidget):
             edit.setText(d)
 
     def _check_data_quality(self):
+        tracker_config = self.config.get("tracker", {})
+        sample_interval = tracker_config.get(
+            "sample_interval_seconds",
+            self.config.get("sample_interval_seconds", 1),
+        )
+        db_path = self.db_path
+        def inspect_task() -> dict:
+            return {
+                "result": inspect_data_quality(
+                    db_path,
+                    sample_interval_seconds=sample_interval,
+                ),
+                "preview": preview_repairable_sessions(db_path),
+            }
+
+        if self.background_tasks is not None:
+            if not self.background_tasks.submit(self._quality_inspect_key, inspect_task):
+                return
+            self.btn_quality.setEnabled(False)
+            self.btn_quality.setText("检查中…")
+            return
         try:
-            result = inspect_data_quality(self.db_path)
-            preview = preview_repairable_sessions(self.db_path)
-            repairable_count = int(preview["repairable_count"])
-            if repairable_count:
-                other_issues = max(0, int(result["issue_count"]) - repairable_count)
-                dates = "、".join(preview["dates"])
-                reply = QMessageBox.question(
-                    self,
-                    "数据修复预览",
-                    f"发现 {repairable_count} 条可安全修复的旧版娱乐挂机记录。\n"
-                    f"涉及日期：{dates}\n"
-                    f"重复空闲时间：{fmt_seconds(int(preview['duplicate_idle_seconds']))}\n"
-                    f"其他异常：{other_issues} 条\n\n"
-                    "修复前会自动备份数据库，是否继续？",
-                    QMessageBox.Yes | QMessageBox.No,
-                )
-                if reply != QMessageBox.Yes:
-                    return
-                repaired = repair_legacy_session_data(
-                    self.db_path,
-                    reason="manual",
-                )
-                after = inspect_data_quality(self.db_path)
-                QMessageBox.information(
-                    self,
-                    "数据修复完成",
-                    f"已修复 {repaired['repaired_count']} 条记录。\n"
-                    f"剩余异常：{after['issue_count']} 条\n"
-                    f"备份文件：{repaired['backup_path']}",
-                )
-            elif result["issue_count"]:
-                QMessageBox.warning(
-                    self, "数据质量检查",
-                    f"检查 {result['checked_sessions']} 个 Session，发现 {result['issue_count']} 个问题。\n"
-                    f"当前可信度：{result['score']}%",
-                )
-            else:
-                QMessageBox.information(
-                    self, "数据质量检查",
-                    f"检查 {result['checked_sessions']} 个 Session，未发现异常。\n当前可信度：100%",
-                )
+            self._show_quality_result(inspect_task(), sample_interval)
         except Exception as exc:
             QMessageBox.warning(self, "检查失败", str(exc))
+
+    def _show_quality_result(self, payload: dict, sample_interval: int) -> None:
+        result = payload["result"]
+        preview = payload["preview"]
+        repairable_count = int(preview["repairable_count"])
+        if repairable_count:
+            other_issues = max(0, int(result["issue_count"]) - repairable_count)
+            dates = "、".join(preview["dates"])
+            reply = QMessageBox.question(
+                self,
+                "数据修复预览",
+                f"发现 {repairable_count} 条可安全修复的旧版娱乐挂机记录。\n"
+                f"涉及日期：{dates}\n"
+                f"重复空闲时间：{fmt_seconds(int(preview['duplicate_idle_seconds']))}\n"
+                f"其他异常：{other_issues} 条\n\n"
+                "修复前会自动备份数据库，是否继续？",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+
+            def repair_task() -> dict:
+                repaired = repair_legacy_session_data(
+                    db_path,
+                    reason="manual",
+                )
+                return {
+                    "repaired": repaired,
+                    "after": inspect_data_quality(
+                        db_path,
+                        sample_interval_seconds=sample_interval,
+                    ),
+                }
+
+            if self.background_tasks is not None:
+                if self.background_tasks.submit(self._quality_repair_key, repair_task):
+                    self.btn_quality.setEnabled(False)
+                    self.btn_quality.setText("修复中…")
+                return
+            self._show_quality_repair_result(repair_task())
+            return
+        if result["issue_count"]:
+            QMessageBox.warning(
+                self, "数据质量检查",
+                f"检查 {result['checked_sessions']} 个 Session，发现 {result['issue_count']} 个问题。\n"
+                f"当前可信度：{result['score']}%",
+            )
+            return
+        QMessageBox.information(
+            self, "数据质量检查",
+            f"检查 {result['checked_sessions']} 个 Session，未发现异常。\n当前可信度：100%",
+        )
+
+    def _show_quality_repair_result(self, payload: dict) -> None:
+        repaired = payload["repaired"]
+        after = payload["after"]
+        QMessageBox.information(
+            self,
+            "数据修复完成",
+            f"已修复 {repaired['repaired_count']} 条记录。\n"
+            f"剩余异常：{after['issue_count']} 条\n"
+            f"备份文件：{repaired['backup_path']}",
+        )
+
+    def _on_background_task_completed(self, key: str, result: object) -> None:
+        if key == self._quality_inspect_key:
+            self.btn_quality.setEnabled(True)
+            self.btn_quality.setText("预览并修复数据")
+            if isinstance(result, dict):
+                try:
+                    tracker_config = self.config.get("tracker", {})
+                    sample_interval = tracker_config.get(
+                        "sample_interval_seconds",
+                        self.config.get("sample_interval_seconds", 1),
+                    )
+                    self._show_quality_result(result, sample_interval)
+                except Exception as exc:
+                    QMessageBox.warning(self, "检查失败", str(exc))
+            return
+        if key == self._quality_repair_key:
+            self.btn_quality.setEnabled(True)
+            self.btn_quality.setText("预览并修复数据")
+            if isinstance(result, dict):
+                try:
+                    self._show_quality_repair_result(result)
+                except Exception as exc:
+                    QMessageBox.warning(self, "修复失败", str(exc))
+
+    def _on_background_task_failed(self, key: str, error: str) -> None:
+        if key not in {self._quality_inspect_key, self._quality_repair_key}:
+            return
+        self.btn_quality.setEnabled(True)
+        self.btn_quality.setText("预览并修复数据")
+        QMessageBox.warning(self, "数据质量任务失败", error)
 
     def _clean_old(self):
         reply = QMessageBox.question(

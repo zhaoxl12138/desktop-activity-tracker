@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import copy
+
+import yaml
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
@@ -24,8 +27,6 @@ from ...app_scanner import classify_scanned_apps, scan_installed_apps
 from ...classifier import Classifier
 from ...services.rules_service import load_rule_categories, save_rule_categories
 from .. import style as ui_style
-
-_FACTORY_KEYS = {"other", "browser_general"}
 
 _RULE_OPTIONS = [
     {
@@ -109,16 +110,23 @@ def _section_card(title: str, desc: str = "") -> tuple[QFrame, QVBoxLayout]:
 
 
 class RuleConfigPage(QWidget):
-    def __init__(self, config_path, db_path, worker=None):
+    def __init__(self, config_path, db_path, worker=None, background_tasks=None):
         super().__init__()
         self.config_path = config_path
         self.db_path = db_path
         self.worker = worker
+        self.background_tasks = background_tasks
+        self._scan_task_key = "rules:scan"
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as handle:
+                factory_config = yaml.safe_load(handle) or {}
+        except (OSError, yaml.YAMLError):
+            factory_config = {}
+        self._factory_keys = set(factory_config.get("categories", {}))
         self.categories = load_rule_categories(self.config_path, self.db_path)
-        self._factory_keys = set(self.categories) - {
-            key for key in self.categories if key.startswith("custom_")
-        }
         self._loading_editor = False
+        self._changing_selection = False
+        self._current_key: str | None = None
         self._dirty = False
 
         layout = QVBoxLayout(self)
@@ -147,9 +155,21 @@ class RuleConfigPage(QWidget):
         splitter.setStretchFactor(1, 1)
         layout.addWidget(splitter, 1)
 
+        self.edit_name.textChanged.connect(self._mark_dirty)
+        self.edit_rule.currentIndexChanged.connect(self._mark_dirty)
+        self.edit_processes.textChanged.connect(self._mark_dirty)
+        self.edit_keywords.textChanged.connect(self._mark_dirty)
+        self._set_dirty(False)
         self._populate_list()
         if self.cat_list.count() > 0:
             self.cat_list.setCurrentRow(0)
+        if self.background_tasks is not None:
+            completed = getattr(self.background_tasks, "task_completed", None)
+            failed = getattr(self.background_tasks, "task_failed", None)
+            if completed is not None:
+                completed.connect(self._on_background_task_completed)
+            if failed is not None:
+                failed.connect(self._on_background_task_failed)
 
     def _build_category_panel(self) -> QFrame:
         left = QFrame()
@@ -373,44 +393,105 @@ class RuleConfigPage(QWidget):
         right_layout.addWidget(self.action_bar)
         return right
 
-    def _save_to_db(self) -> bool:
+    def _save_to_db(self, candidate: dict[str, dict]) -> bool:
         try:
-            save_rule_categories(self.db_path, self.categories)
+            save_rule_categories(self.db_path, candidate)
             return True
         except Exception as exc:
             QMessageBox.warning(self, "保存失败", f"规则未保存：{exc}")
             return False
 
     def _populate_list(self):
-        self.cat_list.clear()
-        for key, cat in self.categories.items():
-            prefix = "🔒" if key in _FACTORY_KEYS else "•"
-            item = QListWidgetItem(f"{prefix} {cat['display_name']} · {key}")
-            item.setData(Qt.UserRole, key)
-            self.cat_list.addItem(item)
+        was_blocked = self.cat_list.blockSignals(True)
+        try:
+            self.cat_list.clear()
+            for key, cat in self.categories.items():
+                prefix = "🔒" if key in self._factory_keys else "•"
+                item = QListWidgetItem(f"{prefix} {cat['display_name']} · {key}")
+                item.setData(Qt.UserRole, key)
+                self.cat_list.addItem(item)
+        finally:
+            self.cat_list.blockSignals(was_blocked)
         self.cat_header.setText(f"分类列表（{self.cat_list.count()}）")
 
     def _on_cat_selected(self, row):
-        if row < 0:
+        if row < 0 or self._changing_selection:
             return
 
         key = self.cat_list.item(row).data(Qt.UserRole)
+        if (
+            self._current_key
+            and key != self._current_key
+            and not self._resolve_dirty_edits()
+        ):
+            self._select_key(self._current_key)
+            return
+
+        self._select_key(key)
+        self._load_category(key)
+
+    def _resolve_dirty_edits(self) -> bool:
+        """Resolve pending editor changes before any state-changing action."""
+        if not self._dirty:
+            return True
+        reply = QMessageBox.question(
+            self,
+            "未保存的修改",
+            "当前分类有未保存的修改，是否保存？",
+            QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+            QMessageBox.Save,
+        )
+        if reply == QMessageBox.Cancel:
+            return False
+        if reply == QMessageBox.Save:
+            return self._save_current()
+        if self._current_key in self.categories:
+            self._select_key(self._current_key)
+            self._load_category(self._current_key)
+        return True
+
+    def _select_key(self, key: str | None) -> None:
+        if key is None:
+            return
+        self._changing_selection = True
+        try:
+            for row in range(self.cat_list.count()):
+                if self.cat_list.item(row).data(Qt.UserRole) == key:
+                    self.cat_list.setCurrentRow(row)
+                    return
+        finally:
+            self._changing_selection = False
+
+    def _load_category(self, key: str) -> None:
         cat = self.categories[key]
         proc_list = cat.get("match", {}).get("process_names", [])
         kw_list = cat.get("match", {}).get("title_keywords", [])
 
-        self.edit_name.setText(cat.get("display_name", ""))
-        self.edit_processes.setPlainText("\n".join(proc_list))
-        self.edit_keywords.setPlainText("\n".join(kw_list))
+        self._loading_editor = True
+        try:
+            self.edit_name.setText(cat.get("display_name", ""))
+            self.edit_processes.setPlainText("\n".join(proc_list))
+            self.edit_keywords.setPlainText("\n".join(kw_list))
 
-        rule = cat.get("active_rule", "interactive_required")
-        self.edit_rule.setCurrentIndex(_RULE_INDEX.get(rule, 0))
-
+            rule = cat.get("active_rule", "interactive_required")
+            self.edit_rule.setCurrentIndex(_RULE_INDEX.get(rule, 0))
+        finally:
+            self._loading_editor = False
+        self._current_key = key
         self._update_category_meta(key, cat, proc_list, kw_list)
         self._update_match_summary(proc_list, kw_list)
+        self._set_dirty(False)
+
+    def _mark_dirty(self, *_args) -> None:
+        if not self._loading_editor:
+            self._set_dirty(True)
+
+    def _set_dirty(self, dirty: bool) -> None:
+        self._dirty = dirty
+        self.btn_save.setEnabled(dirty)
 
     def _update_category_meta(self, key: str, cat: dict, proc_list: list[str], kw_list: list[str]):
-        is_factory = key in _FACTORY_KEYS
+        is_factory = key in self._factory_keys
         self.category_chip.setText("系统保留分类" if is_factory else "自定义分类")
         self.cat_meta.setText(
             f"{cat.get('display_name', key)} · {len(proc_list)} 个进程 · {len(kw_list)} 个关键词"
@@ -422,16 +503,16 @@ class RuleConfigPage(QWidget):
         )
 
     def _save_current(self):
-        row = self.cat_list.currentRow()
-        if row < 0:
-            return
-
-        key = self.cat_list.item(row).data(Qt.UserRole)
-        cat = self.categories[key]
+        key = self._current_key
+        if key is None or key not in self.categories:
+            return False
         display_name = self.edit_name.text().strip()
         if not display_name:
             QMessageBox.warning(self, "无法保存", "分类名称不能为空。")
-            return
+            return False
+
+        candidate = copy.deepcopy(self.categories)
+        cat = candidate[key]
         cat["display_name"] = display_name
         cat.setdefault("match", {})
         cat["match"]["process_names"] = list(dict.fromkeys([
@@ -442,40 +523,94 @@ class RuleConfigPage(QWidget):
         ]))
         cat["active_rule"] = _RULE_OPTIONS[self.edit_rule.currentIndex()]["key"]
 
-        if not self._save_to_db():
-            return
+        if not self._save_to_db(candidate):
+            return False
+        self.categories = candidate
         self._populate_list()
-        self.cat_list.setCurrentRow(row)
+        self._select_key(key)
+        self._load_category(key)
         if self.worker:
             self.worker.reload_classifier()
 
         QMessageBox.information(self, "保存成功", f"分类“{cat['display_name']}”已更新。")
+        return True
 
     def _rescan_apps(self):
-        try:
+        if not self._resolve_dirty_edits():
+            return
+        def scan_task() -> dict:
             apps = scan_installed_apps()
-            classified = classify_scanned_apps(apps)
+            return {"apps": apps, "classified": classify_scanned_apps(apps)}
+
+        if self.background_tasks is not None:
+            if not self.background_tasks.submit(
+                self._scan_task_key,
+                scan_task,
+            ):
+                return
+            self.setEnabled(False)
+            self.btn_rescan.setEnabled(False)
+            self.btn_rescan.setText("扫描中…")
+            return
+        try:
+            self._apply_scan_result(scan_task())
+        except Exception as exc:
+            QMessageBox.warning(self, "扫描失败", str(exc))
+
+    def _apply_scan_result(self, result: dict) -> None:
+        try:
+            apps = result.get("apps", [])
+            classified = result.get("classified", {})
+            candidate = copy.deepcopy(self.categories)
             added = 0
             for category_key, process_names in classified.items():
-                if category_key not in self.categories:
-                    self.categories[category_key] = {
+                if category_key not in candidate:
+                    candidate[category_key] = {
                         "display_name": category_key,
                         "active_rule": "interactive_required",
                         "match": {"process_names": [], "title_keywords": []},
                     }
-                match = self.categories[category_key].setdefault("match", {})
+                match = candidate[category_key].setdefault("match", {})
                 existing = list(match.get("process_names", []))
-                merged = list(dict.fromkeys(existing + sorted(process_names)))
+                merged = list(existing)
+                seen = {item.casefold() for item in existing}
+                for process_name in sorted(process_names, key=str.casefold):
+                    if process_name.casefold() in seen:
+                        continue
+                    merged.append(process_name)
+                    seen.add(process_name.casefold())
                 added += max(0, len(merged) - len(existing))
                 match["process_names"] = merged
-            if not self._save_to_db():
+            if not self._save_to_db(candidate):
                 return
+            selected_key = self._current_key
+            self.categories = candidate
             self._populate_list()
+            self._select_key(selected_key)
+            if selected_key:
+                self._load_category(selected_key)
             if self.worker:
                 self.worker.reload_classifier()
             QMessageBox.information(self, "扫描完成", f"发现 {len(apps)} 个应用，新增 {added} 条分类规则。")
         except Exception as exc:
             QMessageBox.warning(self, "扫描失败", str(exc))
+
+    def _on_background_task_completed(self, key: str, result: object) -> None:
+        if key != self._scan_task_key:
+            return
+        self.setEnabled(True)
+        self.btn_rescan.setEnabled(True)
+        self.btn_rescan.setText("重新扫描应用")
+        if isinstance(result, dict):
+            self._apply_scan_result(result)
+
+    def _on_background_task_failed(self, key: str, error: str) -> None:
+        if key != self._scan_task_key:
+            return
+        self.setEnabled(True)
+        self.btn_rescan.setEnabled(True)
+        self.btn_rescan.setText("重新扫描应用")
+        QMessageBox.warning(self, "扫描失败", error)
 
     def _debug_classification(self):
         process, ok = QInputDialog.getText(self, "测试分类", "进程名：")
@@ -496,20 +631,26 @@ class RuleConfigPage(QWidget):
             QMessageBox.warning(self, "测试失败", str(exc))
 
     def _add_category(self):
+        if not self._resolve_dirty_edits():
+            return
         new_key = f"custom_{len(self.categories)}"
         while new_key in self.categories:
             new_key = f"custom_{len(self.categories) + 1}"
 
-        self.categories[new_key] = {
+        candidate = copy.deepcopy(self.categories)
+        candidate[new_key] = {
             "display_name": "新分类",
             "active_rule": "interactive_required",
             "match": {"process_names": [], "title_keywords": []},
         }
-        self._save_to_db()
+        if not self._save_to_db(candidate):
+            return
+        self.categories = candidate
         self._populate_list()
         if self.worker:
             self.worker.reload_classifier()
-        self.cat_list.setCurrentRow(self.cat_list.count() - 1)
+        self._select_key(new_key)
+        self._load_category(new_key)
 
     def _delete_current(self):
         row = self.cat_list.currentRow()
@@ -520,6 +661,8 @@ class RuleConfigPage(QWidget):
         if key in self._factory_keys:
             QMessageBox.warning(self, "不可删除", "系统保留分类不可删除。")
             return
+        if not self._resolve_dirty_edits():
+            return
 
         reply = QMessageBox.question(
             self,
@@ -528,11 +671,15 @@ class RuleConfigPage(QWidget):
             QMessageBox.Yes | QMessageBox.No,
         )
         if reply == QMessageBox.Yes:
-            del self.categories[key]
-            if not self._save_to_db():
+            candidate = copy.deepcopy(self.categories)
+            del candidate[key]
+            if not self._save_to_db(candidate):
                 return
+            self.categories = candidate
             if self.worker:
                 self.worker.reload_classifier()
             self._populate_list()
             if self.cat_list.count() > 0:
-                self.cat_list.setCurrentRow(0)
+                first_key = self.cat_list.item(0).data(Qt.UserRole)
+                self._select_key(first_key)
+                self._load_category(first_key)

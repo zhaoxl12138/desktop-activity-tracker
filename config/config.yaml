@@ -5,8 +5,8 @@ tracker:
   min_session_seconds: 2
 sample_interval_seconds: 1
 idle_threshold_seconds: 60
-db_path: D:\OfficeSoftware\DayLens\data\usage.db
-obsidian_output_path: E:\obsidian_github\Daylog\时间追踪\桌面活动日报\2026\
+db_path: data/usage.db
+obsidian_output_path: ''
 categories:
   ai_tools:
     display_name: AI工具

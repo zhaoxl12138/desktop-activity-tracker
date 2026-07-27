@@ -6,8 +6,8 @@ import tempfile
 from pathlib import Path
 
 import yaml
-from PySide6.QtCore import QObject, Signal
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtWidgets import QApplication, QVBoxLayout
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -102,8 +102,17 @@ def test_homepage_shell_matches_reference_structure():
         window.show()
         app.processEvents()
 
-        assert window.size().width() == 1600
-        assert window.size().height() == 900
+        available = window.screen().availableGeometry()
+        expected_width = min(
+            1600,
+            max(window.minimumWidth(), int(available.width() * 0.95)),
+        )
+        expected_height = min(
+            900,
+            max(window.minimumHeight(), int(available.height() * 0.95)),
+        )
+        assert window.size().width() == expected_width
+        assert window.size().height() == expected_height
         assert window.minimumSize().width() == 1100
         assert window.minimumSize().height() == 700
         assert window.maximumSize().width() > 1100
@@ -113,6 +122,16 @@ def test_homepage_shell_matches_reference_structure():
         assert window.capsule_labels["ent"].text() == "娱乐休闲"
         assert window.capsule_icons["ent"].text() == "📺"
         assert window.capsule_labels["social"].text() == "社交通讯"
+        for item in window.summary_capsule_items:
+            item_layout = item.layout()
+            assert isinstance(item_layout, QVBoxLayout)
+            assert item_layout.alignment() & Qt.AlignHCenter
+            assert item.minimumWidth() >= 150
+        assert window._summary_capsule_grid.horizontalSpacing() >= 24
+        assert window._summary_capsule_grid.verticalSpacing() >= 10
+        window.resize(1366, 768)
+        app.processEvents()
+        assert window._top_bar_compact is True
         assert not hasattr(window, "bottom_bar")
         assert window.pages["today"].metric_cards == {}
         assert getattr(window.pages["today"], "time_stats_ratio_ring", None) is None
@@ -128,14 +147,17 @@ def test_homepage_shell_matches_reference_structure():
         assert window.pages["today"]._color_for_category("other") == ui_style.get_category_color("other")
         assert window.pages["today"]._color_for_category("idle") == ui_style.COLORS["timeline_idle"]
         assert window.pages["today"]._color_for_category("idle_leave") == ui_style.COLORS["timeline_idle"]
-        assert window.pages["today"].timer.isActive() is True
+        assert window.dashboard_refresh.timer.isActive() is True
 
         window.nav_list.setCurrentRow(1)
         app.processEvents()
-        assert window.pages["today"].timer.isActive() is False
+        assert window.dashboard_refresh.timer.isActive() is True
 
         window.nav_list.setCurrentRow(0)
         app.processEvents()
-        assert window.pages["today"].timer.isActive() is True
+        assert window.dashboard_refresh.timer.isActive() is True
 
         window.close()
+        app.processEvents()
+        assert window.dashboard_refresh.timer.isActive() is False
+        assert window.dashboard_refresh.shutdown(timeout_ms=1_000) is True

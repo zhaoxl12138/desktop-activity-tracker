@@ -38,16 +38,29 @@ def ensure_report_subdirs(reports_dir: str) -> None:
 
 
 def load_config(config_path: str) -> dict:
+    from . import database
     from .utils import generate_default_config, load_user_config
 
     if not os.path.exists(config_path):
         print(f"[INFO] 配置文件不存在，正在自动生成默认配置：{config_path}")
         generate_default_config(config_path)
     with open(config_path, "r", encoding="utf-8") as handle:
-        config = yaml.safe_load(handle)
+        config = yaml.safe_load(handle) or {}
+    if not isinstance(config, dict):
+        raise ValueError("factory config must be a mapping")
 
     user_config = load_user_config()
-    for key in ("obsidian_output_path", "theme", "db_path"):
-        if key in user_config and user_config[key]:
-            config[key] = user_config[key]
+    if isinstance(user_config, dict):
+        for key in ("obsidian_output_path", "theme", "db_path"):
+            if key in user_config and user_config[key]:
+                config[key] = user_config[key]
+
+    db_path = config.get("db_path")
+    if isinstance(db_path, str) and db_path:
+        resolved_db_path = database.get_db_path(config)
+        if os.path.isfile(resolved_db_path):
+            try:
+                database.merge_db_settings(config, resolved_db_path)
+            except Exception:
+                pass
     return config

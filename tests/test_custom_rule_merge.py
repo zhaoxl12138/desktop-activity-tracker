@@ -27,6 +27,7 @@ def test_empty_custom_title_keywords_inherit_builtins(tmp_path):
                 "active_rule": "passive_allowed",
                 "process_names": ["QyClient.exe"],
                 "title_keywords": [],
+                "title_keywords_mode": "inherit",
             }
         },
     )

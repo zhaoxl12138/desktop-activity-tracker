@@ -12,6 +12,7 @@ sys.path.insert(0, str(SRC))
 
 from daylens import database  # noqa: E402
 from daylens import classifier  # noqa: E402
+from daylens.gui.pages.today_overview import TodayOverviewPage  # noqa: E402
 from daylens.gui.widgets.dashboard_widgets import _timeline_duration_text  # noqa: E402
 from daylens.session_tracker import ActivitySession, SessionTracker, normalize_window_title  # noqa: E402
 
@@ -37,6 +38,33 @@ def test_timeline_duration_uses_idle_when_effective_is_zero():
     )
 
     assert text == "12秒"
+
+
+def test_focus_axis_includes_the_last_minute_of_the_day():
+    class AxisContext:
+        @staticmethod
+        def _to_minute(timestamp):
+            return TodayOverviewPage._to_minute(None, timestamp)
+
+        @staticmethod
+        def _color_for_category(_key, _name=""):
+            return "active"
+
+    colors = TodayOverviewPage._build_focus_axis(
+        AxisContext(),
+        [
+            {
+                "start_time": "2026-07-26 23:59:00",
+                "end_time": "2026-07-26 23:59:59",
+                "effective_seconds": 59,
+                "idle_seconds": 0,
+                "category_key": "coding",
+            }
+        ],
+    )
+
+    assert len(colors) == 1440
+    assert colors[1439] == "active"
 
 
 def test_today_sessions_include_idle_only_sessions(tmp_path):

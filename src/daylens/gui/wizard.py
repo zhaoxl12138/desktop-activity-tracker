@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QFrame, QWidget, QMenu, QProgressBar,
     QLayout, QLayoutItem,
 )
-from PySide6.QtCore import Qt, QTimer, QRect
+from PySide6.QtCore import Qt, QTimer, QRect, QSize
 
 from ..app_scanner import (
     classify_scanned_apps, KNOWN_APPS, _scan_registry_uninstall,
@@ -18,13 +18,14 @@ import os
 import yaml
 
 _CATEGORY_CYCLE = [
-    "coding", "ai_tools", "reading", "creative",
+    "coding", "ai_tools", "office", "reading", "creative",
     "video", "social", "tools", "browser_general",
 ]
 
 _CAT_INFO = {
     "coding":        ("💼", "工作学习",   COLORS["coding_green"]),
     "ai_tools":      ("🤖", "AI 工具",    COLORS["ai_blue"]),
+    "office":        ("📊", "办公套件",    COLORS["coding_green"]),
     "reading":       ("📖", "阅读学习",   COLORS["reading_blue"]),
     "creative":      ("🎨", "创作设计",   COLORS["creative_pink"]),
     "video":         ("📺", "娱乐休闲",   COLORS["video_orange"]),
@@ -346,11 +347,10 @@ class SetupWizard(QDialog):
                 header.setText(header_text)
 
     def _on_confirm(self):
-        """Save user's classification as DB supplements. Only stores process_names
-        per category (no title_keywords — config.yaml is authoritative for those).
-        merge_custom_rules unions DB into config on every load.
-        """
-        save_wizard_classifications(self.db_path, self._apps)
+        """Merge the confirmed processes while retaining factory rule metadata."""
+        with open(self.config_path, "r", encoding="utf-8") as handle:
+            config = yaml.safe_load(handle) or {}
+        save_wizard_classifications(self.db_path, self._apps, config)
         self.accept()
 
 
@@ -406,11 +406,20 @@ class _FlowLayout(QLayout):
         self._do_layout(rect, dry_run=False)
 
     def minimumSize(self):
-        size = super().minimumSize()
-        return size.expandedTo(self.sizeHint())
+        size = QSize(0, 0)
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        margins = self.contentsMargins()
+        size += QSize(
+            margins.left() + margins.right(),
+            margins.top() + margins.bottom(),
+        )
+        return size
 
     def sizeHint(self):
-        return self.minimumSize()
+        minimum = self.minimumSize()
+        width = max(minimum.width(), self.geometry().width())
+        return QSize(width, max(minimum.height(), self.heightForWidth(width)))
 
     def _do_layout(self, rect: QRect, dry_run: bool) -> int:
         x = rect.x()
