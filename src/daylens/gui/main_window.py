@@ -426,8 +426,8 @@ class MainWindow(QMainWindow):
         )
         layout = QGridLayout(capsule)
         layout.setContentsMargins(20, 12, 20, 12)
-        layout.setHorizontalSpacing(14)
-        layout.setVerticalSpacing(8)
+        layout.setHorizontalSpacing(24)
+        layout.setVerticalSpacing(10)
         self._summary_capsule_grid = layout
         self.summary_capsule_items: list[QFrame] = []
 
@@ -440,7 +440,7 @@ class MainWindow(QMainWindow):
             ]
         ):
             item, value_label, icon_label, text_label = self._make_capsule(emoji, label)
-            item.setMinimumWidth(120)
+            item.setMinimumWidth(150)
             item.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
             layout.addWidget(item, 0, index)
             layout.setColumnStretch(index, 1)
@@ -461,30 +461,32 @@ class MainWindow(QMainWindow):
             }}
             """
         )
-        h = QHBoxLayout(capsule)
-        h.setContentsMargins(0, 0, 0, 0)
-        h.setSpacing(10)
+        h = QVBoxLayout(capsule)
+        h.setContentsMargins(8, 4, 8, 4)
+        h.setSpacing(4)
+        h.setAlignment(Qt.AlignHCenter)
 
         emoji_lbl = QLabel(emoji)
         emoji_lbl.setStyleSheet("font-size: 24px; background: transparent;")
-        h.addWidget(emoji_lbl)
+        emoji_lbl.setAlignment(Qt.AlignHCenter)
+        h.addWidget(emoji_lbl, 0, Qt.AlignHCenter)
 
-        text_wrap = QVBoxLayout()
-        text_wrap.setSpacing(2)
         text_lbl = QLabel(label_text)
         text_lbl.setStyleSheet(
             f"font-size: 12px; color: {ui_style.COLORS['text']};"
             " font-weight: 700; background: transparent;"
         )
-        text_wrap.addWidget(text_lbl)
+        text_lbl.setAlignment(Qt.AlignHCenter)
+        h.addWidget(text_lbl, 0, Qt.AlignHCenter)
 
         value_lbl = QLabel("--")
         value_lbl.setStyleSheet(
             f"font-size: 23px; color: {ui_style.COLORS['text']};"
             " font-weight: 900; background: transparent;"
         )
-        text_wrap.addWidget(value_lbl)
-        h.addLayout(text_wrap)
+        value_lbl.setAlignment(Qt.AlignHCenter)
+        value_lbl.setMinimumHeight(30)
+        h.addWidget(value_lbl, 0, Qt.AlignHCenter)
 
         return capsule, value_lbl, emoji_lbl, text_lbl
 

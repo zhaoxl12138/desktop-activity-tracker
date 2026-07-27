@@ -6,8 +6,8 @@ import tempfile
 from pathlib import Path
 
 import yaml
-from PySide6.QtCore import QObject, Signal
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtWidgets import QApplication, QVBoxLayout
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -122,6 +122,16 @@ def test_homepage_shell_matches_reference_structure():
         assert window.capsule_labels["ent"].text() == "娱乐休闲"
         assert window.capsule_icons["ent"].text() == "📺"
         assert window.capsule_labels["social"].text() == "社交通讯"
+        for item in window.summary_capsule_items:
+            item_layout = item.layout()
+            assert isinstance(item_layout, QVBoxLayout)
+            assert item_layout.alignment() & Qt.AlignHCenter
+            assert item.minimumWidth() >= 150
+        assert window._summary_capsule_grid.horizontalSpacing() >= 24
+        assert window._summary_capsule_grid.verticalSpacing() >= 10
+        window.resize(1366, 768)
+        app.processEvents()
+        assert window._top_bar_compact is True
         assert not hasattr(window, "bottom_bar")
         assert window.pages["today"].metric_cards == {}
         assert getattr(window.pages["today"], "time_stats_ratio_ring", None) is None
