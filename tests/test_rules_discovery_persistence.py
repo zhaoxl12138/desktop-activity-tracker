@@ -383,6 +383,7 @@ def test_known_app_keys_are_lowercase_and_office_apps_are_consistent():
     assert all(key == key.lower() for key in KNOWN_APPS)
     assert KNOWN_APPS["utools.exe"] == "tools"
     assert KNOWN_APPS["powertoys.exe"] == "tools"
+    assert KNOWN_APPS["sourceinsight4.exe"] == "coding"
     for process in (
         "wps.exe",
         "wpp.exe",
@@ -408,6 +409,12 @@ def test_scanner_lookup_is_case_insensitive_but_preserves_process_spelling():
 
     assert classified["tools"] == {"PowerToys.EXE"}
     assert classified["office"] == {"OUTLOOK.EXE", "WPS.EXE"}
+
+
+def test_scanner_classifies_sourceinsight_as_coding():
+    classified = classify_scanned_apps({"SourceInsight4.EXE": None})
+
+    assert classified["coding"] == {"SourceInsight4.EXE"}
 
 
 @pytest.mark.parametrize(

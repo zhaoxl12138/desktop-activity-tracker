@@ -206,6 +206,7 @@ KNOWN_APPS: dict[str, str] = {
     "code.exe": "coding",
     "cursor.exe": "coding",
     "codex.exe": "coding",
+    "sourceinsight4.exe": "coding",
     "clion64.exe": "coding",
     "clion.exe": "coding",
     "pycharm64.exe": "coding",

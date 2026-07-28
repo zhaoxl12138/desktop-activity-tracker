@@ -50,6 +50,7 @@ categories:
         - "Cursor.exe"             # Cursor
         - "clion64.exe"            # CLion
         - "Trae CN.exe"            # Trae (字节跳动 AI IDE)
+        - "SourceInsight4.exe"     # Source Insight
         # CLI / 终端
         - "codex.exe"              # Codex CLI
         - "WindowsTerminal.exe"

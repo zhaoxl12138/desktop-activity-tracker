@@ -91,3 +91,23 @@ def test_chrome_new_tab_falls_back_to_browser_general(tmp_path: Path):
     )
 
     assert result["category_key"] == "browser_general"
+
+
+def test_sourceinsight4_process_is_work_learning(tmp_path: Path):
+    config_path = tmp_path / "config.yaml"
+    _write_config(config_path)
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["categories"]["coding"]["match"]["process_names"] = [
+        "sourceinsight4.exe"
+    ]
+    config_path.write_text(
+        yaml.safe_dump(config, allow_unicode=True),
+        encoding="utf-8",
+    )
+
+    result = Classifier(str(config_path)).classify(
+        "SourceInsight4.exe",
+        "kernel Project",
+    )
+
+    assert result["category_key"] == "coding"
