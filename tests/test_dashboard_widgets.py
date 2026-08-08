@@ -10,7 +10,12 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
 
-from desktop_activity_tracker.gui.widgets.dashboard_widgets import TrendChartWidget, TimelineWidget, _TrendCanvas  # noqa: E402
+from desktop_activity_tracker.gui.widgets.dashboard_widgets import (  # noqa: E402
+    SessionTop3Widget,
+    TimelineWidget,
+    TrendChartWidget,
+    _TrendCanvas,
+)
 
 
 def _app() -> QApplication:
@@ -212,6 +217,34 @@ def test_timeline_widget_orders_sessions_by_value_and_compresses_title():
     second_labels = [label.text() for label in widget._rows[1].findChildren(QLabel)]
     assert any("Chrome(ChatGPT)" in text for text in second_labels)
     assert any("50分钟" in text for text in second_labels)
+
+
+def test_key_sessions_use_five_minute_minimum():
+    app = _app()
+    widget = SessionTop3Widget()
+    sessions = [
+        {
+            "start_time": "2026-08-08 09:00:00",
+            "end_time": "2026-08-08 09:05:00",
+            "process_name": "Code.exe",
+            "category_name": "工作学习",
+            "category_key": "coding",
+            "effective_seconds": 300,
+        },
+        {
+            "start_time": "2026-08-08 10:00:00",
+            "end_time": "2026-08-08 10:04:59",
+            "process_name": "notes.exe",
+            "category_name": "工作学习",
+            "category_key": "office",
+            "effective_seconds": 299,
+        },
+    ]
+
+    widget.set_sessions(sessions)
+    app.processEvents()
+
+    assert [session["process_name"] for session in widget._sessions] == ["Code.exe"]
 
 
 def test_trend_canvas_renders_sparse_weekly_series():

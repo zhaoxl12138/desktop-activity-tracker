@@ -548,6 +548,7 @@ class SessionTop3Widget(QFrame):
     """Table-layout top sessions list with detail dialog."""
 
     RANKS = ["🥇", "🥈", "🥉"]
+    MIN_EFFECTIVE_SECONDS = 5 * 60
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -641,7 +642,7 @@ class SessionTop3Widget(QFrame):
         merged = TimelineWidget._merge_sessions(list(sessions or []))
         filtered = [
             s for s in merged
-            if (s.get("effective_seconds", 0) or 0) >= 600
+            if (s.get("effective_seconds", 0) or 0) >= self.MIN_EFFECTIVE_SECONDS
         ]
         filtered.sort(
             key=lambda s: (
