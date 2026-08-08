@@ -50,6 +50,27 @@ class _PersistenceQueueFull(RuntimeError):
     pass
 
 
+class _FixedSamplingCadence:
+    """Keep sampling on a monotonic deadline without burst catch-up."""
+
+    def __init__(self, monotonic_clock):
+        self._clock = monotonic_clock
+        self._deadline = self._clock()
+
+    def reset(self) -> None:
+        self._deadline = self._clock()
+
+    def next_sleep_ms(self, interval_seconds: float) -> int:
+        interval = max(0.001, float(interval_seconds))
+        self._deadline += interval
+        now = self._clock()
+        remaining = self._deadline - now
+        if -remaining >= interval:
+            self._deadline = now
+            return 0
+        return max(0, int(round(remaining * 1000)))
+
+
 class RecordingWorker(QThread):
     _PERSISTENCE_BUSY_TIMEOUT_MS = 5_000
     _SHUTDOWN_WAIT_MARGIN_MS = 1_000
@@ -89,6 +110,7 @@ class RecordingWorker(QThread):
         self._recoverable_fatal = False
         self._health_lock = threading.Lock()
         self._monotonic_clock = monotonic_clock or time.monotonic
+        self._sampling_cadence = _FixedSamplingCadence(self._monotonic_clock)
         self._sample_health_started_at = self._monotonic_clock()
         self._last_sample_monotonic = None
         self._shutdown_deadline = None
@@ -276,6 +298,7 @@ class RecordingWorker(QThread):
             self._listener.daemon = True
             self._listener.start()
             self._set_health("running")
+            self._sampling_cadence.reset()
 
             while self._running.is_set():
                 self._consume_commands()
@@ -288,6 +311,7 @@ class RecordingWorker(QThread):
                     self._pause_requested.clear()
                 if self._paused.is_set():
                     self._sleep_check(1000)
+                    self._sampling_cadence.reset()
                     continue
 
                 try:
@@ -303,7 +327,9 @@ class RecordingWorker(QThread):
                 except Exception as error:
                     self._record_sample_failure(error)
 
-                self._sleep_check(int(self.sample_interval * 1000))
+                self._sleep_check(
+                    self._sampling_cadence.next_sleep_ms(self.sample_interval)
+                )
         except Exception as error:
             # Queue exhaustion is recoverable once cleanup has durably
             # transferred every unresolved session to the recovery spool.
@@ -647,6 +673,7 @@ class RecordingWorker(QThread):
         self._tracker.sample_interval = self.sample_interval
         self._tracker.flush_interval = self.flush_interval
         self._tracker.classifier = replacement_classifier
+        self._sampling_cadence.reset()
 
     def _sleep_check(self, ms):
         """Sleep in short chunks so stop() is responsive."""

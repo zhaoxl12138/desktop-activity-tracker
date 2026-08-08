@@ -140,6 +140,157 @@ def _patch_run_dependencies(monkeypatch, store):
     )
 
 
+class ManualClock:
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
+class CadenceSpy:
+    def __init__(self):
+        self.reset_calls = 0
+
+    def reset(self):
+        self.reset_calls += 1
+
+    def next_sleep_ms(self, _interval_seconds):
+        return 0
+
+
+def test_worker_sleeps_only_for_remaining_sampling_interval(monkeypatch):
+    clock = ManualClock()
+    store = FakeStore()
+    _patch_run_dependencies(monkeypatch, store)
+    monkeypatch.setattr(
+        worker_module.window_detector,
+        "get_foreground_window_info",
+        lambda: clock.advance(0.06)
+        or {
+            "process_name": "Code.exe",
+            "window_title": "main.py",
+            "exe_path": "",
+            "pid": 100,
+        },
+    )
+    worker = worker_module.RecordingWorker(
+        "config.yaml",
+        "usage.db",
+        {"tracker": {"sample_interval_seconds": 1}},
+        monotonic_clock=clock.monotonic,
+    )
+    sleeps = []
+
+    def capture_sleep(milliseconds):
+        sleeps.append(milliseconds)
+        worker.stop()
+
+    worker._sleep_check = capture_sleep
+
+    worker.run()
+
+    assert sleeps == [940]
+
+
+def test_worker_rebases_after_full_missed_interval_without_catch_up_loop(
+    monkeypatch,
+):
+    clock = ManualClock()
+    store = FakeStore()
+    _patch_run_dependencies(monkeypatch, store)
+    processing_times = iter([2.1, 0.06])
+
+    def foreground_window():
+        clock.advance(next(processing_times))
+        return {
+            "process_name": "Code.exe",
+            "window_title": "main.py",
+            "exe_path": "",
+            "pid": 100,
+        }
+
+    monkeypatch.setattr(
+        worker_module.window_detector,
+        "get_foreground_window_info",
+        foreground_window,
+    )
+    worker = worker_module.RecordingWorker(
+        "config.yaml",
+        "usage.db",
+        {"tracker": {"sample_interval_seconds": 1}},
+        monotonic_clock=clock.monotonic,
+    )
+    sleeps = []
+
+    def capture_sleep(milliseconds):
+        sleeps.append(milliseconds)
+        if len(sleeps) == 2:
+            worker.stop()
+
+    worker._sleep_check = capture_sleep
+
+    worker.run()
+
+    assert sleeps == [0, 940]
+
+
+def test_paused_worker_resets_sampling_cadence(monkeypatch):
+    store = FakeStore()
+    _patch_run_dependencies(monkeypatch, store)
+    worker = worker_module.RecordingWorker("config.yaml", "usage.db", {})
+    cadence = CadenceSpy()
+    worker._sampling_cadence = cadence
+    worker.pause()
+    worker._sleep_check = lambda _milliseconds: worker.stop()
+
+    worker.run()
+
+    assert cadence.reset_calls == 2
+
+
+def test_resume_starts_a_fresh_cadence_without_immediate_catch_up(monkeypatch):
+    clock = ManualClock()
+    store = FakeStore()
+    _patch_run_dependencies(monkeypatch, store)
+    monkeypatch.setattr(
+        worker_module.window_detector,
+        "get_foreground_window_info",
+        lambda: clock.advance(0.06)
+        or {
+            "process_name": "Code.exe",
+            "window_title": "main.py",
+            "exe_path": "",
+            "pid": 100,
+        },
+    )
+    worker = worker_module.RecordingWorker(
+        "config.yaml",
+        "usage.db",
+        {"tracker": {"sample_interval_seconds": 1}},
+        monotonic_clock=clock.monotonic,
+    )
+    sleeps = []
+    worker.pause()
+
+    def capture_sleep(milliseconds):
+        sleeps.append(milliseconds)
+        if len(sleeps) == 1:
+            clock.advance(1.0)
+            worker.resume()
+        else:
+            worker.stop()
+
+    worker._sleep_check = capture_sleep
+
+    worker.run()
+
+    assert sleeps == [1000, 940]
+
+
 def test_worker_control_state_uses_threading_events():
     worker = worker_module.RecordingWorker("config.yaml", "usage.db", {})
     event_type = type(threading.Event())
@@ -152,7 +303,9 @@ def test_worker_control_state_uses_threading_events():
 def test_settings_update_is_applied_only_when_worker_consumes_command(monkeypatch):
     worker = worker_module.RecordingWorker("config.yaml", "usage.db", {})
     tracker = TrackerStub()
+    cadence = CadenceSpy()
     worker._tracker = tracker
+    worker._sampling_cadence = cadence
     replacement_classifier = object()
     monkeypatch.setattr(
         worker_module.classifier,
@@ -185,6 +338,7 @@ def test_settings_update_is_applied_only_when_worker_consumes_command(monkeypatc
     assert tracker.cross_group_grace == 45
     assert tracker.classifier is replacement_classifier
     assert worker.sample_interval == 3
+    assert cadence.reset_calls == 1
 
 
 def test_classifier_reload_is_applied_only_at_worker_boundary(monkeypatch):
