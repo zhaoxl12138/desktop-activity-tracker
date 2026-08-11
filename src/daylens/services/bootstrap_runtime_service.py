@@ -2,16 +2,31 @@
 
 from __future__ import annotations
 
+import sqlite3
 import sys
+import time
 
 from .. import database
 from .data_quality_service import inspect_data_quality
 
 
+def ensure_readable_schema(db_path: str) -> None:
+    """Idempotently upgrade a database before a read-only workflow."""
+    for attempt in range(20):
+        try:
+            connection = database.init_db(db_path)
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc).lower() or attempt == 19:
+                raise
+            time.sleep(0.05)
+            continue
+        database.close_db(connection)
+        return
+
+
 def prepare_runtime_config(config: dict) -> tuple[dict, str]:
     db_path = database.get_db_path(config)
-    connection = database.init_db(db_path)
-    database.close_db(connection)
+    ensure_readable_schema(db_path)
     database.merge_db_settings(config, db_path)
     try:
         tracker_config = config.get("tracker", {})

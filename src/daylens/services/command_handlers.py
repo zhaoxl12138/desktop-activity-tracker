@@ -15,6 +15,7 @@ from ..session_tracker import SessionTracker
 from .session_recovery_service import SessionRecoverySpool
 from .session_runtime_service import SessionRuntimeStore
 from .instance_lock import acquire_recording_lock
+from .bootstrap_runtime_service import ensure_readable_schema
 from ..window_detector import get_foreground_window_info
 
 
@@ -175,6 +176,7 @@ def handle_report(config: dict, args) -> None:
     if not os.path.exists(db_path):
         print("数据库不存在，请先运行 `python -m daylens.main start` 开始记录。")
         return
+    _migrate_existing_db(db_path)
     if args.today:
         print(reporter.report_today(db_path))
     elif args.date:
@@ -189,6 +191,7 @@ def handle_export(config: dict, args, reports_dir: str) -> None:
     if not os.path.exists(db_path):
         print("数据库不存在，请先运行 `python -m daylens.main start` 开始记录。")
         return
+    _migrate_existing_db(db_path)
 
     date_str = args.date or datetime.now().strftime("%Y-%m-%d")
     if args.format == "csv":
@@ -212,6 +215,7 @@ def handle_weekly(config: dict, args, reports_dir: str) -> None:
     if not os.path.exists(db_path):
         print("数据库不存在，请先运行 start 命令开始记录。")
         return
+    _migrate_existing_db(db_path)
     today = datetime.now().date()
     year = args.year or today.year
     week = args.week or today.isocalendar()[1]
@@ -228,6 +232,7 @@ def handle_monthly(config: dict, args, reports_dir: str) -> None:
     if not os.path.exists(db_path):
         print("数据库不存在，请先运行 start 命令开始记录。")
         return
+    _migrate_existing_db(db_path)
     today = datetime.now().date()
     year = args.year or today.year
     month = args.month or today.month
@@ -244,7 +249,13 @@ def handle_today(config: dict) -> None:
     if not os.path.exists(db_path):
         print("数据库不存在，请先运行 `python -m daylens.main start` 开始记录。")
         return
+    _migrate_existing_db(db_path)
     print(reporter.report_today(db_path))
+
+
+def _migrate_existing_db(db_path: str) -> None:
+    """Bring an existing CLI database to the current readable schema."""
+    ensure_readable_schema(db_path)
 
 
 def _maybe_sync_obsidian(config: dict, filepath: str) -> None:

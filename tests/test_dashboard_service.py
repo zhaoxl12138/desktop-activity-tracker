@@ -22,10 +22,11 @@ from daylens.services.dashboard_service import (  # noqa: E402
     build_day_over_day_comparison,
     build_distribution_sections,
     build_hourly_series,
+    build_hourly_series_split,
     build_top_app_rows,
     load_today_snapshot,
 )
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 
 def test_distribution_sections_exclude_tools_from_primary_breakdown():
@@ -103,6 +104,32 @@ def test_build_hourly_series_splits_effective_time_into_hour_buckets():
     assert series[10] == 30
 
 
+def test_work_hourly_series_uses_engaged_while_total_keeps_effective():
+    split = build_hourly_series_split(
+        [
+            {
+                "start_time": "2026-06-02 09:00:00",
+                "end_time": "2026-06-02 10:00:00",
+                "category_key": "coding",
+                "effective_seconds": 3_600,
+                "engaged_seconds": 0,
+            },
+            {
+                "start_time": "2026-06-02 10:00:00",
+                "end_time": "2026-06-02 11:00:00",
+                "category_key": "coding",
+                "effective_seconds": 3_600,
+                "engaged_seconds": 1_800,
+            },
+        ]
+    )
+
+    assert split["total"][9] == 60
+    assert split["work"][9] == 0
+    assert split["total"][10] == 60
+    assert split["work"][10] == 30
+
+
 def test_empty_today_snapshot_exposes_trusted_attention_health(tmp_path: Path):
     db_path = tmp_path / "usage.db"
     database.init_db(str(db_path)).close()
@@ -120,12 +147,28 @@ def test_thirty_day_trend_prefers_engaged_and_marks_new_snapshot_semantics(
 ):
     points = _build_thirty_day_trend(
         [
-            {"effective_seconds": 3_600, "engaged_seconds": 1_800},
-            {"effective_seconds": 3_600},
+            {
+                "effective_seconds": 3_600,
+                "engaged_seconds": 1_800,
+                "session_count": 1,
+                "legacy_session_count": 0,
+                "legacy_log_sample_count": 0,
+                "legacy_granularity_unknown": False,
+                "metric_versions": ["attention-v1"],
+            },
+            {
+                "effective_seconds": 3_600,
+                "engaged_seconds": 0,
+                "session_count": 1,
+                "legacy_session_count": 1,
+                "legacy_log_sample_count": 0,
+                "legacy_granularity_unknown": False,
+                "metric_versions": ["legacy"],
+            },
         ]
     )
 
-    assert points == [0.5, 1.0]
+    assert points == [0.5, None]
 
     db_path = tmp_path / "usage.db"
     database.init_db(str(db_path)).close()
@@ -136,6 +179,184 @@ def test_thirty_day_trend_prefers_engaged_and_marks_new_snapshot_semantics(
 
     assert snapshot["totals"]["primary_metric"] == "engaged"
     assert snapshot["trend"]["thirty_day_metric"] == "engaged"
+
+
+def test_thirty_day_trend_distinguishes_empty_legacy_mixed_and_current_days():
+    points = _build_thirty_day_trend(
+        [
+            {
+                "date": "2026-08-08",
+                "effective_seconds": 0,
+                "engaged_seconds": 0,
+                "session_count": 0,
+                "legacy_log_sample_count": 0,
+                "metric_versions": [],
+            },
+            {
+                "date": "2026-08-09",
+                "effective_seconds": 3_600,
+                "engaged_seconds": 0,
+                "session_count": 1,
+                "legacy_session_count": 1,
+                "legacy_log_sample_count": 0,
+                "metric_versions": ["legacy"],
+            },
+            {
+                "date": "2026-08-10",
+                "effective_seconds": 3_600,
+                "engaged_seconds": 1_800,
+                "session_count": 2,
+                "legacy_session_count": 1,
+                "legacy_log_sample_count": 1,
+                "legacy_granularity_unknown": True,
+                "metric_versions": ["attention-v1", "legacy"],
+            },
+            {
+                "date": "2026-08-11",
+                "effective_seconds": 3_600,
+                "engaged_seconds": 2_700,
+                "session_count": 1,
+                "legacy_session_count": 0,
+                "legacy_log_sample_count": 0,
+                "legacy_granularity_unknown": False,
+                "metric_versions": ["attention-v1"],
+            },
+            {
+                "date": "2026-08-12",
+                "effective_seconds": "unknown",
+                "engaged_seconds": 0,
+                "session_count": 0,
+                "legacy_log_sample_count": 0,
+                "metric_versions": [],
+            },
+        ]
+    )
+
+    assert points == [0.0, None, None, 0.8, None]
+
+
+def test_snapshot_marks_full_thirty_day_metric_break_even_when_recent_trust_is_high(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "usage.db"
+    database.init_db(str(db_path)).close()
+    today = datetime.now().date()
+    dates = [today - timedelta(days=offset) for offset in reversed(range(30))]
+    conn = sqlite3.connect(db_path)
+    for index, day in enumerate(dates):
+        date_str = day.strftime("%Y-%m-%d")
+        legacy = index < 16
+        conn.execute(
+            """
+            INSERT INTO activity_sessions
+                (session_id,start_time,end_time,date,process_name,
+                 normalized_title,category_key,category_name,
+                 duration_seconds,effective_seconds,engaged_seconds,
+                 passive_seconds,idle_seconds,metric_version,
+                 classification_version)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                f"session-{index}",
+                f"{date_str} 09:00:00",
+                f"{date_str} 10:00:00",
+                date_str,
+                "Code.exe",
+                "main.py",
+                "coding",
+                "工作学习",
+                3_600,
+                3_600,
+                0 if legacy else 3_600,
+                0,
+                0,
+                "legacy" if legacy else "attention-v1",
+                "legacy" if legacy else "rules-a",
+            ),
+        )
+    conn.commit()
+    conn.close()
+
+    snapshot = load_today_snapshot(
+        str(db_path),
+        lambda process_name, _details: process_name,
+    )
+
+    assert snapshot["trust"]["level"] == "high"
+    assert snapshot["trend"]["thirty_days"][:16] == [None] * 16
+    assert snapshot["trend"]["thirty_days"][16:] == [1.0] * 14
+    assert snapshot["trend"]["thirty_day_metric_break"] is True
+    assert snapshot["trend"]["thirty_day_classification_break"] is True
+    assert snapshot["trend"]["thirty_day_notice"] == (
+        "计量口径已变化，历史参与趋势暂不可比"
+    )
+
+
+@pytest.mark.parametrize(
+    ("legacy_days", "expected_break", "expected_notice", "expected_point"),
+    [
+        (0, False, "", 1.0),
+        (
+            30,
+            True,
+            "计量口径已变化，历史参与趋势暂不可比",
+            None,
+        ),
+    ],
+)
+def test_snapshot_notice_covers_all_current_and_all_legacy_history(
+    tmp_path: Path,
+    legacy_days: int,
+    expected_break: bool,
+    expected_notice: str,
+    expected_point: float | None,
+):
+    db_path = tmp_path / "usage.db"
+    database.init_db(str(db_path)).close()
+    today = datetime.now().date()
+    conn = sqlite3.connect(db_path)
+    for index, offset in enumerate(reversed(range(30))):
+        day = today - timedelta(days=offset)
+        date_str = day.strftime("%Y-%m-%d")
+        legacy = index < legacy_days
+        conn.execute(
+            """
+            INSERT INTO activity_sessions
+                (session_id,start_time,end_time,date,process_name,
+                 category_key,category_name,duration_seconds,
+                 effective_seconds,engaged_seconds,passive_seconds,
+                 idle_seconds,metric_version,classification_version)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                f"day-{index}",
+                f"{date_str} 09:00:00",
+                f"{date_str} 10:00:00",
+                date_str,
+                "Code.exe",
+                "coding",
+                "工作学习",
+                3_600,
+                3_600,
+                0 if legacy else 3_600,
+                0,
+                0,
+                "legacy" if legacy else "attention-v1",
+                "legacy" if legacy else "rules-a",
+            ),
+        )
+    conn.commit()
+    conn.close()
+
+    snapshot = load_today_snapshot(
+        str(db_path),
+        lambda process_name, _details: process_name,
+    )
+
+    assert snapshot["trend"]["thirty_day_metric_break"] is expected_break
+    assert snapshot["trend"]["thirty_day_classification_break"] is False
+    assert snapshot["trend"]["thirty_day_notice"] == expected_notice
+    assert snapshot["trend"]["thirty_days"] == [expected_point] * 30
 
 
 def test_session_range_query_reads_attention_rows_once(tmp_path: Path):
@@ -379,6 +600,174 @@ def test_timeline_skips_malformed_session_rows(monkeypatch):
 
     assert len(blocks) == 48
     assert sum(block.effective_seconds for block in blocks) == 0
+
+
+def test_legacy_effective_time_does_not_create_engaged_work_or_focus(
+    monkeypatch,
+):
+    rows = [
+        {
+            "session_id": "legacy-work",
+            "start_time": "2026-08-11 09:00:00",
+            "end_time": "2026-08-11 10:00:00",
+            "process_name": "Code.exe",
+            "window_title": "",
+            "normalized_title": "main.py",
+            "category_key": "coding",
+            "category_name": "工作学习",
+            "duration_seconds": 3_600,
+            "effective_seconds": 3_600,
+            "engaged_seconds": 0,
+            "passive_seconds": 0,
+            "idle_seconds": 0,
+        }
+    ]
+    monkeypatch.setattr(
+        timeline.database,
+        "query_timeline_sessions",
+        lambda *_: rows,
+    )
+
+    blocks = timeline.build_timeline("unused.db", "2026-08-11")
+
+    assert sum(block.effective_seconds for block in blocks) == 3_600
+    assert sum(block.engaged_seconds for block in blocks) == 0
+    assert sum(block.work_seconds for block in blocks) == 0
+    assert timeline.identify_focus_blocks(blocks) == []
+
+
+def test_attention_engaged_work_creates_focus_but_passive_video_does_not(
+    monkeypatch,
+):
+    rows = [
+        {
+            "session_id": "attention-work",
+            "start_time": "2026-08-11 09:00:00",
+            "end_time": "2026-08-11 10:00:00",
+            "process_name": "Code.exe",
+            "window_title": "",
+            "normalized_title": "main.py",
+            "category_key": "coding",
+            "category_name": "工作学习",
+            "duration_seconds": 3_600,
+            "effective_seconds": 3_600,
+            "engaged_seconds": 3_600,
+            "passive_seconds": 0,
+            "idle_seconds": 0,
+        },
+        {
+            "session_id": "passive-video",
+            "start_time": "2026-08-11 10:00:00",
+            "end_time": "2026-08-11 11:00:00",
+            "process_name": "player.exe",
+            "window_title": "",
+            "normalized_title": "course",
+            "category_key": "video",
+            "category_name": "娱乐休闲",
+            "duration_seconds": 3_600,
+            "effective_seconds": 3_600,
+            "engaged_seconds": 0,
+            "passive_seconds": 3_600,
+            "idle_seconds": 0,
+        },
+    ]
+    monkeypatch.setattr(
+        timeline.database,
+        "query_timeline_sessions",
+        lambda *_: rows,
+    )
+
+    blocks = timeline.build_timeline("unused.db", "2026-08-11")
+    focus_blocks = timeline.identify_focus_blocks(blocks)
+
+    assert sum(block.engaged_seconds for block in blocks) == 3_600
+    assert sum(block.work_seconds for block in blocks) == 3_600
+    assert len(focus_blocks) == 1
+    assert focus_blocks[0].effective_seconds == 3_600
+
+
+def test_cross_hour_engaged_allocation_preserves_session_total(
+    monkeypatch,
+):
+    rows = [
+        {
+            "session_id": "cross-hour",
+            "start_time": "2026-08-11 09:45:00",
+            "end_time": "2026-08-11 10:15:00",
+            "process_name": "Code.exe",
+            "window_title": "",
+            "normalized_title": "main.py",
+            "category_key": "coding",
+            "category_name": "工作学习",
+            "duration_seconds": 1_800,
+            "effective_seconds": 1_001,
+            "engaged_seconds": 1_001,
+            "passive_seconds": 0,
+            "idle_seconds": 799,
+        }
+    ]
+    monkeypatch.setattr(
+        timeline.database,
+        "query_timeline_sessions",
+        lambda *_: rows,
+    )
+
+    blocks = timeline.build_timeline("unused.db", "2026-08-11")
+
+    assert sum(block.engaged_seconds for block in blocks) == 1_001
+    assert sum(block.work_seconds for block in blocks) == 1_001
+    assert blocks[19].engaged_seconds + blocks[20].engaged_seconds == 1_001
+
+
+def test_consecutive_focus_days_require_engaged_work(tmp_path: Path):
+    db_path = tmp_path / "usage.db"
+    database.init_db(str(db_path)).close()
+    today = datetime.now().date()
+    yesterday = today - timedelta(days=1)
+    conn = sqlite3.connect(db_path)
+    for session_id, day in (("today", today), ("yesterday", yesterday)):
+        date_str = day.strftime("%Y-%m-%d")
+        conn.execute(
+            """
+            INSERT INTO activity_sessions
+                (session_id,start_time,end_time,date,process_name,
+                 category_key,category_name,duration_seconds,
+                 effective_seconds,engaged_seconds,passive_seconds,
+                 idle_seconds,metric_version,classification_version)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                session_id,
+                f"{date_str} 09:00:00",
+                f"{date_str} 10:00:00",
+                date_str,
+                "Code.exe",
+                "coding",
+                "工作学习",
+                3_600,
+                3_600,
+                0,
+                0,
+                0,
+                "legacy",
+                "legacy",
+            ),
+        )
+    conn.commit()
+
+    assert database.count_consecutive_days(str(db_path)) == 0
+
+    conn.execute(
+        """
+        UPDATE activity_sessions
+        SET engaged_seconds = 3600, metric_version = 'attention-v1',
+            classification_version = 'rules-a'
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    assert database.count_consecutive_days(str(db_path)) == 2
 
 
 def test_snapshot_builds_exact_trusted_insight_payload_without_daily_session_queries(

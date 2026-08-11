@@ -815,9 +815,15 @@ def query_timeline_sessions(read_conn, db_path: str, date_str: str) -> list[dict
 
 
 def count_consecutive_days(read_conn, db_path: str) -> int:
+    work_categories = sorted(WORK_CATEGORY_KEYS)
+    placeholders = ",".join("?" for _ in work_categories)
     with read_conn(db_path) as conn:
         rows = conn.execute(
-            "SELECT DISTINCT date FROM activity_sessions ORDER BY date DESC"
+            "SELECT DISTINCT date FROM activity_sessions "
+            "WHERE engaged_seconds > 0 "
+            f"AND category_key IN ({placeholders}) "
+            "ORDER BY date DESC",
+            work_categories,
         ).fetchall()
 
     if not rows:

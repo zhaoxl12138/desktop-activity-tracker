@@ -199,14 +199,18 @@ def init_db(db_path: str):
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     recover_stale_wal(db_path)
     conn = sqlite3.connect(db_path, factory=TrackedConnection)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    conn.executescript(SCHEMA)
-    _run_migrations(conn)
-    conn.commit()
-    conn._commit_count = 0
-    return conn
+    try:
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.executescript(SCHEMA)
+        _run_migrations(conn)
+        conn.commit()
+        conn._commit_count = 0
+        return conn
+    except Exception:
+        conn.close()
+        raise
 
 
 def _run_migrations(conn) -> None:

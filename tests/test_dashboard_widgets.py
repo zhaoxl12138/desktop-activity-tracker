@@ -393,6 +393,48 @@ def test_donut_and_thirty_day_trend_expose_attention_semantics():
     app.processEvents()
 
 
+def test_thirty_day_canvas_preserves_gaps_and_splits_line_segments():
+    _app()
+    canvas = _TrendCanvas()
+
+    canvas.set_series(
+        [None, 1.0, 2.0, None, 3.0],
+        mode="30d",
+    )
+
+    assert canvas._points == [None, 1.0, 2.0, None, 3.0]
+    assert canvas._series_state() == "chart"
+    assert canvas._numeric_segments(canvas._points) == [
+        [(1, 1.0), (2, 2.0)],
+        [(4, 3.0)],
+    ]
+
+
+def test_metric_break_notice_takes_priority_over_classification_notice():
+    _app()
+    trend = TrendChartWidget()
+
+    trend.set_history_comparability(
+        metric_break=True,
+        classification_comparable=False,
+    )
+
+    assert not trend.classification_notice.isHidden()
+    assert trend.classification_notice.text() == (
+        "计量口径已变化，历史参与趋势暂不可比"
+    )
+
+    trend.set_history_comparability(
+        metric_break=False,
+        classification_comparable=False,
+    )
+    assert trend.classification_notice.text() == (
+        "分类规则已变化，分类趋势暂不可比"
+    )
+
+    trend.deleteLater()
+
+
 def test_timeline_session_label_preserves_full_title_for_font_elision():
     app = _app()
     widget = TimelineWidget()

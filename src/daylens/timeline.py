@@ -22,6 +22,7 @@ class TimeBlock:
     slot: str = ""                    # "09:00-09:30"
     dominant_category: str = "离线"
     effective_seconds: int = 0
+    engaged_seconds: int = 0
     entertainment_seconds: int = 0
     idle_seconds: int = 0
     work_seconds: int = 0
@@ -93,7 +94,7 @@ def build_timeline(db_path, date_str):
         cat_key = row["category_key"] or ""
         cat_name = row["category_name"] or ""
 
-        _distribute_session(blocks, start, end, dur, eff, idle,
+        _distribute_session(blocks, start, end, dur, eff, engaged, idle,
                             proc, title, cat_key, cat_name,
                             row["session_id"])
 
@@ -103,6 +104,7 @@ def build_timeline(db_path, date_str):
         if total > 1800:
             scale = 1800 / total
             b.effective_seconds = round(b.effective_seconds * scale)
+            b.engaged_seconds = round(b.engaged_seconds * scale)
             b.idle_seconds = round(b.idle_seconds * scale)
             b.entertainment_seconds = round(b.entertainment_seconds * scale)
             b.work_seconds = round(b.work_seconds * scale)
@@ -125,7 +127,6 @@ def identify_focus_blocks(timeline):
 
         # Start of a potential focus block
         j = i
-        total_eff = 0
         total_work = 0
         entertainment_break = 0
         interruptions = 0
@@ -136,10 +137,9 @@ def identify_focus_blocks(timeline):
             bj = timeline[j]
             if bj.dominant_category in ("工作学习", "AI工具"):
                 if entertainment_break < 300:  # < 5 min entertainment in gap
-                    total_eff += bj.effective_seconds
                     total_work += bj.work_seconds
                     if bj.top_app:
-                        app_counter[bj.top_app] = app_counter.get(bj.top_app, 0) + bj.effective_seconds
+                        app_counter[bj.top_app] = app_counter.get(bj.top_app, 0) + bj.work_seconds
                     j += 1
                     entertainment_break = 0
                     continue
@@ -154,7 +154,6 @@ def identify_focus_blocks(timeline):
                 else:
                     break
             elif bj.dominant_category == "混合":
-                total_eff += bj.effective_seconds
                 total_work += bj.work_seconds
                 j += 1
                 break
@@ -283,14 +282,30 @@ def _init_blocks():
     return blocks
 
 
-def _distribute_session(blocks, start, end, dur, eff, idle,
+def _allocate_by_overlap(total: int, overlaps: list[float]) -> list[int]:
+    """Allocate an integer counter proportionally without losing seconds."""
+    wall_seconds = sum(overlaps)
+    if total <= 0 or wall_seconds <= 0:
+        return [0] * len(overlaps)
+    allocated: list[int] = []
+    cumulative_overlap = 0.0
+    previous_total = 0
+    for overlap in overlaps:
+        cumulative_overlap += overlap
+        cumulative_total = round(total * cumulative_overlap / wall_seconds)
+        allocated.append(cumulative_total - previous_total)
+        previous_total = cumulative_total
+    return allocated
+
+
+def _distribute_session(blocks, start, end, dur, eff, engaged, idle,
                         proc, title, cat_key, cat_name, session_id):
     """Split a session's duration across the 30-min blocks it overlaps."""
     if dur <= 0:
         return
 
     current = start
-    # Track session_id per block to count switches
+    segments: list[tuple[int, float]] = []
     while current < end:
         # Find the block this timestamp belongs to
         block_idx = current.hour * 2 + (1 if current.minute >= 30 else 0)
@@ -320,27 +335,39 @@ def _distribute_session(blocks, start, end, dur, eff, idle,
         overlap = (overlap_end - overlap_start).total_seconds()
 
         if overlap > 0:
-            ratio = overlap / dur
-            b = blocks[block_idx]
-            b.effective_seconds += round(eff * ratio)
-            b.idle_seconds += round(idle * ratio)
-            if cat_key in ENTERTAINMENT_CATS:
-                b.entertainment_seconds += round(eff * ratio)
-            if cat_key in WORK_CATS:
-                b.work_seconds += round(eff * ratio)
-
-            # Track per-app usage
-            b._app_seconds[proc] = b._app_seconds.get(proc, 0) + round(eff * ratio)
-            b._title_seconds[title] = b._title_seconds.get(title, 0) + round(eff * ratio)
-
-            # Count switch only once per session per block
-            if not hasattr(b, '_seen_sessions'):
-                b._seen_sessions = set()
-            if session_id not in b._seen_sessions:
-                b._seen_sessions.add(session_id)
-                b.switch_count += 1
+            segments.append((block_idx, overlap))
 
         current = slot_end
+
+    overlaps = [overlap for _, overlap in segments]
+    effective_parts = _allocate_by_overlap(eff, overlaps)
+    engaged_parts = _allocate_by_overlap(engaged, overlaps)
+    idle_parts = _allocate_by_overlap(idle, overlaps)
+
+    for index, (block_idx, _overlap) in enumerate(segments):
+        b = blocks[block_idx]
+        effective_part = effective_parts[index]
+        engaged_part = engaged_parts[index]
+        b.effective_seconds += effective_part
+        b.engaged_seconds += engaged_part
+        b.idle_seconds += idle_parts[index]
+        if cat_key in ENTERTAINMENT_CATS:
+            b.entertainment_seconds += effective_part
+        if cat_key in WORK_CATS:
+            b.work_seconds += engaged_part
+
+        # Track per-app usage
+        b._app_seconds[proc] = b._app_seconds.get(proc, 0) + effective_part
+        b._title_seconds[title] = (
+            b._title_seconds.get(title, 0) + effective_part
+        )
+
+        # Count switch only once per session per block
+        if not hasattr(b, '_seen_sessions'):
+            b._seen_sessions = set()
+        if session_id not in b._seen_sessions:
+            b._seen_sessions.add(session_id)
+            b.switch_count += 1
 
 
 def _finalise_block(b):

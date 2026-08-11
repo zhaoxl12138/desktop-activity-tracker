@@ -1064,6 +1064,8 @@ class TrendChartWidget(QFrame):
         )
         self.classification_notice.setVisible(False)
         root.addWidget(self.classification_notice)
+        self._classification_comparable = True
+        self._metric_break = False
 
         self.canvas = _TrendCanvas()
         self.canvas.setMinimumHeight(160)
@@ -1082,7 +1084,30 @@ class TrendChartWidget(QFrame):
         root.addWidget(self._cmp_legend)
 
     def set_classification_comparable(self, comparable: bool) -> None:
-        self.classification_notice.setVisible(not bool(comparable))
+        self.set_history_comparability(
+            metric_break=self._metric_break,
+            classification_comparable=comparable,
+        )
+
+    def set_history_comparability(
+        self,
+        *,
+        metric_break: bool,
+        classification_comparable: bool,
+    ) -> None:
+        self._metric_break = bool(metric_break)
+        self._classification_comparable = bool(classification_comparable)
+        if self._metric_break:
+            self.classification_notice.setText(
+                "计量口径已变化，历史参与趋势暂不可比"
+            )
+        else:
+            self.classification_notice.setText(
+                "分类规则已变化，分类趋势暂不可比"
+            )
+        self.classification_notice.setVisible(
+            self._metric_break or not self._classification_comparable
+        )
 
     def set_mode(self, mode: str) -> None:
         if mode in self._series:
@@ -1202,7 +1227,7 @@ class TrendChartWidget(QFrame):
 class _TrendCanvas(QWidget):
     def __init__(self):
         super().__init__()
-        self._points: list[float] = []
+        self._points: list[float | None] = []
         self._labels: list[str] = []
         self._mode = "today"
         self._compare_points: list[float] = []
@@ -1243,7 +1268,10 @@ class _TrendCanvas(QWidget):
             ]
             self._points = [max((series[idx] for series in self._week_series), default=0.0) for idx in range(24)]
         else:
-            self._points = [max(0.0, float(point)) for point in points]
+            self._points = [
+                None if point is None else max(0.0, float(point))
+                for point in points
+            ]
         self._labels = labels or []
         self._mode = mode
         self._compare_points = [max(0.0, float(p)) for p in (compare_points or [])]
@@ -1260,7 +1288,11 @@ class _TrendCanvas(QWidget):
         if self._mode == "7d" and self._week_series:
             valid_count = sum(1 for series in self._week_series for value in series if value > 0)
             return "chart" if valid_count > 0 else "empty"
-        valid_count = sum(1 for value in self._points if value > 0)
+        valid_count = sum(
+            1
+            for value in self._points
+            if value is not None and value > 0
+        )
         if valid_count == 0:
             return "empty"
         if self._mode == "today" and valid_count < 3:
@@ -1311,7 +1343,10 @@ class _TrendCanvas(QWidget):
             self._draw_empty(painter, r, "📊 数据积累中\n记录满30分钟后开始生成趋势图")
             return
 
-        max_value = max(self._points)
+        max_value = max(
+            (value for value in self._points if value is not None),
+            default=0.0,
+        )
         if self._mode == "7d" and self._week_series:
             max_value = max(max(series) for series in self._week_series)
         y_max = self._compute_y_axis_max(max_value)
@@ -1429,39 +1464,71 @@ class _TrendCanvas(QWidget):
 
     def _draw_single_line(self, painter: QPainter, chart_rect: QRectF, y_max: float) -> None:
         step = chart_rect.width() / max(len(self._points) - 1, 1)
-        chart_points = []
-        for index, value in enumerate(self._points):
-            x = chart_rect.left() + index * step
-            y = chart_rect.bottom() - (value / y_max) * chart_rect.height()
-            chart_points.append(QPointF(x, y))
+        chart_segments = [
+            [
+                QPointF(
+                    chart_rect.left() + index * step,
+                    chart_rect.bottom()
+                    - (value / y_max) * chart_rect.height(),
+                )
+                for index, value in segment
+            ]
+            for segment in self._numeric_segments(self._points)
+        ]
 
-        if len(self._points) > 5:
-            fill_path = QPainterPath()
-            fill_path.moveTo(chart_rect.left(), chart_rect.bottom())
-            for pt in chart_points:
-                fill_path.lineTo(pt)
-            fill_path.lineTo(chart_rect.right(), chart_rect.bottom())
-            fill_path.closeSubpath()
-            fill_color = QColor(COLORS["success_green"])
-            fill_color.setAlpha(25)
-            painter.setBrush(fill_color)
-            painter.setPen(Qt.NoPen)
-            painter.drawPath(fill_path)
+        fill_color = QColor(COLORS["success_green"])
+        fill_color.setAlpha(25)
+        for chart_points in chart_segments:
+            if len(chart_points) > 5:
+                fill_path = QPainterPath()
+                fill_path.moveTo(
+                    chart_points[0].x(),
+                    chart_rect.bottom(),
+                )
+                for point in chart_points:
+                    fill_path.lineTo(point)
+                fill_path.lineTo(
+                    chart_points[-1].x(),
+                    chart_rect.bottom(),
+                )
+                fill_path.closeSubpath()
+                painter.setBrush(fill_color)
+                painter.setPen(Qt.NoPen)
+                painter.drawPath(fill_path)
 
-        line_path = QPainterPath()
-        line_path.moveTo(chart_points[0])
-        for pt in chart_points[1:]:
-            line_path.lineTo(pt)
-        painter.setPen(QPen(QColor(COLORS["success_green"]), 2))
-        painter.setBrush(Qt.NoBrush)
-        painter.drawPath(line_path)
+            if len(chart_points) > 1:
+                line_path = QPainterPath()
+                line_path.moveTo(chart_points[0])
+                for point in chart_points[1:]:
+                    line_path.lineTo(point)
+                painter.setPen(QPen(QColor(COLORS["success_green"]), 2))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawPath(line_path)
 
         dot_color = QColor(COLORS["success_green"])
         dot_color.setAlpha(220)
         painter.setPen(Qt.NoPen)
         painter.setBrush(dot_color)
-        for pt in chart_points:
-            painter.drawEllipse(pt, 2.5, 2.5)
+        for chart_points in chart_segments:
+            for point in chart_points:
+                painter.drawEllipse(point, 2.5, 2.5)
+
+    @staticmethod
+    def _numeric_segments(
+        points: list[float | None],
+    ) -> list[list[tuple[int, float]]]:
+        segments: list[list[tuple[int, float]]] = []
+        current: list[tuple[int, float]] = []
+        for index, value in enumerate(points):
+            if value is None:
+                if current:
+                    segments.append(current)
+                    current = []
+                continue
+            current.append((index, value))
+        if current:
+            segments.append(current)
+        return segments
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
         from PySide6.QtWidgets import QToolTip

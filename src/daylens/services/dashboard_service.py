@@ -20,6 +20,9 @@ from .trusted_metrics_service import (
 WORK_KEYS = {"ai_tools", "coding", "office", "reading", "creative"}
 ENTERTAINMENT_KEYS = {"video", "gaming"}
 LOGGER = logging.getLogger(__name__)
+THIRTY_DAY_METRIC_BREAK_NOTICE = (
+    "计量口径已变化，历史参与趋势暂不可比"
+)
 
 
 def _rolling_date_strings(end_date: date, days: int) -> list[str]:
@@ -505,6 +508,9 @@ def build_hourly_series_split(sessions: list[dict]) -> dict[str, list[int]]:
         start_dt = _parse_dt(session.get("start_time", ""))
         end_dt = _parse_dt(session.get("end_time", ""))
         effective_seconds = parse_nonnegative_int(session.get("effective_seconds"))
+        engaged_seconds = (
+            parse_nonnegative_int(session.get("engaged_seconds")) or 0
+        )
         if (
             effective_seconds is None
             or effective_seconds <= 0
@@ -519,7 +525,7 @@ def build_hourly_series_split(sessions: list[dict]) -> dict[str, list[int]]:
             h = start_dt.hour
             total[h] += contrib
             if is_work:
-                work[h] += contrib
+                work[h] += engaged_seconds / 60.0
             elif is_entertainment:
                 entertainment[h] += contrib
             continue
@@ -534,7 +540,9 @@ def build_hourly_series_split(sessions: list[dict]) -> dict[str, list[int]]:
             contrib = (effective_seconds * ratio) / 60.0
             total[hour] += contrib
             if is_work:
-                work[hour] += contrib
+                work[hour] += (
+                    engaged_seconds * ratio
+                ) / 60.0
             elif is_entertainment:
                 entertainment[hour] += contrib
             current = segment_end
@@ -731,17 +739,69 @@ def _session_time_range(session: dict) -> str:
     return f"{start_short} - {end_short}".strip()
 
 
-def _build_thirty_day_trend(daily_rows: list[dict]) -> list[float]:
-    points = []
-    for item in daily_rows:
-        field = (
-            "engaged_seconds"
-            if "engaged_seconds" in item
-            else "effective_seconds"
+def _day_has_metric_data(item: dict) -> bool:
+    for field in (
+        "session_count",
+        "legacy_log_sample_count",
+        "total_samples",
+        "effective_seconds",
+        "engaged_seconds",
+        "passive_seconds",
+        "idle_seconds",
+    ):
+        if field not in item:
+            continue
+        parsed = parse_nonnegative_int(item.get(field))
+        if parsed is None:
+            return True
+        if parsed > 0:
+            return True
+    return bool(item.get("dates_with_data") or item.get("metric_versions"))
+
+
+def _day_is_attention_v1_only(item: dict) -> bool:
+    metric_versions = {
+        str(version or "")
+        for version in (item.get("metric_versions") or [])
+        if str(version or "")
+    }
+    return (
+        (parse_nonnegative_int(item.get("session_count")) or 0) > 0
+        and (parse_nonnegative_int(item.get("legacy_session_count")) or 0)
+        == 0
+        and (
+            parse_nonnegative_int(item.get("legacy_log_sample_count")) or 0
         )
-        seconds = parse_nonnegative_int(item.get(field)) or 0
-        points.append(round(seconds / 3600.0, 1))
+        == 0
+        and not bool(item.get("legacy_granularity_unknown", False))
+        and metric_versions == {"attention-v1"}
+    )
+
+
+def _build_thirty_day_trend(
+    daily_rows: list[dict],
+) -> list[float | None]:
+    points: list[float | None] = []
+    for item in daily_rows:
+        if not _day_has_metric_data(item):
+            points.append(0.0)
+        elif not _day_is_attention_v1_only(item):
+            points.append(None)
+        else:
+            seconds = parse_nonnegative_int(item.get("engaged_seconds")) or 0
+            points.append(round(seconds / 3600.0, 1))
     return points
+
+
+def _has_thirty_day_classification_break(daily_rows: list[dict]) -> bool:
+    versions = {
+        str(version or "")
+        for item in daily_rows
+        if _day_has_metric_data(item)
+        for version in (item.get("classification_versions") or [])
+        if str(version or "")
+    }
+    return len(versions) > 1
 
 
 def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
@@ -792,6 +852,12 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
     except Exception:
         LOGGER.exception("Failed to build dashboard thirty-day trend")
         thirty_day_trend = []
+    thirty_day_metric_break = any(
+        point is None for point in thirty_day_trend
+    )
+    thirty_day_classification_break = (
+        _has_thirty_day_classification_break(thirty_day_daily)
+    )
     try:
         raw_fourteen_day_sessions = database.query_sessions_for_dates(
             db_path,
@@ -979,6 +1045,15 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
             "seven_day_labels": seven_day_dates,
             "thirty_days": thirty_day_trend,
             "thirty_day_metric": "engaged",
+            "thirty_day_metric_break": thirty_day_metric_break,
+            "thirty_day_classification_break": (
+                thirty_day_classification_break
+            ),
+            "thirty_day_notice": (
+                THIRTY_DAY_METRIC_BREAK_NOTICE
+                if thirty_day_metric_break
+                else ""
+            ),
         },
     }
 

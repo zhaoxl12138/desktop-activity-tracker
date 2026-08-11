@@ -466,8 +466,13 @@ class TodayOverviewPage(QWidget):
             or any("分类版本" in reason for reason in trust_reasons)
             or len(trust.get("classification_versions", []) or []) > 1
         )
-        self.trend_card.set_classification_comparable(
-            not classification_changed
+        trend = dict(snapshot.get("trend", {}) or {})
+        classification_changed = classification_changed or bool(
+            trend.get("thirty_day_classification_break", False)
+        )
+        self.trend_card.set_history_comparability(
+            metric_break=bool(trend.get("thirty_day_metric_break", False)),
+            classification_comparable=not classification_changed,
         )
 
         distribution = [
@@ -583,7 +588,6 @@ class TodayOverviewPage(QWidget):
         )
         self.session_top3_widget.set_sessions(sessions_with_icons, self.display_name_mapping)
         self.focus_axis.set_minutes(self._build_focus_axis(timeline_sessions))
-        trend = dict(snapshot.get("trend", {}) or {})
         self.trend_card.set_data(
             trend.get("today", []),
             trend.get("yesterday", []),
