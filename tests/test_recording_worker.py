@@ -525,7 +525,8 @@ def test_settings_reload_clears_pending_state_at_rule_version_boundary(
         },
     )
     pending_seconds = (
-        tracker._pending_switch["effective_during_grace"]
+        tracker._pending_switch["engaged_during_grace"]
+        + tracker._pending_switch["passive_during_grace"]
         + tracker._pending_switch["idle_during_grace"]
     )
     old_duration = tracker.current_session.duration_seconds

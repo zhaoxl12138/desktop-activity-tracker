@@ -51,6 +51,17 @@ class AudioForPid:
         return pid == self.playing_pid
 
 
+def _assert_attention_conserved(session):
+    assert session.duration_seconds == (
+        session.engaged_seconds
+        + session.passive_seconds
+        + session.idle_seconds
+    )
+    assert session.effective_seconds == (
+        session.engaged_seconds + session.passive_seconds
+    )
+
+
 @pytest.fixture(autouse=True)
 def stable_input(monkeypatch):
     monkeypatch.setattr("daylens.session_tracker._get_cursor_pos", lambda: (0, 0))
@@ -89,7 +100,7 @@ def _tracker(
     )
 
 
-def test_social_passive_rule_uses_passive_threshold_in_session_and_snapshot():
+def test_non_video_passive_rule_uses_normal_idle_threshold():
     tracker = _tracker()
     window = {
         "process_name": "Chat.exe",
@@ -101,10 +112,113 @@ def test_social_passive_rule_uses_passive_threshold_in_session_and_snapshot():
     tracker.tick(0, window)
     snapshot = tracker.tick(10, window)
 
-    assert tracker.current_session.effective_seconds == 2
-    assert tracker.current_session.idle_seconds == 0
+    assert tracker.current_session.engaged_seconds == 0
+    assert tracker.current_session.passive_seconds == 0
+    assert tracker.current_session.effective_seconds == 0
+    assert tracker.current_session.idle_seconds == 2
+    assert snapshot["attention_state"] == "idle"
+    assert snapshot["is_effective"] is False
+    assert snapshot["is_user_active"] is False
+
+
+def test_active_video_counts_as_engaged_and_snapshot_exposes_versions():
+    tracker = _tracker(audio_detector=AudioForPid(playing_pid=9))
+    window = {
+        "process_name": "VLC.exe",
+        "window_title": "Movie",
+        "exe_path": "",
+        "pid": 9,
+    }
+    tracker.mark_user_active()
+
+    snapshot = tracker.tick(0, window)
+    session = tracker.current_session
+
+    assert session.engaged_seconds == 1
+    assert session.passive_seconds == 0
+    assert session.idle_seconds == 0
+    assert snapshot["engaged_seconds"] == 1
+    assert snapshot["passive_seconds"] == 0
+    assert snapshot["attention_state"] == "engaged"
+    assert snapshot["metric_version"] == "attention-v1"
+    assert snapshot["classification_version"] == "legacy"
     assert snapshot["is_effective"] is True
-    assert snapshot["is_user_active"] is True
+    _assert_attention_conserved(session)
+
+
+def test_idle_video_with_audio_back_corrects_engaged_window_to_passive():
+    tracker = _tracker(
+        idle_threshold=1,
+        passive_threshold=99,
+        audio_detector=AudioForPid(playing_pid=10),
+    )
+    window = {
+        "process_name": "VLC.exe",
+        "window_title": "Movie",
+        "exe_path": "",
+        "pid": 10,
+    }
+
+    tracker.tick(0, window)
+    tracker.tick(0, window)
+    snapshot = tracker.tick(0, window)
+    session = tracker.current_session
+
+    assert session.engaged_seconds == 0
+    assert session.passive_seconds == 3
+    assert session.idle_seconds == 0
+    assert session.effective_seconds == 3
+    assert tracker._persistent_idle == 3
+    assert snapshot["attention_state"] == "passive"
+    assert snapshot["is_effective"] is True
+    _assert_attention_conserved(session)
+
+
+def test_idle_video_without_audio_back_corrects_engaged_window_to_idle():
+    tracker = _tracker(idle_threshold=1, passive_threshold=99)
+    window = {
+        "process_name": "VLC.exe",
+        "window_title": "Movie",
+        "exe_path": "",
+        "pid": 10,
+    }
+
+    tracker.tick(0, window)
+    tracker.tick(0, window)
+    snapshot = tracker.tick(0, window)
+    session = tracker.current_session
+
+    assert session.engaged_seconds == 0
+    assert session.passive_seconds == 0
+    assert session.idle_seconds == 3
+    assert snapshot["attention_state"] == "idle"
+    assert snapshot["is_effective"] is False
+    _assert_attention_conserved(session)
+
+
+def test_audio_from_non_video_process_never_counts_as_passive():
+    tracker = _tracker(
+        idle_threshold=1,
+        audio_detector=AudioForPid(playing_pid=11),
+    )
+    window = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 11,
+    }
+
+    tracker.tick(0, window)
+    tracker.tick(0, window)
+    snapshot = tracker.tick(0, window)
+    session = tracker.current_session
+
+    assert session.engaged_seconds == 0
+    assert session.passive_seconds == 0
+    assert session.idle_seconds == 3
+    assert snapshot["audio_playing"] is False
+    assert snapshot["attention_state"] == "idle"
+    _assert_attention_conserved(session)
 
 
 def test_interactive_rule_still_uses_normal_idle_threshold():
@@ -119,8 +233,11 @@ def test_interactive_rule_still_uses_normal_idle_threshold():
     tracker.tick(0, window)
     snapshot = tracker.tick(10, window)
 
+    assert tracker.current_session.engaged_seconds == 0
+    assert tracker.current_session.passive_seconds == 0
     assert tracker.current_session.effective_seconds == 0
     assert tracker.current_session.idle_seconds == 2
+    assert snapshot["attention_state"] == "idle"
     assert snapshot["is_effective"] is False
     assert snapshot["is_user_active"] is False
 
@@ -199,6 +316,7 @@ def test_immediate_work_to_video_switch_counts_the_new_sessions_first_sample():
         },
     )
 
+    tracker.mark_user_active()
     snapshot = tracker.tick(
         0,
         {
@@ -211,8 +329,11 @@ def test_immediate_work_to_video_switch_counts_the_new_sessions_first_sample():
 
     assert tracker.current_session.process_name == "VLC.exe"
     assert tracker.current_session.duration_seconds == 2
+    assert tracker.current_session.engaged_seconds == 2
+    assert tracker.current_session.passive_seconds == 0
     assert tracker.current_session.effective_seconds == 2
     assert snapshot["duration_seconds"] == 2
+    _assert_attention_conserved(tracker.current_session)
 
 
 def test_same_process_with_new_pid_refreshes_audio_detection_target():
@@ -453,7 +574,8 @@ def test_classifier_version_change_preserves_and_clears_pending_counters():
         },
     )
     expected_duration = tracker.current_session.duration_seconds + (
-        tracker._pending_switch["effective_during_grace"]
+        tracker._pending_switch["engaged_during_grace"]
+        + tracker._pending_switch["passive_during_grace"]
         + tracker._pending_switch["idle_during_grace"]
     )
 
@@ -464,9 +586,7 @@ def test_classifier_version_change_preserves_and_clears_pending_counters():
     assert replaced is True
     assert len(ended) == 1
     assert ended[0].duration_seconds == expected_duration
-    assert ended[0].duration_seconds == (
-        ended[0].effective_seconds + ended[0].idle_seconds
-    )
+    _assert_attention_conserved(ended[0])
     assert tracker.current_session is None
     assert tracker._pending_switch is None
     assert tracker.classification_version == "rules-new"
@@ -511,6 +631,8 @@ def test_failed_classifier_boundary_keeps_old_version_and_pending_state():
     pending = tracker._pending_switch
     old_counters = (
         old_session.duration_seconds,
+        old_session.engaged_seconds,
+        old_session.passive_seconds,
         old_session.effective_seconds,
         old_session.idle_seconds,
     )
@@ -526,6 +648,8 @@ def test_failed_classifier_boundary_keeps_old_version_and_pending_state():
     assert old_session.switch_reason == old_reason
     assert (
         old_session.duration_seconds,
+        old_session.engaged_seconds,
+        old_session.passive_seconds,
         old_session.effective_seconds,
         old_session.idle_seconds,
     ) == old_counters
@@ -572,6 +696,8 @@ def test_classifier_boundary_exception_rolls_back_active_and_pending_state():
         old_session.end_time,
         old_session.switch_reason,
         old_session.duration_seconds,
+        old_session.engaged_seconds,
+        old_session.passive_seconds,
         old_session.effective_seconds,
         old_session.idle_seconds,
     )
@@ -587,12 +713,14 @@ def test_classifier_boundary_exception_rolls_back_active_and_pending_state():
         old_session.end_time,
         old_session.switch_reason,
         old_session.duration_seconds,
+        old_session.engaged_seconds,
+        old_session.passive_seconds,
         old_session.effective_seconds,
         old_session.idle_seconds,
     ) == old_state
 
 
-def test_social_passive_grace_uses_pending_policy_at_threshold_boundary():
+def test_social_passive_grace_uses_normal_threshold_and_stays_non_passive():
     tracker = _tracker(idle_threshold=1, passive_threshold=3)
     coding = {
         "process_name": "Code.exe",
@@ -614,18 +742,22 @@ def test_social_passive_grace_uses_pending_policy_at_threshold_boundary():
     assert tracker.current_session.process_name == "Code.exe"
     assert tracker._pending_switch["domain"] == "social"
     assert tracker.cross_group_grace == 30
-    assert tracker._pending_switch["effective_during_grace"] == 2
-    assert tracker._pending_switch["idle_during_grace"] == 0
-    assert first["is_effective"] is True
-    assert boundary["is_effective"] is True
+    assert tracker._pending_switch["engaged_during_grace"] == 0
+    assert tracker._pending_switch["passive_during_grace"] == 0
+    assert tracker._pending_switch["idle_during_grace"] == 2
+    assert first["is_effective"] is False
+    assert boundary["is_effective"] is False
 
     tracker._pending_switch["since"] -= timedelta(seconds=31)
     after_threshold = tracker.tick(0, social)
 
     assert tracker.current_session.process_name == "Chat.exe"
+    assert tracker.current_session.engaged_seconds == 0
+    assert tracker.current_session.passive_seconds == 0
     assert tracker.current_session.effective_seconds == 0
     assert tracker.current_session.idle_seconds == 3
     assert after_threshold["is_effective"] is False
+    _assert_attention_conserved(tracker.current_session)
 
 
 def test_social_interactive_grace_uses_normal_threshold_and_matches_snapshot():
@@ -646,15 +778,19 @@ def test_social_interactive_grace_uses_normal_threshold_and_matches_snapshot():
 
     at_boundary = tracker.tick(0, social)
     assert at_boundary["is_effective"] is True
-    assert tracker._pending_switch["effective_during_grace"] == 1
+    assert tracker._pending_switch["engaged_during_grace"] == 1
+    assert tracker._pending_switch["passive_during_grace"] == 0
 
     tracker._pending_switch["since"] -= timedelta(seconds=31)
     after_threshold = tracker.tick(0, social)
 
     assert tracker.current_session.process_name == "Forum.exe"
+    assert tracker.current_session.engaged_seconds == 0
+    assert tracker.current_session.passive_seconds == 0
     assert tracker.current_session.effective_seconds == 0
     assert tracker.current_session.idle_seconds == 2
     assert after_threshold["is_effective"] is False
+    _assert_attention_conserved(tracker.current_session)
 
 
 def test_immediate_entertainment_switch_waits_when_end_callback_returns_false():
@@ -708,19 +844,20 @@ def test_immediate_entertainment_switch_waits_when_end_callback_returns_false():
     assert len(callback_sessions) == 2
 
 
-def test_pending_video_with_audio_stays_effective_past_passive_threshold():
+def test_pending_video_with_audio_stays_passive_past_auto_close_threshold():
     persist_attempts = []
 
     def persist(session):
         persist_attempts.append(session)
-        return len(persist_attempts) > 303
+        return len(persist_attempts) > 4
 
     audio = AudioForPid(playing_pid=51)
     tracker = SessionTracker(
         config={
             "tracker": {
                 "sample_interval_seconds": 1,
-                "entertainment_idle_threshold_seconds": 300,
+                "idle_threshold_seconds": 1,
+                "entertainment_idle_threshold_seconds": 3,
                 "cross_group_grace_seconds": 30,
             }
         },
@@ -742,12 +879,13 @@ def test_pending_video_with_audio_stays_effective_past_passive_threshold():
     }
     tracker.tick(0, coding)
 
-    for _ in range(303):
+    for _ in range(4):
         failed_snapshot = tracker.tick(0, video)
 
     pending = tracker._pending_switch
     assert pending["pid"] == 51
-    assert pending["effective_during_grace"] == 303
+    assert pending["engaged_during_grace"] == 0
+    assert pending["passive_during_grace"] == 4
     assert pending["idle_during_grace"] == 0
     assert failed_snapshot["audio_playing"] is True
     assert failed_snapshot["is_effective"] is True
@@ -755,14 +893,14 @@ def test_pending_video_with_audio_stays_effective_past_passive_threshold():
     success_snapshot = tracker.tick(0, video)
     session = tracker.current_session
 
-    assert len(persist_attempts) == 304
+    assert len(persist_attempts) == 5
     assert session.process_name == "VLC.exe"
-    assert session.duration_seconds == 304
-    assert session.effective_seconds == 304
+    assert session.duration_seconds == 5
+    assert session.engaged_seconds == 0
+    assert session.passive_seconds == 5
+    assert session.effective_seconds == 5
     assert session.idle_seconds == 0
-    assert session.duration_seconds == (
-        session.effective_seconds + session.idle_seconds
-    )
+    _assert_attention_conserved(session)
     assert success_snapshot["audio_playing"] is True
     assert success_snapshot["is_effective"] is True
     assert set(audio.seen_pids) == {51}
@@ -802,7 +940,8 @@ def test_immediate_entertainment_switch_conserves_abandoned_grace_counters():
     tracker.tick(0, social)
     tracker.tick(0, social)
     pending_seconds = (
-        tracker._pending_switch["effective_during_grace"]
+        tracker._pending_switch["engaged_during_grace"]
+        + tracker._pending_switch["passive_during_grace"]
         + tracker._pending_switch["idle_during_grace"]
     )
     old_duration = tracker.current_session.duration_seconds
@@ -811,10 +950,7 @@ def test_immediate_entertainment_switch_conserves_abandoned_grace_counters():
 
     assert len(ended) == 1
     assert ended[0].duration_seconds == old_duration + pending_seconds
-    assert (
-        ended[0].effective_seconds + ended[0].idle_seconds
-        == ended[0].duration_seconds
-    )
+    _assert_attention_conserved(ended[0])
     assert tracker.current_session.process_name == "VLC.exe"
     assert tracker._pending_switch is None
 
@@ -866,3 +1002,180 @@ def test_grace_confirmation_waits_when_end_callback_returns_false():
     assert tracker.current_session.process_name == "Chat.exe"
     assert tracker._pending_switch is None
     assert len(callback_sessions) == 2
+    _assert_attention_conserved(tracker.current_session)
+
+
+def test_cancelled_grace_preserves_all_pending_attention_buckets():
+    tracker = _tracker(idle_threshold=1, passive_threshold=99)
+    coding = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 60,
+    }
+    social = {
+        "process_name": "Chat.exe",
+        "window_title": "Friends",
+        "exe_path": "",
+        "pid": 61,
+    }
+    tracker.tick(0, coding)
+    tracker.tick(0, social)
+    tracker.tick(0, social)
+    pending_total = sum(
+        tracker._pending_switch[key]
+        for key in (
+            "engaged_during_grace",
+            "passive_during_grace",
+            "idle_during_grace",
+        )
+    )
+    before = tracker.current_session.duration_seconds
+
+    tracker.mark_user_active()
+    tracker.tick(0, coding)
+    session = tracker.current_session
+
+    assert tracker._pending_switch is None
+    assert session.duration_seconds == before + pending_total + 1
+    _assert_attention_conserved(session)
+
+
+def test_finish_current_folds_pending_attention_once_when_persistence_retries():
+    persist_results = iter([False, True])
+    attempts = []
+
+    def persist(session):
+        attempts.append(
+            (
+                session.duration_seconds,
+                session.engaged_seconds,
+                session.passive_seconds,
+                session.idle_seconds,
+            )
+        )
+        return next(persist_results)
+
+    tracker = SessionTracker(
+        config={
+            "tracker": {
+                "sample_interval_seconds": 1,
+                "idle_threshold_seconds": 1,
+                "min_session_seconds": 1,
+            }
+        },
+        classifier=MappingClassifier(),
+        on_session_end=persist,
+    )
+    coding = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 62,
+    }
+    social = {
+        "process_name": "Chat.exe",
+        "window_title": "Friends",
+        "exe_path": "",
+        "pid": 63,
+    }
+    tracker.tick(0, coding)
+    tracker.tick(0, social)
+    expected_duration = tracker.current_session.duration_seconds + sum(
+        tracker._pending_switch[key]
+        for key in (
+            "engaged_during_grace",
+            "passive_during_grace",
+            "idle_during_grace",
+        )
+    )
+
+    assert tracker.finish_current("shutdown") is False
+    assert tracker.current_session is not None
+    assert tracker._pending_switch is None
+    assert tracker.current_session.duration_seconds == expected_duration
+    _assert_attention_conserved(tracker.current_session)
+
+    assert tracker.finish_current("shutdown") is True
+    assert tracker.current_session is None
+    assert attempts[0] == attempts[1]
+
+
+@pytest.mark.parametrize("boundary", ["cross_day", "system_gap"])
+def test_hard_boundary_preserves_pending_attention_counters(boundary):
+    ended = []
+    tracker = _tracker(idle_threshold=1, passive_threshold=99)
+    tracker._on_session_end = ended.append
+    coding = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 64,
+    }
+    social = {
+        "process_name": "Chat.exe",
+        "window_title": "Friends",
+        "exe_path": "",
+        "pid": 65,
+    }
+    tracker.tick(0, coding)
+    tracker.tick(0, social)
+    expected_duration = tracker.current_session.duration_seconds + sum(
+        tracker._pending_switch[key]
+        for key in (
+            "engaged_during_grace",
+            "passive_during_grace",
+            "idle_during_grace",
+        )
+    )
+    if boundary == "cross_day":
+        tracker.current_session.date = "1999-01-01"
+    else:
+        tracker._last_tick_wall_time -= timedelta(seconds=600)
+
+    tracker.tick(0, social)
+
+    assert ended and ended[0].switch_reason == boundary
+    assert ended[0].duration_seconds == expected_duration
+    _assert_attention_conserved(ended[0])
+
+
+def test_audible_video_is_not_auto_closed_and_silent_tail_does_not_erase_passive_time():
+    ended = []
+    audio = AudioForPid(playing_pid=70)
+    tracker = SessionTracker(
+        config={
+            "tracker": {
+                "sample_interval_seconds": 1,
+                "idle_threshold_seconds": 1,
+                "entertainment_idle_threshold_seconds": 3,
+                "min_session_seconds": 1,
+            }
+        },
+        classifier=MappingClassifier(),
+        on_session_end=ended.append,
+        audio_detector=audio,
+    )
+    video = {
+        "process_name": "VLC.exe",
+        "window_title": "Movie",
+        "exe_path": "",
+        "pid": 70,
+    }
+
+    for _ in range(4):
+        tracker.tick(0, video)
+
+    assert ended == []
+    assert tracker.current_session.passive_seconds == 4
+    assert tracker._persistent_idle == 4
+
+    audio.playing_pid = None
+    for _ in range(4):
+        tracker.tick(0, video)
+
+    assert len(ended) == 1
+    session = ended[0]
+    assert session.passive_seconds == 4
+    assert session.idle_seconds == 0
+    _assert_attention_conserved(session)

@@ -144,7 +144,16 @@ def test_grace_period_time_is_not_counted_twice(monkeypatch):
     )
     tracker.tick(0, {"process_name": "Code.exe", "window_title": "main.py", "exe_path": ""})
     before = tracker.current_session.duration_seconds
-    tracker._pending_switch = {"domain": "entertainment", "since": datetime.now(), "effective_during_grace": 0, "idle_during_grace": 0}
+    tracker._pending_switch = {
+        "domain": "entertainment",
+        "since": datetime.now(),
+        "cat_key": "video",
+        "active_rule": "passive_allowed",
+        "engaged_during_grace": 0,
+        "passive_during_grace": 0,
+        "idle_during_grace": 0,
+        "idle_corrected": False,
+    }
     tracker._tick_grace_current(datetime.now())
 
     assert tracker.current_session.duration_seconds == before
@@ -162,14 +171,20 @@ def test_video_auto_close_keeps_duration_components_consistent(monkeypatch):
         session_id="video", start_time=datetime.now(), end_time=datetime.now(), date=datetime.now().strftime("%Y-%m-%d"),
         process_name="vlc.exe", exe_path="", window_title="Movie", normalized_title="Movie", category_key="video",
         category_name="video", active_rule="passive_allowed", initial_title="Movie",
-        duration_seconds=10, effective_seconds=10,
+        duration_seconds=10, effective_seconds=10, engaged_seconds=10,
     )
-    for _ in range(8):
+    tracker.idle_threshold = 1
+    for _ in range(4):
         tracker._tick_current(10, datetime.now())
 
     assert ended
     session = ended[0]
-    assert session.duration_seconds >= session.effective_seconds + session.idle_seconds
+    assert session.duration_seconds == (
+        session.engaged_seconds + session.passive_seconds + session.idle_seconds
+    )
+    assert session.effective_seconds == (
+        session.engaged_seconds + session.passive_seconds
+    )
 
 
 def test_large_sampling_gap_closes_session(monkeypatch):
@@ -185,6 +200,47 @@ def test_large_sampling_gap_closes_session(monkeypatch):
     tracker.tick(0, {"process_name": "Code.exe", "window_title": "main.py", "exe_path": ""})
 
     assert ended and ended[0].switch_reason == "system_gap"
+    assert ended[0].duration_seconds == (
+        ended[0].engaged_seconds
+        + ended[0].passive_seconds
+        + ended[0].idle_seconds
+    )
+    assert ended[0].effective_seconds == (
+        ended[0].engaged_seconds + ended[0].passive_seconds
+    )
+
+
+def test_cross_day_boundary_preserves_attention_counters(monkeypatch):
+    monkeypatch.setattr("daylens.session_tracker._get_cursor_pos", lambda: (0, 0))
+    monkeypatch.setattr("daylens.session_tracker._get_keyboard_snapshot", lambda: b"")
+    ended = []
+    tracker = SessionTracker(
+        config={
+            "tracker": {
+                "sample_interval_seconds": 1,
+                "flush_interval_seconds": 99,
+                "min_session_seconds": 1,
+            }
+        },
+        classifier=FakeClassifier(),
+        on_session_end=ended.append,
+    )
+    window = {"process_name": "Code.exe", "window_title": "main.py", "exe_path": ""}
+    tracker.mark_user_active()
+    tracker.tick(0, window)
+    tracker.current_session.date = "1999-01-01"
+
+    tracker.tick(0, window)
+
+    assert ended and ended[0].switch_reason == "cross_day"
+    assert ended[0].duration_seconds == (
+        ended[0].engaged_seconds
+        + ended[0].passive_seconds
+        + ended[0].idle_seconds
+    )
+    assert ended[0].effective_seconds == (
+        ended[0].engaged_seconds + ended[0].passive_seconds
+    )
 
 
 def test_worker_self_window_snapshot_is_marked_ignored():

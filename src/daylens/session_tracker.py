@@ -232,6 +232,8 @@ class SessionTracker:
         self._idle_corrected: bool = False  # back-correct threshold window once per idle period
         self._awaiting_activity: bool = False  # don't create new session while idle after auto-close
         self._last_tick_wall_time: datetime | None = None
+        self._last_attention_state: str = "idle"
+        self._video_silent_idle: float = 0.0
 
     # ── Public API ──────────────────────────────────────────────────
 
@@ -243,6 +245,9 @@ class SessionTracker:
         """End the current session without starting a replacement session."""
         if self._current is None:
             return True
+        if self._pending_switch is not None:
+            self._credit_pending_to_session(self._current, self._pending_switch)
+            self._pending_switch = None
         self._current.end_time = datetime.now()
         self._current.switch_reason = reason
         return self._emit_session()
@@ -264,19 +269,15 @@ class SessionTracker:
                 session.end_time,
                 session.switch_reason,
                 session.duration_seconds,
+                session.engaged_seconds,
+                session.passive_seconds,
                 session.effective_seconds,
                 session.idle_seconds,
             )
-            pending_effective = 0
-            pending_idle = 0
-            if self._pending_switch is not None:
-                pending_effective = self._pending_switch["effective_during_grace"]
-                pending_idle = self._pending_switch["idle_during_grace"]
             session.end_time = datetime.now()
             session.switch_reason = "classification_change"
-            session.duration_seconds += pending_effective + pending_idle
-            session.effective_seconds += pending_effective
-            session.idle_seconds += pending_idle
+            if self._pending_switch is not None:
+                self._credit_pending_to_session(session, self._pending_switch)
             try:
                 persisted = self._emit_session()
             except Exception:
@@ -284,6 +285,8 @@ class SessionTracker:
                     session.end_time,
                     session.switch_reason,
                     session.duration_seconds,
+                    session.engaged_seconds,
+                    session.passive_seconds,
                     session.effective_seconds,
                     session.idle_seconds,
                 ) = original_state
@@ -293,6 +296,8 @@ class SessionTracker:
                     session.end_time,
                     session.switch_reason,
                     session.duration_seconds,
+                    session.engaged_seconds,
+                    session.passive_seconds,
                     session.effective_seconds,
                     session.idle_seconds,
                 ) = original_state
@@ -315,14 +320,41 @@ class SessionTracker:
         self._last_kb_state = None
         self._activity_from_hook = True
         self._awaiting_activity = False
+        self._video_silent_idle = 0.0
 
-    def _idle_limit(self, active_rule=None) -> int:
-        """Return the idle threshold for the active session policy."""
-        if active_rule is None and self._current is not None:
-            active_rule = self._current.active_rule
-        if active_rule == "passive_allowed":
-            return self.entertainment_idle_threshold
-        return self.idle_threshold
+    def _attention_bucket(self, category_key: str, audio_playing: bool) -> str:
+        if self._persistent_idle <= self.idle_threshold:
+            return "engaged"
+        if category_key == "video" and audio_playing:
+            return "passive"
+        return "idle"
+
+    @staticmethod
+    def _sync_effective(session: ActivitySession) -> None:
+        session.effective_seconds = (
+            session.engaged_seconds + session.passive_seconds
+        )
+
+    @staticmethod
+    def _pending_components(pending: dict) -> tuple[float, float, float]:
+        return (
+            pending.get("engaged_during_grace", 0),
+            pending.get("passive_during_grace", 0),
+            pending.get("idle_during_grace", 0),
+        )
+
+    @classmethod
+    def _credit_pending_to_session(
+        cls,
+        session: ActivitySession,
+        pending: dict,
+    ) -> None:
+        engaged, passive, idle = cls._pending_components(pending)
+        session.duration_seconds += engaged + passive + idle
+        session.engaged_seconds += engaged
+        session.passive_seconds += passive
+        session.idle_seconds += idle
+        cls._sync_effective(session)
 
     # ── Tick ────────────────────────────────────────────────────────
 
@@ -346,6 +378,12 @@ class SessionTracker:
             > max(120, self.idle_threshold * 2)
         ):
             if self._current is not None:
+                if self._pending_switch is not None:
+                    self._credit_pending_to_session(
+                        self._current,
+                        self._pending_switch,
+                    )
+                    self._pending_switch = None
                 self._current.end_time = self._last_tick_wall_time
                 self._current.switch_reason = "system_gap"
                 self._emit_session()
@@ -397,6 +435,12 @@ class SessionTracker:
 
             # ── Cross-day ──────────────────────────────────────────
             if self._current.date != date_str:
+                if self._pending_switch is not None:
+                    self._credit_pending_to_session(
+                        self._current,
+                        self._pending_switch,
+                    )
+                    self._pending_switch = None
                 self._current.end_time = now
                 self._current.switch_reason = "cross_day"
                 self._emit_session()
@@ -417,12 +461,10 @@ class SessionTracker:
             # ── Same domain ────────────────────────────────────────
             else:
                 if self._pending_switch is not None:
-                    self._current.duration_seconds += (
-                        self._pending_switch["effective_during_grace"]
-                        + self._pending_switch["idle_during_grace"]
+                    self._credit_pending_to_session(
+                        self._current,
+                        self._pending_switch,
                     )
-                    self._current.effective_seconds += self._pending_switch["effective_during_grace"]
-                    self._current.idle_seconds += self._pending_switch["idle_during_grace"]
                     self._pending_switch = None
 
                 # A session is an app-level record. Switching from Cursor to
@@ -487,6 +529,7 @@ class SessionTracker:
             self._persistent_idle = 0.0
             self._last_cursor_pos = None
             self._last_kb_state = None
+            self._video_silent_idle = 0.0
             self._current = ActivitySession(
                 session_id=uuid.uuid4().hex[:12],
                 start_time=now,
@@ -518,8 +561,8 @@ class SessionTracker:
         - First detection → start 30s timer, keep ticking current session.
         - Same target domain still active → check timer, confirm if expired.
         - Switched to yet another domain → reset timer to new target.
-        - Activity during grace period is credited as effective (user is
-          actively using the new app), not idle.
+        - Each grace-period sample is credited to engaged, passive, or idle
+          using the pending target's category and audio state.
 
         Entertainment (video/gaming) is exempt from the grace period —
         the user intentionally opened a video player, no need to wait.
@@ -529,11 +572,7 @@ class SessionTracker:
             p = self._pending_switch
             if p is None or p.get("domain") != new_domain:
                 if p is not None:
-                    effective = p["effective_during_grace"]
-                    idle = p["idle_during_grace"]
-                    self._current.duration_seconds += effective + idle
-                    self._current.effective_seconds += effective
-                    self._current.idle_seconds += idle
+                    self._credit_pending_to_session(self._current, p)
                 p = {
                     "domain": new_domain,
                     "since": now,
@@ -545,7 +584,8 @@ class SessionTracker:
                     "cat_name": cat_name,
                     "active_rule": active_rule,
                     "pid": self._last_pid,
-                    "effective_during_grace": 0,
+                    "engaged_during_grace": 0,
+                    "passive_during_grace": 0,
                     "idle_during_grace": 0,
                     "idle_corrected": False,
                 }
@@ -574,9 +614,9 @@ class SessionTracker:
                 self._tick_grace_current(now)
                 return False
 
-            effective = p["effective_during_grace"]
-            idle = p["idle_during_grace"]
-            if effective + idle == 0:
+            engaged, passive, idle = self._pending_components(p)
+            pending_duration = engaged + passive + idle
+            if pending_duration == 0:
                 self._persistent_idle = 0.0
                 self._idle_corrected = False
             self._last_cursor_pos = None
@@ -593,10 +633,12 @@ class SessionTracker:
                 category_key=p["cat_key"],
                 category_name=p["cat_name"],
                 active_rule=p["active_rule"],
-                duration_seconds=effective + idle,
-                effective_seconds=effective,
+                duration_seconds=pending_duration,
+                effective_seconds=engaged + passive,
                 idle_seconds=idle,
                 initial_title=p["norm_title"],
+                engaged_seconds=engaged,
+                passive_seconds=passive,
                 classification_version=self.classification_version,
             )
             self._pending_switch = None
@@ -604,12 +646,10 @@ class SessionTracker:
 
         if self._pending_switch is None or self._pending_switch["domain"] != new_domain:
             if self._pending_switch is not None:
-                self._current.duration_seconds += (
-                    self._pending_switch["effective_during_grace"]
-                    + self._pending_switch["idle_during_grace"]
+                self._credit_pending_to_session(
+                    self._current,
+                    self._pending_switch,
                 )
-                self._current.effective_seconds += self._pending_switch["effective_during_grace"]
-                self._current.idle_seconds += self._pending_switch["idle_during_grace"]
             self._pending_switch = {
                 "domain": new_domain,
                 "since": now,
@@ -621,7 +661,8 @@ class SessionTracker:
                 "cat_name": cat_name,
                 "active_rule": active_rule,
                 "pid": self._last_pid,
-                "effective_during_grace": 0,
+                "engaged_during_grace": 0,
+                "passive_during_grace": 0,
                 "idle_during_grace": 0,
                 "idle_corrected": False,
             }
@@ -641,8 +682,8 @@ class SessionTracker:
         if not self._emit_session():
             return False
 
-        eff = p["effective_during_grace"]
-        idle = p["idle_during_grace"]
+        engaged, passive, idle = self._pending_components(p)
+        pending_duration = engaged + passive + idle
         self._current = ActivitySession(
             session_id=uuid.uuid4().hex[:12],
             start_time=p["since"],   # backdate to switch point
@@ -655,10 +696,12 @@ class SessionTracker:
             category_key=p["cat_key"],
             category_name=p["cat_name"],
             active_rule=p["active_rule"],
-            duration_seconds=int(elapsed),
-            effective_seconds=eff,
+            duration_seconds=pending_duration,
+            effective_seconds=engaged + passive,
             idle_seconds=idle,
             initial_title=p["norm_title"],
+            engaged_seconds=engaged,
+            passive_seconds=passive,
             classification_version=self.classification_version,
         )
         self._pending_switch = None
@@ -677,7 +720,7 @@ class SessionTracker:
 
     def _tick_grace_current(self, now):
         """Tick the current session during cross-domain grace period,
-        crediting effective vs idle based on actual activity detection.
+        crediting exactly one attention bucket from actual activity.
         """
         cursor_pos = _get_cursor_pos()
         cursor_moved = (
@@ -703,32 +746,29 @@ class SessionTracker:
             p.get("cat_key", ""),
             p.get("pid", self._last_pid),
         )
-        if active or audio_playing:
+        if active:
             self._persistent_idle = 0.0
             self._idle_corrected = False
             p["idle_corrected"] = False
         else:
             self._persistent_idle += self.sample_interval
 
-        idle_limit = self._idle_limit(
-            p.get(
-                "active_rule",
-                self._current.active_rule if self._current is not None else None,
-            )
-        )
-        if self._persistent_idle <= idle_limit:
-            p["effective_during_grace"] += self.sample_interval
-            return
+        bucket = self._attention_bucket(p.get("cat_key", ""), audio_playing)
+        self._last_attention_state = bucket
+        p[f"{bucket}_during_grace"] += self.sample_interval
 
-        if not p.get("idle_corrected", False):
+        if (
+            self._persistent_idle > self.idle_threshold
+            and not p.get("idle_corrected", False)
+        ):
             correction = min(
-                idle_limit,
-                p["effective_during_grace"],
+                self.idle_threshold,
+                p["engaged_during_grace"],
             )
-            p["effective_during_grace"] -= correction
-            p["idle_during_grace"] += correction
+            p["engaged_during_grace"] -= correction
+            p[f"{bucket}_during_grace"] += correction
             p["idle_corrected"] = True
-        p["idle_during_grace"] += self.sample_interval
+            self._idle_corrected = True
 
     # ── Internals ──────────────────────────────────────────────────
 
@@ -762,59 +802,74 @@ class SessionTracker:
         self._last_cursor_pos = cursor_pos
         self._last_kb_state = kb_state
 
-        if self._activity_from_hook or cursor_moved or kb_changed:
+        active = self._activity_from_hook or cursor_moved or kb_changed
+        if active:
             self._persistent_idle = 0.0
             self._idle_corrected = False
             self._activity_from_hook = False
         else:
             self._persistent_idle += self.sample_interval
 
-        # ── Threshold: audio peak detection for entertainment ──────────
-        # Audio actually playing (peak > 0) → user is definitely watching,
-        # no idle timeout. Silent (paused) → standard 60s rule.
-        if self._is_audio_playing(
+        # Audio can make an idle video sample passive, but never resets the
+        # keyboard/mouse idle clock or makes a non-video sample effective.
+        audio_playing = self._is_audio_playing(
             self._current.category_key,
             self._last_pid,
-        ):
-            # Audio peaks detected → always effective, reset idle timer
-            self._persistent_idle = 0.0
-            self._idle_corrected = False
-            self._current.effective_seconds += self.sample_interval
-            return
-
-        if self._persistent_idle <= self._idle_limit():
-            self._current.effective_seconds += self.sample_interval
+        )
+        bucket = self._attention_bucket(
+            self._current.category_key,
+            audio_playing,
+        )
+        self._last_attention_state = bucket
+        if bucket == "engaged":
+            self._current.engaged_seconds += self.sample_interval
+        elif bucket == "passive":
+            self._current.passive_seconds += self.sample_interval
         else:
-            if not self._idle_corrected:
-                # First idle tick: the threshold window (idle_threshold seconds)
-                # was counted as effective while pending confirmation.
-                # Move it from effective → idle so the last app doesn't get
-                # credit for time the user was already away.
-                correction = min(self._idle_limit(), self._current.effective_seconds)
-                self._current.effective_seconds -= correction
-                self._current.idle_seconds += correction
-                self._idle_corrected = True
             self._current.idle_seconds += self.sample_interval
 
-            # Auto-close entertainment sessions when idle exceeds threshold.
-            # Prevents a 3-hour movie session from spanning 19:29-22:34
-            # when the user actually left at 20:00 and came back at 22:00.
-            if (self._current.category_key == "video"
-                    and self._persistent_idle > self._idle_limit()):
-                # Backdate end_time to when the user actually stopped
-                # (now minus the idle threshold window).
-                limit = self._idle_limit()
-                backdate = now - timedelta(seconds=limit)
-                active_duration = max(0, self._current.duration_seconds - int(self._persistent_idle))
-                self._current.end_time = backdate
-                self._current.duration_seconds = active_duration
-                self._current.effective_seconds = min(
-                    self._current.effective_seconds, active_duration
-                )
-                self._current.idle_seconds = 0
-                self._current.switch_reason = "entertainment_idle"
-                self._emit_session()
-                self._awaiting_activity = True
+        if self._persistent_idle > self.idle_threshold and not self._idle_corrected:
+            correction = min(
+                self.idle_threshold,
+                self._current.engaged_seconds,
+            )
+            self._current.engaged_seconds -= correction
+            if bucket == "passive":
+                self._current.passive_seconds += correction
+            else:
+                self._current.idle_seconds += correction
+            self._idle_corrected = True
+
+        self._sync_effective(self._current)
+
+        if self._current.category_key == "video" and not active and not audio_playing:
+            self._video_silent_idle += self.sample_interval
+        else:
+            self._video_silent_idle = 0.0
+
+        if (
+            self._current.category_key == "video"
+            and self._video_silent_idle > self.entertainment_idle_threshold
+        ):
+            trailing = min(
+                self._video_silent_idle,
+                self._current.duration_seconds,
+            )
+            self._current.end_time = now - timedelta(seconds=trailing)
+            self._current.duration_seconds -= trailing
+
+            idle_trim = min(trailing, self._current.idle_seconds)
+            self._current.idle_seconds -= idle_trim
+            remaining_trim = trailing - idle_trim
+            engaged_trim = min(remaining_trim, self._current.engaged_seconds)
+            self._current.engaged_seconds -= engaged_trim
+            self._sync_effective(self._current)
+
+            self._current.switch_reason = "entertainment_idle"
+            self._emit_session()
+            self._awaiting_activity = True
+            self._last_attention_state = "idle"
+            self._video_silent_idle = 0.0
 
     def _emit_session(self):
         if self._current is None:
@@ -857,11 +912,12 @@ class SessionTracker:
             cat_key,
             p.get("pid", self._last_pid) if p else self._last_pid,
         )
-        idle_limit = self._idle_limit(active_rule)
-        is_eff = audio_playing or (self._persistent_idle <= idle_limit)
+        bucket = self._last_attention_state
+        is_eff = bucket in {"engaged", "passive"}
         if s is None and not p:
             audio_playing = False
             is_eff = False
+            bucket = "idle"
 
         return {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -876,11 +932,18 @@ class SessionTracker:
             "active_rule": active_rule,
             "duration_seconds": s.duration_seconds if s else 0,
             "effective_seconds": s.effective_seconds if s else 0,
+            "engaged_seconds": s.engaged_seconds if s else 0,
+            "passive_seconds": s.passive_seconds if s else 0,
             "idle_seconds": idle_seconds,
             "session_idle_seconds": s.idle_seconds if s else 0,
             "persistent_idle": self._persistent_idle,
             "audio_playing": audio_playing,
-            "is_user_active": self._persistent_idle <= idle_limit,
+            "attention_state": bucket,
+            "metric_version": s.metric_version if s else "attention-v1",
+            "classification_version": (
+                s.classification_version if s else self.classification_version
+            ),
+            "is_user_active": self._persistent_idle <= self.idle_threshold,
             "is_effective": is_eff,
             "pending_switch_domain": self._pending_switch["domain"] if self._pending_switch else None,
             "pending_switch_elapsed": (
