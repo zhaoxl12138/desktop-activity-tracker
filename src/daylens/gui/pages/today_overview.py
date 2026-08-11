@@ -397,21 +397,26 @@ class TodayOverviewPage(QWidget):
         layout.addLayout(tick_row)
 
         legend_row = QHBoxLayout()
-        legend_row.setSpacing(0)
+        legend_row.setSpacing(4)
+        self.focus_legend_labels: list[QLabel] = []
+        self.focus_legend_dots: list[QLabel] = []
+        self.focus_legend_colors: list[str] = []
         for name, color in [
-            ("💼 工作学习", ui_style.COLORS["coding_green"]),
-            ("📺 娱乐休闲", ui_style.COLORS["video_orange"]),
-            ("💬 社交通讯", ui_style.COLORS["social_purple"]),
-            ("📦 其他", ui_style.get_category_color("other")),
-            ("💤 离开/空闲", ui_style.COLORS["timeline_idle"]),
+            ("工作参与", ui_style.COLORS["coding_green"]),
+            ("未计入专注", ui_style.COLORS["timeline_idle"]),
         ]:
             dot = QLabel("●")
+            dot.setTextFormat(Qt.PlainText)
             dot.setStyleSheet(f"font-size: 10px; color: {color};")
             text_label = QLabel(name)
+            text_label.setTextFormat(Qt.PlainText)
             text_label.setStyleSheet(f"font-size: 10px; color: {ui_style.COLORS['text_secondary']};")
             legend_row.addWidget(dot)
             legend_row.addWidget(text_label)
-            legend_row.addSpacing(6)
+            legend_row.addSpacing(10)
+            self.focus_legend_dots.append(dot)
+            self.focus_legend_labels.append(text_label)
+            self.focus_legend_colors.append(color)
         legend_row.addStretch()
         layout.addLayout(legend_row)
 

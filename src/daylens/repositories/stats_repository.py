@@ -13,11 +13,23 @@ WORK_CATEGORY_KEYS = frozenset(
     {"ai_tools", "coding", "office", "reading", "creative"}
 )
 _WORK_CATEGORY_SQL = "'ai_tools','coding','creative','office','reading'"
-_CONSECUTIVE_DAYS_QUERY = (
-    "SELECT DISTINCT date FROM activity_sessions "
-    "INDEXED BY idx_sessions_engaged_work_date "
-    "WHERE engaged_seconds > 0 "
+_VALID_ENGAGED_WORK_PREDICATE = (
+    "typeof(engaged_seconds) = 'integer' AND engaged_seconds > 0 "
+    "AND metric_version = 'attention-v1' "
     f"AND category_key IN ({_WORK_CATEGORY_SQL}) "
+    "AND typeof(duration_seconds) = 'integer' AND duration_seconds >= 0 "
+    "AND typeof(effective_seconds) = 'integer' AND effective_seconds >= 0 "
+    "AND typeof(passive_seconds) = 'integer' AND passive_seconds >= 0 "
+    "AND typeof(idle_seconds) = 'integer' AND idle_seconds >= 0 "
+    "AND duration_seconds = engaged_seconds + passive_seconds + idle_seconds "
+    "AND effective_seconds = engaged_seconds + passive_seconds"
+)
+_CONSECUTIVE_DAYS_QUERY = (
+    "SELECT date, start_time, end_time, category_key, duration_seconds, "
+    "effective_seconds, engaged_seconds, passive_seconds, idle_seconds, "
+    "metric_version FROM activity_sessions "
+    "INDEXED BY idx_sessions_valid_engaged_work_date_v2 "
+    f"WHERE {_VALID_ENGAGED_WORK_PREDICATE} "
     "AND date <= ? ORDER BY date DESC"
 )
 # attention-v1 counters are incremented and rewritten as mutually exclusive
@@ -101,9 +113,17 @@ def _strict_session_interval(
     return start_semantics, normalized_start, normalized_end
 
 
-def _session_row_is_anomalous(row) -> bool:
+def _row_value(row, field: str, default=None):
+    try:
+        return row[field]
+    except (KeyError, IndexError, TypeError):
+        return default
+
+
+def session_row_is_anomalous(row) -> bool:
+    """Return whether a persisted session violates trusted timing invariants."""
     parsed = [
-        _strict_integer(row[field])
+        _strict_integer(_row_value(row, field))
         for field in (
             "duration_seconds",
             "effective_seconds",
@@ -120,7 +140,7 @@ def _session_row_is_anomalous(row) -> bool:
     if any(value < 0 for value in (duration, effective, engaged, passive, idle)):
         return True
 
-    metric_version = str(row["metric_version"] or "legacy")
+    metric_version = str(_row_value(row, "metric_version", "legacy") or "legacy")
     if metric_version != "legacy":
         components = engaged + passive + idle
         if (
@@ -134,7 +154,10 @@ def _session_row_is_anomalous(row) -> bool:
         ):
             return True
 
-    interval = _strict_session_interval(row["start_time"], row["end_time"])
+    interval = _strict_session_interval(
+        _row_value(row, "start_time"),
+        _row_value(row, "end_time"),
+    )
     if interval is None:
         return True
     _, normalized_start, normalized_end = interval
@@ -159,7 +182,7 @@ def _summarize_session_rows(rows) -> tuple[dict, dict[str, dict]]:
         session_id = str(row["session_id"] or "")
         duplicate = session_id in seen_session_ids
         seen_session_ids.add(session_id)
-        anomalous = duplicate or _session_row_is_anomalous(row)
+        anomalous = duplicate or session_row_is_anomalous(row)
         metric_version = str(row["metric_version"] or "legacy")
         classification_version = str(row["classification_version"] or "legacy")
         engaged = _integer(row["engaged_seconds"])
@@ -812,7 +835,7 @@ def query_timeline_sessions(read_conn, db_path: str, date_str: str) -> list[dict
             SELECT session_id, start_time, end_time, process_name,
                    window_title, normalized_title, category_key, category_name,
                    duration_seconds, effective_seconds, engaged_seconds,
-                   passive_seconds, idle_seconds
+                   passive_seconds, idle_seconds, metric_version
             FROM activity_sessions
             WHERE date = ?
             ORDER BY start_time
@@ -829,6 +852,12 @@ def count_consecutive_days(read_conn, db_path: str) -> int:
     with read_conn(db_path) as conn:
         rows = conn.execute(_CONSECUTIVE_DAYS_QUERY, (today.isoformat(),))
         for row in rows:
+            if (
+                str(row["metric_version"] or "") != "attention-v1"
+                or str(row["category_key"] or "") not in WORK_CATEGORY_KEYS
+                or session_row_is_anomalous(row)
+            ):
+                continue
             raw_date = str(row["date"] or "")
             try:
                 parsed = datetime.strptime(raw_date, "%Y-%m-%d").date()
@@ -839,6 +868,9 @@ def count_consecutive_days(read_conn, db_path: str) -> int:
             if parsed == expected_date:
                 count += 1
                 expected_date -= timedelta(days=1)
+                continue
+            if parsed > expected_date:
+                # More than one valid session may exist on the counted day.
                 continue
             if parsed < expected_date:
                 break

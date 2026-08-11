@@ -24,7 +24,7 @@ def test_init_db_records_schema_version(tmp_path):
         row[1]
         for row in conn.execute("PRAGMA index_list(activity_sessions)")
     }
-    assert "idx_sessions_engaged_work_date" in indexes
+    assert "idx_sessions_valid_engaged_work_date_v2" in indexes
     conn.close()
 
 
@@ -89,7 +89,7 @@ def test_v3_activity_sessions_migration_preserves_rows_and_is_idempotent(tmp_pat
         row[1]
         for row in migrated.execute("PRAGMA index_list(activity_sessions)")
     }
-    assert "idx_sessions_engaged_work_date" in indexes
+    assert "idx_sessions_valid_engaged_work_date_v2" in indexes
     migrated.close()
 
     reopened = init_db(str(db))
@@ -99,6 +99,25 @@ def test_v3_activity_sessions_migration_preserves_rows_and_is_idempotent(tmp_pat
     assert reopened.execute(
         "SELECT value FROM schema_meta WHERE key='schema_version'"
     ).fetchone()[0] == "4"
+    reopened.close()
+
+
+def test_existing_v4_database_receives_strict_engaged_work_index(tmp_path):
+    db = tmp_path / "migration.db"
+    conn = init_db(str(db))
+    conn.execute("DROP INDEX idx_sessions_valid_engaged_work_date_v2")
+    assert conn.execute(
+        "SELECT value FROM schema_meta WHERE key='schema_version'"
+    ).fetchone()[0] == "4"
+    conn.commit()
+    conn.close()
+
+    reopened = init_db(str(db))
+    indexes = {
+        row[1]
+        for row in reopened.execute("PRAGMA index_list(activity_sessions)")
+    }
+    assert "idx_sessions_valid_engaged_work_date_v2" in indexes
     reopened.close()
 
 

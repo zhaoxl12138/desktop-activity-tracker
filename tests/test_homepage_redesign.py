@@ -190,6 +190,25 @@ def test_homepage_shell_matches_reference_structure():
         assert window.pages["today"]._color_for_category("other") == ui_style.get_category_color("other")
         assert window.pages["today"]._color_for_category("idle") == ui_style.COLORS["timeline_idle"]
         assert window.pages["today"]._color_for_category("idle_leave") == ui_style.COLORS["timeline_idle"]
+        focus_legend_labels = window.pages["today"].focus_legend_labels
+        assert [label.text() for label in focus_legend_labels] == [
+            "工作参与",
+            "未计入专注",
+        ]
+        focus_legend_widgets = [
+            *window.pages["today"].focus_legend_dots,
+            *focus_legend_labels,
+        ]
+        assert all(label.textFormat() == Qt.PlainText for label in focus_legend_widgets)
+        assert all(
+            label.geometry().right()
+            <= window.pages["today"].focus_timeline_card.contentsRect().right()
+            for label in focus_legend_widgets
+        )
+        assert window.pages["today"].focus_legend_colors == [
+            ui_style.COLORS["coding_green"],
+            ui_style.COLORS["timeline_idle"],
+        ]
         assert window.dashboard_refresh.timer.isActive() is True
 
         window.nav_list.setCurrentRow(1)

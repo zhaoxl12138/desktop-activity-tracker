@@ -323,6 +323,21 @@ def _ensure_runtime_indexes(conn) -> None:
         "WHERE engaged_seconds > 0 AND category_key IN "
         "('ai_tools','coding','creative','office','reading')"
     )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_valid_engaged_work_date_v2 "
+        "ON activity_sessions(date DESC) "
+        "WHERE typeof(engaged_seconds) = 'integer' "
+        "AND engaged_seconds > 0 "
+        "AND metric_version = 'attention-v1' "
+        "AND category_key IN "
+        "('ai_tools','coding','creative','office','reading') "
+        "AND typeof(duration_seconds) = 'integer' AND duration_seconds >= 0 "
+        "AND typeof(effective_seconds) = 'integer' AND effective_seconds >= 0 "
+        "AND typeof(passive_seconds) = 'integer' AND passive_seconds >= 0 "
+        "AND typeof(idle_seconds) = 'integer' AND idle_seconds >= 0 "
+        "AND duration_seconds = engaged_seconds + passive_seconds + idle_seconds "
+        "AND effective_seconds = engaged_seconds + passive_seconds"
+    )
 
 
 def close_db(conn) -> None:

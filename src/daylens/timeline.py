@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from . import database
+from .repositories.stats_repository import session_row_is_anomalous
 from .utils import fmt_seconds, parse_nonnegative_int
 
 
@@ -62,6 +63,8 @@ def build_timeline(db_path, date_str):
         return blocks
 
     for row in rows:
+        if session_row_is_anomalous(row):
+            continue
         try:
             start = datetime.strptime(
                 str(row["start_time"] or ""),

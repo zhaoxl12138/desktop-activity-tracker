@@ -8,6 +8,7 @@ import logging
 import unicodedata
 
 from .. import database, timeline
+from ..repositories.stats_repository import session_row_is_anomalous
 from ..utils import fmt_seconds, parse_nonnegative_int
 from .insights_service import select_primary_insight
 from .trusted_metrics_service import (
@@ -52,6 +53,8 @@ _SESSION_SECONDS_FIELDS = (
 
 
 def _sanitize_session(session: dict) -> dict | None:
+    if session_row_is_anomalous(session):
+        return None
     sanitized = dict(session)
     for field in _SESSION_SECONDS_FIELDS:
         parsed = parse_nonnegative_int(session.get(field))
