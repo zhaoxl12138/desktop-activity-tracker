@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from . import database
-from .utils import fmt_seconds
+from .utils import fmt_seconds, parse_nonnegative_int
 
 
 # ── Category groups ──
@@ -61,14 +61,33 @@ def build_timeline(db_path, date_str):
         return blocks
 
     for row in rows:
-        start = datetime.strptime(row["start_time"], "%Y-%m-%d %H:%M:%S")
-        end = datetime.strptime(row["end_time"], "%Y-%m-%d %H:%M:%S")
-        dur = row["duration_seconds"] or 0
-        if dur <= 0:
+        try:
+            start = datetime.strptime(
+                str(row["start_time"] or ""),
+                "%Y-%m-%d %H:%M:%S",
+            )
+            end = datetime.strptime(
+                str(row["end_time"] or ""),
+                "%Y-%m-%d %H:%M:%S",
+            )
+        except (TypeError, ValueError, OverflowError):
+            continue
+        dur = parse_nonnegative_int(row["duration_seconds"])
+        eff = parse_nonnegative_int(row["effective_seconds"])
+        engaged = parse_nonnegative_int(row["engaged_seconds"])
+        passive = parse_nonnegative_int(row["passive_seconds"])
+        idle = parse_nonnegative_int(row["idle_seconds"])
+        if (
+            dur is None
+            or eff is None
+            or engaged is None
+            or passive is None
+            or idle is None
+            or dur <= 0
+            or end < start
+        ):
             continue
 
-        eff = row["effective_seconds"] or 0
-        idle = row["idle_seconds"] or 0
         proc = row["process_name"] or ""
         title = row["normalized_title"] or row["window_title"] or ""
         cat_key = row["category_key"] or ""

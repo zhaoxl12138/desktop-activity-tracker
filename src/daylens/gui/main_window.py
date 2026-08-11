@@ -57,7 +57,7 @@ from . import style as ui_style
 NAV_ITEMS = [
     ("今日概览", "today", "聚焦今天的使用结构、效率与提醒"),
     ("实时监控", "live", "查看当前前台窗口与记录状态"),
-    ("软件统计", "software", "分析软件使用时长与活跃度"),
+    ("软件统计", "software", "分析软件使用时长与使用结构"),
     ("分类统计", "category", "查看分类维度的时间分布"),
     ("日报/周报", "reports", "生成日报与周报"),
     ("规则管理", "rules", "管理分类规则与计时策略"),
@@ -433,7 +433,7 @@ class MainWindow(QMainWindow):
 
         for index, (emoji, label, key) in enumerate(
             [
-                ("⚡", "活跃时间", "total"),
+                ("⚡", "参与时长", "total"),
                 ("💼", "工作学习", "work"),
                 ("📺", "娱乐休闲", "ent"),
                 ("💬", "社交通讯", "social"),
@@ -753,7 +753,18 @@ class MainWindow(QMainWindow):
                 "entertainment_seconds": 0,
                 "social_seconds": 0,
             }
-        self.capsule_values["total"].setText(fmt_seconds(summary["effective_seconds"]))
+        primary_seconds = int(
+            getattr(today_page, "last_shell_primary_seconds", 0)
+            if today_page is not None and today_page.last_stats_date == today
+            else 0
+        )
+        primary_label = str(
+            getattr(today_page, "last_shell_primary_label", "参与时长")
+            if today_page is not None and today_page.last_stats_date == today
+            else "参与时长"
+        )
+        self.capsule_labels["total"].setText(primary_label)
+        self.capsule_values["total"].setText(fmt_seconds(primary_seconds))
         self.capsule_values["work"].setText(fmt_seconds(summary["work_seconds"]))
         self.capsule_values["ent"].setText(fmt_seconds(summary["entertainment_seconds"]))
         self.capsule_values["social"].setText(fmt_seconds(summary["social_seconds"]))

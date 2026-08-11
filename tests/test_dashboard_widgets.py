@@ -12,6 +12,8 @@ SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
 
 from desktop_activity_tracker.gui.widgets.dashboard_widgets import (  # noqa: E402
+    ActiveRatioRingWidget,
+    DonutChartWidget,
     SessionTop3Widget,
     TimelineWidget,
     TrendChartWidget,
@@ -341,6 +343,56 @@ def test_trend_widget_keeps_thirty_day_mode_unchanged():
     assert widget.canvas._mode == "30d"
     assert widget.canvas._points == thirty
     assert widget.canvas._uses_hour_units() is True
+
+
+def test_donut_and_thirty_day_trend_expose_attention_semantics():
+    app = _app()
+    donut = DonutChartWidget()
+    donut.set_data(
+        3_600,
+        [
+            ("参与", 1_800, "#00ff00"),
+            ("被动媒体", 1_200, "#ff9900"),
+            ("挂机/空闲", 600, "#999999"),
+        ],
+        primary_seconds=1_800,
+        primary_label="参与时长",
+    )
+
+    assert donut._total_seconds == 3_600
+    assert donut._primary_seconds == 1_800
+    assert donut._primary_label == "参与时长"
+
+    trend = TrendChartWidget()
+    trend.set_data(
+        [0] * 24,
+        [0] * 24,
+        [[0] * 24 for _ in range(7)],
+        [0.5] * 30,
+        thirty_day_metric="engaged",
+    )
+    trend.set_mode("30d")
+    assert "每日参与时间" in trend._cmp_legend.text()
+    assert trend._title_label.text() == "参与时间趋势（小时）"
+
+    trend.set_data(
+        [0] * 24,
+        [0] * 24,
+        [[0] * 24 for _ in range(7)],
+        [1.0] * 30,
+        thirty_day_metric="effective",
+    )
+    assert "每日有效时间" in trend._cmp_legend.text()
+    assert trend._title_label.text() == "有效时间趋势（小时）"
+
+    ratio_ring = ActiveRatioRingWidget()
+    assert ratio_ring._ratio_label == "有效时间占比"
+    donut.deleteLater()
+    ratio_ring.deleteLater()
+    trend.deleteLater()
+    app.processEvents()
+
+
 def test_timeline_session_label_preserves_full_title_for_font_elision():
     app = _app()
     widget = TimelineWidget()

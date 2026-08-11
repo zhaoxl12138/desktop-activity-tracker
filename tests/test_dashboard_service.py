@@ -11,10 +11,12 @@ SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
 
 from daylens import database  # noqa: E402
+from daylens import timeline  # noqa: E402
 from daylens.services import dashboard_service  # noqa: E402
 from daylens.services.insights_service import select_primary_insight  # noqa: E402
 from daylens.services.dashboard_service import (  # noqa: E402
     _build_interruptions_section,
+    _build_thirty_day_trend,
     _build_workflow_section,
     _rolling_date_strings,
     build_day_over_day_comparison,
@@ -113,6 +115,29 @@ def test_empty_today_snapshot_exposes_trusted_attention_health(tmp_path: Path):
     assert snapshot["insight"]["kind"] == "data_health"
 
 
+def test_thirty_day_trend_prefers_engaged_and_marks_new_snapshot_semantics(
+    tmp_path: Path,
+):
+    points = _build_thirty_day_trend(
+        [
+            {"effective_seconds": 3_600, "engaged_seconds": 1_800},
+            {"effective_seconds": 3_600},
+        ]
+    )
+
+    assert points == [0.5, 1.0]
+
+    db_path = tmp_path / "usage.db"
+    database.init_db(str(db_path)).close()
+    snapshot = load_today_snapshot(
+        str(db_path),
+        lambda process_name, _details: process_name,
+    )
+
+    assert snapshot["totals"]["primary_metric"] == "engaged"
+    assert snapshot["trend"]["thirty_day_metric"] == "engaged"
+
+
 def test_session_range_query_reads_attention_rows_once(tmp_path: Path):
     db_path = tmp_path / "usage.db"
     database.init_db(str(db_path)).close()
@@ -151,6 +176,209 @@ def test_session_range_query_reads_attention_rows_once(tmp_path: Path):
     assert rows[0]["engaged_seconds"] == 600
     assert rows[1]["passive_seconds"] == 540
     assert rows[1]["classification_version"] == "rules-a"
+
+
+def test_real_database_malformed_sessions_keep_dashboard_available(tmp_path: Path):
+    db_path = tmp_path / "usage.db"
+    database.init_db(str(db_path)).close()
+    today = datetime.now().strftime("%Y-%m-%d")
+    conn = sqlite3.connect(db_path)
+    conn.executemany(
+        """
+        INSERT INTO activity_sessions
+            (session_id,start_time,end_time,date,process_name,normalized_title,
+             category_key,category_name,duration_seconds,effective_seconds,
+             engaged_seconds,passive_seconds,idle_seconds,metric_version,
+             classification_version)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        [
+            (
+                "bad-number", f"{today} 09:00:00", f"{today} 09:05:00",
+                today, "Code.exe", "bad number", "coding", "工作学习",
+                300, "bad", 300, 0, 0, "attention-v1", "rules-a",
+            ),
+            (
+                "infinite", f"{today} 10:00:00", f"{today} 11:00:00",
+                today, "Code.exe", "infinite", "coding", "工作学习",
+                3_600, 3_600, float("inf"), 0, 0, "attention-v1", "rules-a",
+            ),
+            (
+                "bad-time", "not-a-time", f"{today} 11:01:00",
+                today, "Code.exe", "bad time", "coding", "工作学习",
+                60, 60, 60, 0, 0, "attention-v1", "rules-a",
+            ),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    snapshot = load_today_snapshot(
+        str(db_path),
+        lambda process_name, _details: process_name,
+    )
+
+    assert snapshot["today"] == today
+    assert snapshot["sessions"] == []
+    assert len(snapshot["trend"]["today"]) == 24
+    assert "暂未识别" in snapshot["focus_summary"]
+    assert snapshot["trust"]["level"] == "low"
+    assert snapshot["insight"]["kind"] == "data_health"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("duration_seconds", "bad"),
+        ("effective_seconds", float("nan")),
+        ("engaged_seconds", float("inf")),
+        ("passive_seconds", float("-inf")),
+        ("idle_seconds", True),
+        ("start_time", "bad-time"),
+        ("end_time", "bad-time"),
+    ],
+)
+def test_injected_malformed_session_forces_low_trust_and_is_skipped(
+    monkeypatch,
+    field,
+    value,
+):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 8, 11, 12, 0, 0)
+
+    def trusted_day(date_str, has_data):
+        return {
+            "date": date_str,
+            "effective_seconds": 60 if has_data else 0,
+            "engaged_seconds": 60 if has_data else 0,
+            "passive_seconds": 0,
+            "idle_seconds": 0,
+            "total_seconds": 60 if has_data else 0,
+            "work_engaged_seconds": 60 if has_data else 0,
+            "session_count": int(has_data),
+            "legacy_session_count": 0,
+            "legacy_log_sample_count": 0,
+            "session_anomaly_count": 0,
+            "legacy_log_anomaly_count": 0,
+            "anomaly_count": 0,
+            "legacy_granularity_unknown": False,
+            "dates_with_data": [date_str] if has_data else [],
+            "metric_versions": ["attention-v1"] if has_data else [],
+            "classification_versions": ["rules-a"] if has_data else [],
+        }
+
+    def query_range_stats(_db_path, dates):
+        dates = list(dates)
+        daily = [
+            trusted_day(date_str, index >= len(dates) - 14)
+            for index, date_str in enumerate(dates)
+        ]
+        return {"daily": daily, "totals": {}}
+
+    safe_stats = {
+        "totals": {
+            "effective_seconds": 60,
+            "engaged_seconds": 60,
+            "passive_seconds": 0,
+            "idle_seconds": 0,
+            "total_seconds": 60,
+        },
+        "by_category": [],
+        "by_app": [],
+        "by_app_detail": [],
+    }
+    malformed = {
+        "session_id": "injected",
+        "date": "2026-08-11",
+        "start_time": "2026-08-11 09:00:00",
+        "end_time": "2026-08-11 09:01:00",
+        "process_name": "Code.exe",
+        "normalized_title": "Codex",
+        "category_key": "coding",
+        "category_name": "工作学习",
+        "duration_seconds": 60,
+        "effective_seconds": 60,
+        "engaged_seconds": 60,
+        "passive_seconds": 0,
+        "idle_seconds": 0,
+        "metric_version": "attention-v1",
+        "classification_version": "rules-a",
+        field: value,
+    }
+
+    monkeypatch.setattr(dashboard_service, "datetime", FrozenDateTime)
+    monkeypatch.setattr(
+        dashboard_service.database,
+        "query_date_stats",
+        lambda *_: safe_stats,
+    )
+    monkeypatch.setattr(
+        dashboard_service.database,
+        "query_date_range_stats",
+        query_range_stats,
+    )
+    monkeypatch.setattr(
+        dashboard_service.database,
+        "query_sessions_for_dates",
+        lambda *_: [malformed],
+    )
+    monkeypatch.setattr(
+        dashboard_service,
+        "build_focus_summary",
+        lambda *_: ("", 0),
+    )
+
+    snapshot = load_today_snapshot(
+        "unused.db",
+        lambda process_name, _details: process_name,
+    )
+
+    assert snapshot["sessions"] == []
+    assert snapshot["trust"]["level"] == "low"
+    assert snapshot["insight"]["kind"] == "data_health"
+
+
+def test_timeline_skips_malformed_session_rows(monkeypatch):
+    rows = [
+        {
+            "session_id": "bad-number",
+            "start_time": "2026-08-11 09:00:00",
+            "end_time": "2026-08-11 09:10:00",
+            "process_name": "Code.exe",
+            "window_title": "",
+            "normalized_title": "Codex",
+            "category_key": "coding",
+            "category_name": "工作学习",
+            "duration_seconds": 600,
+            "effective_seconds": float("inf"),
+            "engaged_seconds": 600,
+            "passive_seconds": 0,
+            "idle_seconds": 0,
+        },
+        {
+            "session_id": "bad-time",
+            "start_time": "not-a-time",
+            "end_time": "2026-08-11 10:10:00",
+            "process_name": "Code.exe",
+            "window_title": "",
+            "normalized_title": "Codex",
+            "category_key": "coding",
+            "category_name": "工作学习",
+            "duration_seconds": 600,
+            "effective_seconds": 600,
+            "engaged_seconds": 600,
+            "passive_seconds": 0,
+            "idle_seconds": 0,
+        },
+    ]
+    monkeypatch.setattr(timeline.database, "query_timeline_sessions", lambda *_: rows)
+
+    blocks = timeline.build_timeline("unused.db", "2026-08-11")
+
+    assert len(blocks) == 48
+    assert sum(block.effective_seconds for block in blocks) == 0
 
 
 def test_snapshot_builds_exact_trusted_insight_payload_without_daily_session_queries(
@@ -304,6 +532,7 @@ def test_snapshot_builds_exact_trusted_insight_payload_without_daily_session_que
         "active_ratio": 60,
         "passive_ratio": 20,
         "idle_ratio": 20,
+        "primary_metric": "engaged",
     }
     assert snapshot["trust"]["level"] == "high"
     assert snapshot["comparison"] == {

@@ -752,7 +752,8 @@ def query_timeline_sessions(read_conn, db_path: str, date_str: str) -> list[dict
             """
             SELECT session_id, start_time, end_time, process_name,
                    window_title, normalized_title, category_key, category_name,
-                   duration_seconds, effective_seconds, idle_seconds
+                   duration_seconds, effective_seconds, engaged_seconds,
+                   passive_seconds, idle_seconds
             FROM activity_sessions
             WHERE date = ?
             ORDER BY start_time

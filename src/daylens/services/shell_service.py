@@ -60,7 +60,7 @@ def build_tray_tooltip(db_path: str, paused: bool) -> str:
     status = "已暂停" if paused else "记录中"
     return (
         "DayLens\n"
-        f"活跃时间: {fmt_seconds(summary['effective_seconds'])}\n"
+        f"有效时间: {fmt_seconds(summary['effective_seconds'])}\n"
         f"工作学习: {fmt_seconds(summary['work_seconds'])}\n"
         f"娱乐休闲: {fmt_seconds(summary['entertainment_seconds'])}\n"
         f"状态: {status}"

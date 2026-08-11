@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...utils import fmt_seconds
+from ...utils import fmt_seconds, parse_nonnegative_int
 from .. import style as ui_style
 from .elided_label import ElidedLabel
 from ..style import COLORS, get_category_color
@@ -32,11 +32,26 @@ class DonutChartWidget(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._total_seconds = 0
+        self._primary_seconds = 0
+        self._primary_label = "有效时长"
         self._segments: list[tuple[str, int, str]] = []
         self.setMinimumSize(150, 150)
 
-    def set_data(self, total_seconds: int, segments: list[tuple[str, int, str]]) -> None:
-        self._total_seconds = max(0, int(total_seconds or 0))
+    def set_data(
+        self,
+        total_seconds: int,
+        segments: list[tuple[str, int, str]],
+        *,
+        primary_seconds: int | None = None,
+        primary_label: str | None = None,
+    ) -> None:
+        self._total_seconds = parse_nonnegative_int(total_seconds) or 0
+        self._primary_seconds = (
+            self._total_seconds
+            if primary_seconds is None
+            else (parse_nonnegative_int(primary_seconds) or 0)
+        )
+        self._primary_label = str(primary_label or "有效时长")
         self._segments = segments
         self.update()
 
@@ -73,26 +88,27 @@ class DonutChartWidget(QWidget):
             painter.drawArc(rect, -start_angle, -span)
             start_angle += span
 
-        # Center text: active duration
+        # Center text: primary duration with explicit snapshot semantics.
         font = painter.font()
         font.setPixelSize(11)
         painter.setFont(font)
         painter.setPen(QColor(COLORS["text_muted"]))
         painter.drawText(QRectF(rect.left(), rect.center().y() - 18, rect.width(), 16),
-                         Qt.AlignCenter, "活跃时长")
+                         Qt.AlignCenter, self._primary_label)
 
         font.setPixelSize(17)
         font.setBold(True)
         painter.setFont(font)
         painter.setPen(QColor(COLORS["text"]))
         painter.drawText(QRectF(rect.left(), rect.center().y(), rect.width(), 22),
-                         Qt.AlignCenter, fmt_seconds(self._total_seconds))
+                         Qt.AlignCenter, fmt_seconds(self._primary_seconds))
 
 
 class ActiveRatioRingWidget(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._ratio = 0
+        self._ratio_label = "有效时间占比"
         self.setMinimumSize(170, 170)
 
     def set_ratio(self, ratio: int) -> None:
@@ -129,7 +145,11 @@ class ActiveRatioRingWidget(QWidget):
         font.setBold(False)
         painter.setFont(font)
         painter.setPen(QColor(COLORS["text_secondary"]))
-        painter.drawText(QRectF(rect.left(), rect.center().y() + 12, rect.width(), 24), Qt.AlignCenter, "活跃时间占比")
+        painter.drawText(
+            QRectF(rect.left(), rect.center().y() + 12, rect.width(), 24),
+            Qt.AlignCenter,
+            self._ratio_label,
+        )
 
 
 class FocusTimelineBarWidget(QWidget):
@@ -1058,6 +1078,7 @@ class TrendChartWidget(QFrame):
             f"font-size: 10px; color: {COLORS['text_secondary']}; padding-left: 2px;"
         )
         self._cmp_legend.setVisible(False)
+        self._thirty_day_metric = "effective"
         root.addWidget(self._cmp_legend)
 
     def set_classification_comparable(self, comparable: bool) -> None:
@@ -1070,9 +1091,18 @@ class TrendChartWidget(QFrame):
             if button is not None and not button.isChecked():
                 button.setChecked(True)
             self._apply_series()
-            unit = "分钟" if mode in {"today", "7d"} else "小时"
-            self._title_label.setText(f"时间趋势（{unit}）")
+            self._update_title()
             self._update_legend()
+
+    def _update_title(self) -> None:
+        unit = "分钟" if self._mode in {"today", "7d"} else "小时"
+        if self._mode == "30d":
+            prefix = (
+                "参与" if self._thirty_day_metric == "engaged" else "有效"
+            )
+            self._title_label.setText(f"{prefix}时间趋势（{unit}）")
+        else:
+            self._title_label.setText(f"时间趋势（{unit}）")
 
     def _update_legend(self) -> None:
         if self._mode == "today":
@@ -1095,8 +1125,13 @@ class TrendChartWidget(QFrame):
             self._cmp_legend.setText("  ".join(parts))
             self._cmp_legend.setVisible(True)
         else:
+            label = (
+                "每日参与时间"
+                if self._thirty_day_metric == "engaged"
+                else "每日有效时间"
+            )
             self._cmp_legend.setText(
-                f"<span style='color:{COLORS["coding_green"]}'>每日活跃时间</span>"
+                f"<span style='color:{COLORS["coding_green"]}'>{label}</span>"
             )
             self._cmp_legend.setVisible(True)
 
@@ -1119,13 +1154,17 @@ class TrendChartWidget(QFrame):
                  entertainment_today: list | None = None,
                  yesterday_work: list | None = None,
                  yesterday_entertainment: list | None = None,
-                 seven_day_labels: list | None = None) -> None:
+                 seven_day_labels: list | None = None,
+                 thirty_day_metric: str = "effective") -> None:
         self._series["today"] = today
         self._series["7d"] = seven_days
         self._series["30d"] = thirty_days
         self._yesterday_today = yesterday_today or []
         self._work_today = work_today or []
         self._entertainment_today = entertainment_today or []
+        self._thirty_day_metric = (
+            "engaged" if thirty_day_metric == "engaged" else "effective"
+        )
 
         self._labels["today"] = ["0", "", "2", "", "4", "", "6", "", "8", "", "10", "", "12", "", "14", "", "16", "", "18", "", "20", "", "22", ""]
         self._labels["7d"] = list(self._labels["today"])
@@ -1156,6 +1195,7 @@ class TrendChartWidget(QFrame):
         self._yesterday_entertainment = yesterday_entertainment or []
 
         self._apply_series()
+        self._update_title()
         self._update_legend()
 
 
@@ -1455,7 +1495,7 @@ class _TrendCanvas(QWidget):
             f"🕒 {hour:02d}:00 - {hour + 1:02d}:00\n"
             f"💼 工作学习: {work_m}分钟\n"
             f"📺 娱乐休闲: {ent_m}分钟\n"
-            f"📊 活跃占比: {ratio}%",
+            f"📊 有效占比: {ratio}%",
             self,
         )
         super().mouseMoveEvent(event)

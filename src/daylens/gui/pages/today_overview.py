@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 
 from ... import get_app_root
 from ...services.dashboard_service import resolve_display_name
-from ...utils import normalize_category_display_name
+from ...utils import normalize_category_display_name, parse_nonnegative_int
 from .. import style as ui_style
 from ..widgets.dashboard_widgets import (
     ActiveRatioRingWidget,
@@ -48,6 +48,8 @@ class TodayOverviewPage(QWidget):
             "entertainment_seconds": 0,
             "social_seconds": 0,
         }
+        self.last_shell_primary_seconds = 0
+        self.last_shell_primary_label = "有效时长"
         self.last_consecutive_days = 0
         setattr(self, "metric_cards", {})
         self.time_stats_labels: dict[str, QLabel] = {}
@@ -276,9 +278,9 @@ class TodayOverviewPage(QWidget):
 
         for key, label_text, icon_text in [
             ("total", "总时长", "⚡"),
-            ("active", "活跃时长", "▶"),
+            ("active", "有效时长", "▶"),
             ("idle", "挂机时长", "⏸"),
-            ("ratio", "活跃时间占比", "📊"),
+            ("ratio", "有效时间占比", "📊"),
         ]:
             row = QHBoxLayout()
             row.setSpacing(10)
@@ -434,12 +436,18 @@ class TodayOverviewPage(QWidget):
         self.last_stats = dict(snapshot.get("stats", {}) or {})
         totals = dict(snapshot.get("totals", {}) or {})
         self.last_snapshot_totals = dict(totals)
-        effective = int(totals.get("effective_seconds", 0) or 0)
-        engaged_seconds = int(totals.get("engaged_seconds", 0) or 0)
-        passive_seconds = int(totals.get("passive_seconds", 0) or 0)
-        idle_seconds = int(totals.get("idle_seconds", 0) or 0)
-        active_ratio = int(totals.get("active_ratio", 0) or 0)
-        passive_ratio = int(totals.get("passive_ratio", 0) or 0)
+        effective = parse_nonnegative_int(totals.get("effective_seconds")) or 0
+        engaged_seconds = parse_nonnegative_int(totals.get("engaged_seconds")) or 0
+        passive_seconds = parse_nonnegative_int(totals.get("passive_seconds")) or 0
+        idle_seconds = parse_nonnegative_int(totals.get("idle_seconds")) or 0
+        active_ratio = parse_nonnegative_int(totals.get("active_ratio")) or 0
+        passive_ratio = parse_nonnegative_int(totals.get("passive_ratio")) or 0
+        primary_metric = str(totals.get("primary_metric", "") or "")
+        uses_engaged = primary_metric == "engaged" or (
+            not primary_metric and "engaged_seconds" in totals
+        )
+        primary_seconds = engaged_seconds if uses_engaged else effective
+        primary_label = "参与时长" if uses_engaged else "有效时长"
 
         trust = dict(snapshot.get("trust", {}) or {})
         trust_level = str(trust.get("level", "low") or "low")
@@ -476,13 +484,41 @@ class TodayOverviewPage(QWidget):
             "entertainment_seconds": category_seconds.get("video", category_seconds.get("entertainment", 0)),
             "social_seconds": category_seconds.get("social", 0),
         }
-        self.donut_widget.set_data(effective, distribution)
+        self.last_shell_primary_seconds = primary_seconds
+        self.last_shell_primary_label = primary_label
+        if uses_engaged:
+            attention_total = engaged_seconds + passive_seconds + idle_seconds
+            donut_segments = [
+                ("参与", engaged_seconds, ui_style.COLORS["success_green"]),
+                ("被动媒体", passive_seconds, ui_style.COLORS["video_orange"]),
+                ("挂机/空闲", idle_seconds, ui_style.COLORS["idle_gray"]),
+            ]
+            self.donut_widget.set_data(
+                attention_total,
+                donut_segments,
+                primary_seconds=primary_seconds,
+                primary_label=primary_label,
+            )
+        else:
+            self.donut_widget.set_data(
+                effective,
+                distribution,
+                primary_seconds=primary_seconds,
+                primary_label=primary_label,
+            )
         self.legend_widget.set_items(distribution, effective)
 
-        self.active_status_label.setText(f"参与 {active_ratio}%")
-        self.active_status_label.setToolTip(_compact_duration(engaged_seconds))
-        self.passive_status_label.setText(f"被动媒体 {passive_ratio}%")
-        self.passive_status_label.setToolTip(_compact_duration(passive_seconds))
+        status_label = "参与" if uses_engaged else "有效"
+        self.active_status_label.setText(f"{status_label} {active_ratio}%")
+        self.active_status_label.setToolTip(_compact_duration(primary_seconds))
+        if uses_engaged:
+            self.passive_status_label.setText(f"被动媒体 {passive_ratio}%")
+            self.passive_status_label.setToolTip(
+                _compact_duration(passive_seconds)
+            )
+        else:
+            self.passive_status_label.setText("被动媒体 --")
+            self.passive_status_label.setToolTip("")
         self.idle_status_label.setText(f"挂机/空闲 {_compact_duration(idle_seconds)}")
 
         for key, label in self.distribution_cmp_labels.items():
@@ -558,6 +594,9 @@ class TodayOverviewPage(QWidget):
             yesterday_work=trend.get("yesterday_work", []),
             yesterday_entertainment=trend.get("yesterday_entertainment", []),
             seven_day_labels=trend.get("seven_day_labels", []),
+            thirty_day_metric=str(
+                trend.get("thirty_day_metric", "effective") or "effective"
+            ),
         )
         focus_summary = str(snapshot.get("focus_summary", ""))
         self.focus_hint.setText(focus_summary)

@@ -4,7 +4,12 @@ from pathlib import Path
 
 import yaml
 
-from desktop_activity_tracker.services import category_stats_service, rules_service, software_stats_service
+from desktop_activity_tracker.services import (
+    category_stats_service,
+    rules_service,
+    shell_service,
+    software_stats_service,
+)
 from desktop_activity_tracker.utils import normalize_category_display_name
 
 
@@ -33,6 +38,25 @@ def test_category_summary_uses_normalized_labels(monkeypatch):
     summary = category_stats_service.load_category_summary("dummy.db")
     names = [item["category_name"] for item in summary["categories"]]
     assert names == ["工作学习", "娱乐休闲", "社交通讯"]
+    assert summary["total_label"].startswith("今日有效时间总计：")
+
+
+def test_tray_calls_effective_time_effective_instead_of_active(monkeypatch):
+    monkeypatch.setattr(
+        shell_service,
+        "load_shell_summary",
+        lambda _db_path: {
+            "effective_seconds": 3_600,
+            "work_seconds": 1_800,
+            "entertainment_seconds": 600,
+            "social_seconds": 300,
+        },
+    )
+
+    tooltip = shell_service.build_tray_tooltip("dummy.db", paused=False)
+
+    assert "有效时间: 1时" in tooltip
+    assert "活跃时间" not in tooltip
 
 
 def test_category_summary_orders_by_effective_time_descending(monkeypatch):

@@ -7,14 +7,14 @@ from pathlib import Path
 
 import yaml
 from PySide6.QtCore import QObject, Qt, Signal
-from PySide6.QtWidgets import QApplication, QVBoxLayout
+from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
 
 from desktop_activity_tracker import database  # noqa: E402
-from desktop_activity_tracker.gui.main_window import MainWindow  # noqa: E402
+from desktop_activity_tracker.gui.main_window import MainWindow, NAV_ITEMS  # noqa: E402
 from desktop_activity_tracker.gui import style as ui_style  # noqa: E402
 
 
@@ -154,11 +154,12 @@ def test_homepage_shell_matches_reference_structure():
         assert window.minimumSize().height() == 700
         assert window.maximumSize().width() > 1100
         assert set(window.capsule_values) == {"total", "work", "ent", "social"}
-        assert window.capsule_labels["total"].text() == "活跃时间"
+        assert window.capsule_labels["total"].text() == "参与时长"
         assert window.capsule_labels["work"].text() == "工作学习"
         assert window.capsule_labels["ent"].text() == "娱乐休闲"
         assert window.capsule_icons["ent"].text() == "📺"
         assert window.capsule_labels["social"].text() == "社交通讯"
+        assert all("活跃度" not in hint for _title, _key, hint in NAV_ITEMS)
         for item in window.summary_capsule_items:
             item_layout = item.layout()
             assert isinstance(item_layout, QVBoxLayout)
@@ -231,8 +232,20 @@ def test_today_overview_applies_old_and_trusted_snapshots_safely():
         page.apply_snapshot(_dashboard_snapshot())
         app.processEvents()
 
-        assert page.active_status_label.text().startswith("参与 ")
-        assert page.passive_status_label.text().startswith("被动媒体 ")
+        assert page.active_status_label.text().startswith("有效 ")
+        assert page.passive_status_label.text() == "被动媒体 --"
+        assert page.donut_widget._primary_label == "有效时长"
+        assert page.last_shell_primary_label == "有效时长"
+        legacy_time_card = page._build_time_stats_card()
+        legacy_time_labels = {
+            label.text() for label in legacy_time_card.findChildren(QLabel)
+        }
+        assert "有效时长" in legacy_time_labels
+        assert "有效时间占比" in legacy_time_labels
+        assert not any("活跃" in text for text in legacy_time_labels)
+        legacy_time_card.deleteLater()
+        window._update_top_bar()
+        assert window.capsule_labels["total"].text() == "有效时长"
         assert page.trust_badge.text() == "口径待稳定"
         assert page.trust_badge.isVisible() is True
         assert page.insight_card.title_label.fullText() == "洞察积累中"
@@ -248,6 +261,7 @@ def test_today_overview_applies_old_and_trusted_snapshots_safely():
                 "active_ratio": 60,
                 "passive_ratio": 30,
                 "idle_ratio": 10,
+                "primary_metric": "engaged",
             },
             trust={
                 "level": "high",
@@ -266,12 +280,32 @@ def test_today_overview_applies_old_and_trusted_snapshots_safely():
                 "action": "保护这个时间窗口。",
                 "confidence": "high",
             },
+            trend={
+                **_dashboard_snapshot()["trend"],
+                "thirty_days": [0.5] * 30,
+                "thirty_day_metric": "engaged",
+            },
         )
         page.apply_snapshot(trusted)
         app.processEvents()
 
         assert page.active_status_label.text() == "参与 60%"
         assert page.passive_status_label.text() == "被动媒体 30%"
+        assert page.donut_widget._primary_seconds == 3_600
+        assert page.donut_widget._primary_label == "参与时长"
+        assert page.donut_widget._total_seconds == 6_000
+        assert [segment[0] for segment in page.donut_widget._segments] == [
+            "参与",
+            "被动媒体",
+            "挂机/空闲",
+        ]
+        assert page.last_shell_primary_seconds == 3_600
+        assert page.last_shell_primary_label == "参与时长"
+        window._update_top_bar()
+        assert window.capsule_labels["total"].text() == "参与时长"
+        assert window.capsule_values["total"].text() == "1时"
+        page.trend_card.set_mode("30d")
+        assert "每日参与时间" in page.trend_card._cmp_legend.text()
         assert page.trust_badge.isVisible() is False
         assert page.insight_card.title_label.fullText() == "你的优势时段是 09:00–11:00"
         assert page.classification_notice.isVisible() is False

@@ -8,10 +8,11 @@ import logging
 import unicodedata
 
 from .. import database, timeline
-from ..utils import fmt_seconds
+from ..utils import fmt_seconds, parse_nonnegative_int
 from .insights_service import select_primary_insight
 from .trusted_metrics_service import (
     REASON_FORMAT_INVALID,
+    REASON_TIMING_ANOMALY_ABOVE_LIMIT,
     assess_range,
     compare_ranges,
 )
@@ -38,15 +39,66 @@ def _sessions_for_date(sessions: list[dict], date_str: str) -> list[dict]:
     ]
 
 
+_SESSION_SECONDS_FIELDS = (
+    "duration_seconds",
+    "effective_seconds",
+    "engaged_seconds",
+    "passive_seconds",
+    "idle_seconds",
+)
+
+
+def _sanitize_session(session: dict) -> dict | None:
+    sanitized = dict(session)
+    for field in _SESSION_SECONDS_FIELDS:
+        parsed = parse_nonnegative_int(session.get(field))
+        if parsed is None:
+            return None
+        sanitized[field] = parsed
+    if _session_interval(sanitized) is None:
+        return None
+    return sanitized
+
+
+def _sanitize_sessions(sessions: list[dict]) -> tuple[list[dict], set[str]]:
+    sanitized: list[dict] = []
+    malformed_dates: set[str] = set()
+    for session in sessions:
+        clean = _sanitize_session(session)
+        if clean is None:
+            malformed_dates.add(str(session.get("date", "") or ""))
+            continue
+        sanitized.append(clean)
+    return sanitized, malformed_dates
+
+
+def _apply_session_payload_health(
+    trust: dict[str, object],
+    malformed_dates: set[str],
+    expected_dates: list[str],
+) -> dict[str, object]:
+    if not malformed_dates.intersection(expected_dates):
+        return trust
+    reasons = [str(reason) for reason in trust.get("reasons", [])]
+    if REASON_TIMING_ANOMALY_ABOVE_LIMIT not in reasons:
+        reasons.append(REASON_TIMING_ANOMALY_ABOVE_LIMIT)
+    return {
+        **trust,
+        "level": "low",
+        "reasons": reasons,
+        "category_comparable": False,
+    }
+
+
 def _engaged_seconds_by_hour(sessions: list[dict]) -> list[float]:
     hourly = [0.0] * 24
     for session in sessions:
         if str(session.get("category_key", "") or "") not in WORK_KEYS:
             continue
-        engaged = float(session.get("engaged_seconds", 0) or 0)
+        engaged = parse_nonnegative_int(session.get("engaged_seconds"))
         start_dt = _parse_dt(str(session.get("start_time", "") or ""))
         end_dt = _parse_dt(str(session.get("end_time", "") or ""))
-        if engaged <= 0 or start_dt is None or end_dt is None:
+        if engaged is None or engaged <= 0 or start_dt is None or end_dt is None:
             continue
         span = (end_dt - start_dt).total_seconds()
         if span <= 0:
@@ -79,7 +131,7 @@ def _build_best_window_section(
             str(session.get("date", "") or "")
             for session in sessions
             if str(session.get("category_key", "") or "") in WORK_KEYS
-            and int(session.get("engaged_seconds", 0) or 0) > 0
+            and (parse_nonnegative_int(session.get("engaged_seconds")) or 0) > 0
         }
     )
     return {
@@ -319,7 +371,7 @@ def resolve_display_name(
         for detail in app_details:
             if detail.get("process_name") != process_name:
                 continue
-            seconds = int(detail.get("effective_seconds", 0) or 0)
+            seconds = parse_nonnegative_int(detail.get("effective_seconds")) or 0
             if seconds > top_seconds:
                 top_seconds = seconds
                 top_title = str(detail.get("window_title", "") or "")
@@ -336,7 +388,7 @@ def resolve_display_name(
 def category_seconds(stats: dict) -> dict[str, int]:
     totals = {"work": 0, "social": 0, "entertainment": 0, "tools": 0}
     for item in stats.get("by_category", []):
-        seconds = int(item.get("effective_seconds", 0) or 0)
+        seconds = parse_nonnegative_int(item.get("effective_seconds")) or 0
         category_key = item.get("category_key")
         if category_key in WORK_KEYS:
             totals["work"] += seconds
@@ -352,7 +404,7 @@ def category_seconds(stats: dict) -> dict[str, int]:
 def build_distribution_sections(stats: dict, effective_seconds: int) -> list[dict[str, object]]:
     category_totals = category_seconds(stats)
     other_seconds = max(
-        int(effective_seconds or 0)
+        (parse_nonnegative_int(effective_seconds) or 0)
         - category_totals["work"]
         - category_totals["social"]
         - category_totals["entertainment"],
@@ -404,7 +456,7 @@ def build_top_app_rows(stats: dict, resolve_display) -> list[dict[str, object]]:
     for item in stats.get("by_app", []):
         process_name = item.get("process_name") or "Unknown"
         display_name = resolve_display(process_name, app_details)
-        seconds = int(item.get("effective_seconds", 0) or 0)
+        seconds = parse_nonnegative_int(item.get("effective_seconds")) or 0
         bucket = merged.setdefault(display_name, {"process_name": process_name, "display_name": display_name, "seconds": 0})
         bucket["seconds"] = int(bucket["seconds"]) + seconds
     return sorted(merged.values(), key=lambda item: -int(item["seconds"]))[:9]
@@ -415,8 +467,13 @@ def build_hourly_series(sessions: list[dict]) -> list[int]:
     for session in sessions:
         start_dt = _parse_dt(session.get("start_time", ""))
         end_dt = _parse_dt(session.get("end_time", ""))
-        effective_seconds = float(session.get("effective_seconds", 0) or 0)
-        if effective_seconds <= 0 or start_dt is None or end_dt is None:
+        effective_seconds = parse_nonnegative_int(session.get("effective_seconds"))
+        if (
+            effective_seconds is None
+            or effective_seconds <= 0
+            or start_dt is None
+            or end_dt is None
+        ):
             continue
         total_span = (end_dt - start_dt).total_seconds()
         if total_span <= 0:
@@ -447,8 +504,13 @@ def build_hourly_series_split(sessions: list[dict]) -> dict[str, list[int]]:
 
         start_dt = _parse_dt(session.get("start_time", ""))
         end_dt = _parse_dt(session.get("end_time", ""))
-        effective_seconds = float(session.get("effective_seconds", 0) or 0)
-        if effective_seconds <= 0 or start_dt is None or end_dt is None:
+        effective_seconds = parse_nonnegative_int(session.get("effective_seconds"))
+        if (
+            effective_seconds is None
+            or effective_seconds <= 0
+            or start_dt is None
+            or end_dt is None
+        ):
             continue
 
         total_span = (end_dt - start_dt).total_seconds()
@@ -501,7 +563,9 @@ def build_today_insights(
     distribution_sections: list[dict],
     day_comparison: dict,
 ) -> dict[str, object]:
-    effective_seconds = int((totals or {}).get("effective_seconds", 0) or 0)
+    effective_seconds = (
+        parse_nonnegative_int((totals or {}).get("effective_seconds")) or 0
+    )
     if effective_seconds < 1800 or len(sessions) < 2:
         return {
             "ready": False,
@@ -637,8 +701,10 @@ def _build_today_advice_card(
 
 
 def _session_seconds(session: dict) -> int:
-    seconds = session.get("effective_seconds", 0) or session.get("duration_seconds", 0) or 0
-    return int(seconds)
+    effective = parse_nonnegative_int(session.get("effective_seconds"))
+    if effective is not None and effective > 0:
+        return effective
+    return parse_nonnegative_int(session.get("duration_seconds")) or 0
 
 
 def _session_label(session: dict) -> str:
@@ -666,10 +732,16 @@ def _session_time_range(session: dict) -> str:
 
 
 def _build_thirty_day_trend(daily_rows: list[dict]) -> list[float]:
-    return [
-        round((item.get("effective_seconds", 0) or 0) / 3600.0, 1)
-        for item in daily_rows
-    ]
+    points = []
+    for item in daily_rows:
+        field = (
+            "engaged_seconds"
+            if "engaged_seconds" in item
+            else "effective_seconds"
+        )
+        seconds = parse_nonnegative_int(item.get(field)) or 0
+        points.append(round(seconds / 3600.0, 1))
+    return points
 
 
 def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
@@ -685,10 +757,10 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
     stats = database.query_date_stats(db_path, today_str)
     yesterday_stats = database.query_date_stats(db_path, yesterday_str)
     totals = stats.get("totals", {})
-    effective_seconds = int(totals.get("effective_seconds", 0) or 0)
-    engaged_seconds = int(totals.get("engaged_seconds", 0) or 0)
-    passive_seconds = int(totals.get("passive_seconds", 0) or 0)
-    idle_seconds = int(totals.get("idle_seconds", 0) or 0)
+    effective_seconds = parse_nonnegative_int(totals.get("effective_seconds")) or 0
+    engaged_seconds = parse_nonnegative_int(totals.get("engaged_seconds")) or 0
+    passive_seconds = parse_nonnegative_int(totals.get("passive_seconds")) or 0
+    idle_seconds = parse_nonnegative_int(totals.get("idle_seconds")) or 0
     total_seconds = effective_seconds + idle_seconds
     attention_total = engaged_seconds + passive_seconds + idle_seconds
     active_ratio = (
@@ -721,9 +793,12 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
         LOGGER.exception("Failed to build dashboard thirty-day trend")
         thirty_day_trend = []
     try:
-        fourteen_day_sessions = database.query_sessions_for_dates(
+        raw_fourteen_day_sessions = database.query_sessions_for_dates(
             db_path,
             fourteen_day_dates,
+        )
+        fourteen_day_sessions, malformed_session_dates = _sanitize_sessions(
+            raw_fourteen_day_sessions
         )
         sessions = _sessions_for_date(fourteen_day_sessions, today_str)
         yesterday_sessions = _sessions_for_date(
@@ -738,11 +813,16 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
         LOGGER.exception("Failed to read dashboard session range")
         trusted_calculation_failed = True
         fourteen_day_sessions = []
-        sessions = database.query_today_sessions(db_path, today_str)
-        yesterday_sessions = database.query_today_sessions(
-            db_path,
-            yesterday_str,
+        malformed_session_dates = set()
+        fallback_sessions, fallback_malformed_dates = _sanitize_sessions(
+            [
+                *database.query_today_sessions(db_path, today_str),
+                *database.query_today_sessions(db_path, yesterday_str),
+            ]
         )
+        malformed_session_dates.update(fallback_malformed_dates)
+        sessions = _sessions_for_date(fallback_sessions, today_str)
+        yesterday_sessions = _sessions_for_date(fallback_sessions, yesterday_str)
         seven_day_sessions = [[] for _ in seven_day_dates]
 
     focus_summary, consecutive_days = build_focus_summary(db_path, today_str)
@@ -782,6 +862,21 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
             )
             prior_trust = assess_range(
                 prior_summary,
+                prior_seven_day_dates,
+            )
+            trust = _apply_session_payload_health(
+                trust,
+                malformed_session_dates,
+                fourteen_day_dates,
+            )
+            recent_trust = _apply_session_payload_health(
+                recent_trust,
+                malformed_session_dates,
+                seven_day_dates,
+            )
+            prior_trust = _apply_session_payload_health(
+                prior_trust,
+                malformed_session_dates,
                 prior_seven_day_dates,
             )
             comparison = compare_ranges(prior_trust, recent_trust)
@@ -859,6 +954,7 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
             "active_ratio": active_ratio,
             "passive_ratio": passive_ratio,
             "idle_ratio": idle_ratio,
+            "primary_metric": "engaged",
         },
         "distribution_sections": distribution_sections,
         "day_comparison": day_comparison,
@@ -882,6 +978,7 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
             ],
             "seven_day_labels": seven_day_dates,
             "thirty_days": thirty_day_trend,
+            "thirty_day_metric": "engaged",
         },
     }
 

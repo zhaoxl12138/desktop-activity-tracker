@@ -1,11 +1,30 @@
 """Shared utility functions used across the package."""
 
+from decimal import Decimal, InvalidOperation
+
 WORK_CATEGORY_KEYS = {"ai_tools", "coding", "office", "reading", "creative", "work"}
 ENTERTAINMENT_CATEGORY_KEYS = {"video", "gaming", "entertainment"}
 SOCIAL_CATEGORY_KEYS = {"social"}
 BROWSER_CATEGORY_KEYS = {"browser_general", "browser_other"}
 TOOLS_CATEGORY_KEYS = {"tools", "system_tools"}
 HIDDEN_RULE_CATEGORY_KEYS = {"idle", "hangup"}
+
+
+def parse_nonnegative_int(value) -> int | None:
+    """Return a finite non-negative integer, rejecting booleans and bad data."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = Decimal(str(value).strip())
+    except (InvalidOperation, ValueError):
+        return None
+    if (
+        not number.is_finite()
+        or number != number.to_integral_value()
+        or number < 0
+    ):
+        return None
+    return int(number)
 
 
 def fmt_seconds(total_seconds):

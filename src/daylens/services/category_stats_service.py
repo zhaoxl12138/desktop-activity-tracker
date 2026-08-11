@@ -17,7 +17,7 @@ def load_category_summary(db_path: str) -> dict[str, object]:
         "today": today,
         "categories": categories,
         "total_effective_seconds": total_eff,
-        "total_label": f"今日活跃时间总计：{fmt_seconds(total_eff)}  |  {len(categories)} 个分类",
+        "total_label": f"今日有效时间总计：{fmt_seconds(total_eff)}  |  {len(categories)} 个分类",
     }
 
 
