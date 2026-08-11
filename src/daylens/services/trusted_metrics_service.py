@@ -23,13 +23,19 @@ def assess_range(summary: dict, expected_dates: list[str]) -> dict[str, object]:
     session_count = int(summary.get("session_count", 0) or 0)
     legacy_count = int(summary.get("legacy_session_count", 0) or 0)
     anomaly_count = int(summary.get("anomaly_count", 0) or 0)
-    legacy_ratio = legacy_count / session_count if session_count else 1.0
-    anomaly_ratio = anomaly_count / session_count if session_count else 0.0
     metric_versions = _sorted_versions(summary, "metric_versions")
     classification_versions = _sorted_versions(
         summary,
         "classification_versions",
     )
+    legacy_metric_present = "legacy" in metric_versions
+    nonlegacy_metric_versions = [
+        version for version in metric_versions if version != "legacy"
+    ]
+    if session_count > 0 and metric_versions == ["legacy"]:
+        legacy_count = session_count
+    legacy_ratio = legacy_count / session_count if session_count else 1.0
+    anomaly_ratio = anomaly_count / session_count if session_count else 0.0
 
     low_reasons: list[str] = []
     if session_count <= 0:
@@ -40,7 +46,7 @@ def assess_range(summary: dict, expected_dates: list[str]) -> dict[str, object]:
         low_reasons.append("旧计量口径占比超过20%")
     if anomaly_ratio > 0.005:
         low_reasons.append("计时组成异常率超过0.5%")
-    if len(metric_versions) > 1:
+    if len(nonlegacy_metric_versions) > 1:
         low_reasons.append("范围内存在多个计量版本")
     elif session_count > 0 and not metric_versions:
         low_reasons.append("范围内缺少计量版本")
@@ -50,12 +56,14 @@ def assess_range(summary: dict, expected_dates: list[str]) -> dict[str, object]:
         reasons = low_reasons
     else:
         medium_reasons: list[str] = []
-        if legacy_ratio > 0:
+        if legacy_ratio > 0 or legacy_metric_present:
             medium_reasons.append("范围内包含少量旧计量口径")
         if len(classification_versions) > 1:
             medium_reasons.append("范围内存在多个分类版本")
         elif not classification_versions:
             medium_reasons.append("范围内缺少分类版本")
+        elif classification_versions == ["legacy"]:
+            medium_reasons.append("分类口径仍为旧版本")
         level = "medium" if medium_reasons else "high"
         reasons = medium_reasons
 
@@ -68,7 +76,9 @@ def assess_range(summary: dict, expected_dates: list[str]) -> dict[str, object]:
         "metric_versions": metric_versions,
         "classification_versions": classification_versions,
         "category_comparable": (
-            level != "low" and len(classification_versions) == 1
+            level != "low"
+            and len(classification_versions) == 1
+            and classification_versions != ["legacy"]
         ),
     }
 
@@ -76,10 +86,26 @@ def assess_range(summary: dict, expected_dates: list[str]) -> dict[str, object]:
 def compare_ranges(left: dict, right: dict) -> dict[str, object]:
     """Report whether total and category trends can be compared safely."""
     both_healthy = left.get("level") != "low" and right.get("level") != "low"
-    same_metric = left.get("metric_versions") == right.get("metric_versions")
+    left_metrics = sorted(
+        {
+            str(version)
+            for version in left.get("metric_versions", []) or []
+            if version and str(version) != "legacy"
+        }
+    )
+    right_metrics = sorted(
+        {
+            str(version)
+            for version in right.get("metric_versions", []) or []
+            if version and str(version) != "legacy"
+        }
+    )
+    same_metric = bool(left_metrics) and left_metrics == right_metrics
     comparable = both_healthy and same_metric
     category_comparable = (
         comparable
+        and bool(left.get("category_comparable"))
+        and bool(right.get("category_comparable"))
         and left.get("classification_versions")
         == right.get("classification_versions")
     )

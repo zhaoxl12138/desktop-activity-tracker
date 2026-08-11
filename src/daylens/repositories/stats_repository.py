@@ -59,6 +59,8 @@ def _session_row_is_anomalous(row, sample_interval: int) -> bool:
         components = engaged + passive + idle
         if abs(duration - components) > sample_interval:
             return True
+        if abs(effective - (engaged + passive)) > sample_interval:
+            return True
 
     try:
         start_time = datetime.fromisoformat(str(row["start_time"]))

@@ -48,12 +48,30 @@ def test_multiple_classification_versions_are_medium_and_category_incomparable()
 
 def test_small_legacy_share_is_medium_with_stable_reason():
     result = assess_range(
-        _summary(legacy_session_count=40),
+        _summary(
+            legacy_session_count=40,
+            metric_versions=["attention-v1", "legacy"],
+        ),
         ["2026-07-01", "2026-07-02"],
     )
 
     assert result["level"] == "medium"
     assert result["legacy_ratio"] == 0.2
+    assert result["reasons"] == ["范围内包含少量旧计量口径"]
+
+
+def test_one_percent_legacy_and_attention_v1_is_medium_not_low():
+    result = assess_range(
+        _summary(
+            session_count=100,
+            legacy_session_count=1,
+            metric_versions=["legacy", "attention-v1"],
+        ),
+        ["2026-07-01", "2026-07-02"],
+    )
+
+    assert result["level"] == "medium"
+    assert result["legacy_ratio"] == 0.01
     assert result["reasons"] == ["范围内包含少量旧计量口径"]
 
 
@@ -92,6 +110,33 @@ def test_anomaly_ratio_above_half_percent_is_low_trust():
     assert result["reasons"] == ["计时组成异常率超过0.5%"]
 
 
+def test_legacy_only_metric_cannot_be_high_when_count_is_inconsistent():
+    result = assess_range(
+        _summary(
+            legacy_session_count=0,
+            metric_versions=["legacy"],
+            classification_versions=["legacy"],
+        ),
+        ["2026-07-01", "2026-07-02"],
+    )
+
+    assert result["level"] == "low"
+    assert result["legacy_ratio"] == 1.0
+    assert result["reasons"] == ["旧计量口径占比超过20%"]
+    assert result["category_comparable"] is False
+
+
+def test_legacy_classification_cannot_receive_high_trust():
+    result = assess_range(
+        _summary(classification_versions=["legacy"]),
+        ["2026-07-01", "2026-07-02"],
+    )
+
+    assert result["level"] == "medium"
+    assert result["reasons"] == ["分类口径仍为旧版本"]
+    assert result["category_comparable"] is False
+
+
 def test_low_trust_reasons_are_complete_and_deterministically_ordered():
     result = assess_range(
         _summary(
@@ -99,7 +144,7 @@ def test_low_trust_reasons_are_complete_and_deterministically_ordered():
             legacy_session_count=21,
             anomaly_count=1,
             dates_with_data=["2026-07-01"],
-            metric_versions=["legacy", "attention-v1"],
+            metric_versions=["legacy", "attention-v2", "attention-v1"],
             classification_versions=["rules-b", "rules-a"],
         ),
         ["2026-07-01", "2026-07-02"],
@@ -177,4 +222,29 @@ def test_compare_ranges_rejects_low_quality_or_different_metric_versions():
         "comparable": False,
         "category_comparable": False,
         "reason": "计量版本不一致，无法比较",
+    }
+
+
+def test_compare_ranges_normalizes_tolerated_legacy_metric_version():
+    mixed = assess_range(
+        _summary(
+            session_count=100,
+            legacy_session_count=1,
+            metric_versions=["legacy", "attention-v1"],
+            classification_versions=["legacy", "rules-a"],
+        ),
+        ["2026-07-01", "2026-07-02"],
+    )
+    current = assess_range(
+        _summary(
+            metric_versions=["attention-v1"],
+            classification_versions=["rules-a"],
+        ),
+        ["2026-07-01", "2026-07-02"],
+    )
+
+    assert compare_ranges(mixed, current) == {
+        "comparable": True,
+        "category_comparable": False,
+        "reason": "分类规则不一致，仅总参与时间可比",
     }

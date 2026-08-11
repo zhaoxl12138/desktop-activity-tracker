@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 
 from daylens import database
+from daylens.services.trusted_metrics_service import assess_range
 
 
 def _insert_trusted_session(
@@ -231,6 +232,43 @@ def test_composition_tolerance_uses_recording_sample_interval(tmp_path):
     assert result["totals"]["anomaly_count"] == 1
 
 
+def test_effective_compatibility_tolerance_uses_recording_sample_interval(
+    tmp_path,
+):
+    db_path = tmp_path / "usage.db"
+    database.init_db(str(db_path)).close()
+    database.save_settings(str(db_path), {"sample_interval_seconds": 5})
+    conn = sqlite3.connect(db_path)
+    _insert_trusted_session(
+        conn,
+        session_id="effective-within-one-sample",
+        start_time="2026-07-20 10:00:00",
+        end_time="2026-07-20 10:00:30",
+        duration_seconds=30,
+        effective_seconds=35,
+        engaged_seconds=20,
+        passive_seconds=10,
+        idle_seconds=0,
+    )
+    _insert_trusted_session(
+        conn,
+        session_id="effective-beyond-one-sample",
+        start_time="2026-07-20 11:00:00",
+        end_time="2026-07-20 11:00:30",
+        duration_seconds=30,
+        effective_seconds=36,
+        engaged_seconds=20,
+        passive_seconds=10,
+        idle_seconds=0,
+    )
+    conn.commit()
+    conn.close()
+
+    result = database.query_date_range_stats(str(db_path), ["2026-07-20"])
+
+    assert result["totals"]["anomaly_count"] == 1
+
+
 def test_legacy_sessions_are_not_anomalous_only_for_missing_new_counters(
     tmp_path,
 ):
@@ -259,6 +297,41 @@ def test_legacy_sessions_are_not_anomalous_only_for_missing_new_counters(
     assert result["totals"]["passive_seconds"] == 0
     assert result["totals"]["legacy_session_count"] == 1
     assert result["totals"]["anomaly_count"] == 0
+
+
+def test_one_percent_legacy_history_is_medium_trust_in_real_aggregation(
+    tmp_path,
+):
+    db_path = tmp_path / "usage.db"
+    database.init_db(str(db_path)).close()
+    conn = sqlite3.connect(db_path)
+    for index in range(99):
+        _insert_trusted_session(
+            conn,
+            session_id=f"new-{index}",
+        )
+    _insert_trusted_session(
+        conn,
+        session_id="legacy",
+        duration_seconds=100,
+        effective_seconds=90,
+        engaged_seconds=0,
+        passive_seconds=0,
+        idle_seconds=0,
+        metric_version="legacy",
+        classification_version="legacy",
+    )
+    conn.commit()
+    conn.close()
+
+    result = database.query_date_range_stats(str(db_path), ["2026-07-20"])
+    trust = assess_range(result["totals"], ["2026-07-20"])
+
+    assert result["totals"]["session_count"] == 100
+    assert result["totals"]["legacy_session_count"] == 1
+    assert result["totals"]["metric_versions"] == ["attention-v1", "legacy"]
+    assert trust["level"] == "medium"
+    assert trust["legacy_ratio"] == 0.01
 
 
 def test_range_stats_keep_process_and_category_as_separate_dimensions(tmp_path):
