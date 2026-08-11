@@ -2,7 +2,20 @@ from __future__ import annotations
 
 import pytest
 
-from daylens.services.trusted_metrics_service import assess_range, compare_ranges
+from daylens.services.trusted_metrics_service import (
+    DATA_HEALTH_REASONS,
+    REASON_COVERAGE_BELOW_80,
+    REASON_FORMAT_INVALID,
+    REASON_LEGACY_GRANULARITY,
+    REASON_LEGACY_LOG_ANOMALY,
+    REASON_LEGACY_SHARE_ABOVE_20,
+    REASON_MISSING_METRIC_VERSION,
+    REASON_MULTIPLE_METRIC_VERSIONS,
+    REASON_NO_RECORDS,
+    REASON_TIMING_ANOMALY_ABOVE_LIMIT,
+    assess_range,
+    compare_ranges,
+)
 
 
 def _summary(**overrides):
@@ -20,6 +33,35 @@ def _summary(**overrides):
     }
     summary.update(overrides)
     return summary
+
+
+def test_data_health_reasons_are_exported_as_one_stable_contract():
+    assert DATA_HEALTH_REASONS == frozenset(
+        {
+            REASON_FORMAT_INVALID,
+            REASON_NO_RECORDS,
+            REASON_LEGACY_GRANULARITY,
+            REASON_LEGACY_LOG_ANOMALY,
+            REASON_COVERAGE_BELOW_80,
+            REASON_LEGACY_SHARE_ABOVE_20,
+            REASON_TIMING_ANOMALY_ABOVE_LIMIT,
+            REASON_MULTIPLE_METRIC_VERSIONS,
+            REASON_MISSING_METRIC_VERSION,
+        }
+    )
+    assert DATA_HEALTH_REASONS == frozenset(
+        {
+            "统计数据格式异常",
+            "范围内没有可评估记录",
+            "旧日志缺少会话粒度",
+            "旧日志存在异常记录",
+            "记录日期覆盖不足80%",
+            "旧计量口径占比超过20%",
+            "计时组成异常率超过0.5%",
+            "范围内存在多个计量版本",
+            "范围内缺少计量版本",
+        }
+    )
 
 
 def test_complete_single_version_range_is_high_trust():

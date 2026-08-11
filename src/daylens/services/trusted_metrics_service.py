@@ -7,6 +7,30 @@ from datetime import date
 
 _STRING_COLLECTION_TYPES = (list, tuple, set, frozenset)
 
+REASON_FORMAT_INVALID = "统计数据格式异常"
+REASON_NO_RECORDS = "范围内没有可评估记录"
+REASON_LEGACY_GRANULARITY = "旧日志缺少会话粒度"
+REASON_LEGACY_LOG_ANOMALY = "旧日志存在异常记录"
+REASON_COVERAGE_BELOW_80 = "记录日期覆盖不足80%"
+REASON_LEGACY_SHARE_ABOVE_20 = "旧计量口径占比超过20%"
+REASON_TIMING_ANOMALY_ABOVE_LIMIT = "计时组成异常率超过0.5%"
+REASON_MULTIPLE_METRIC_VERSIONS = "范围内存在多个计量版本"
+REASON_MISSING_METRIC_VERSION = "范围内缺少计量版本"
+
+DATA_HEALTH_REASONS = frozenset(
+    (
+        REASON_FORMAT_INVALID,
+        REASON_NO_RECORDS,
+        REASON_LEGACY_GRANULARITY,
+        REASON_LEGACY_LOG_ANOMALY,
+        REASON_COVERAGE_BELOW_80,
+        REASON_LEGACY_SHARE_ABOVE_20,
+        REASON_TIMING_ANOMALY_ABOVE_LIMIT,
+        REASON_MULTIPLE_METRIC_VERSIONS,
+        REASON_MISSING_METRIC_VERSION,
+    )
+)
+
 
 def _nonnegative_integer(value) -> tuple[int, bool]:
     if type(value) is not int or value < 0:
@@ -154,7 +178,7 @@ def assess_range(summary: dict, expected_dates: list[str]) -> dict[str, object]:
     if not format_valid:
         return {
             "level": "low",
-            "reasons": ["统计数据格式异常"],
+            "reasons": [REASON_FORMAT_INVALID],
             "coverage_ratio": coverage_ratio,
             "legacy_ratio": legacy_ratio,
             "anomaly_ratio": anomaly_ratio,
@@ -165,21 +189,21 @@ def assess_range(summary: dict, expected_dates: list[str]) -> dict[str, object]:
 
     low_reasons: list[str] = []
     if session_count <= 0 and not legacy_granularity_unknown:
-        low_reasons.append("范围内没有可评估记录")
+        low_reasons.append(REASON_NO_RECORDS)
     if legacy_granularity_unknown:
-        low_reasons.append("旧日志缺少会话粒度")
+        low_reasons.append(REASON_LEGACY_GRANULARITY)
     if legacy_log_anomaly_count > 0:
-        low_reasons.append("旧日志存在异常记录")
+        low_reasons.append(REASON_LEGACY_LOG_ANOMALY)
     if coverage_ratio < 0.8:
-        low_reasons.append("记录日期覆盖不足80%")
+        low_reasons.append(REASON_COVERAGE_BELOW_80)
     if session_count > 0 and legacy_ratio > 0.2:
-        low_reasons.append("旧计量口径占比超过20%")
+        low_reasons.append(REASON_LEGACY_SHARE_ABOVE_20)
     if anomaly_ratio > 0.005:
-        low_reasons.append("计时组成异常率超过0.5%")
+        low_reasons.append(REASON_TIMING_ANOMALY_ABOVE_LIMIT)
     if len(nonlegacy_metric_versions) > 1:
-        low_reasons.append("范围内存在多个计量版本")
+        low_reasons.append(REASON_MULTIPLE_METRIC_VERSIONS)
     elif session_count > 0 and not metric_versions:
-        low_reasons.append("范围内缺少计量版本")
+        low_reasons.append(REASON_MISSING_METRIC_VERSION)
 
     if low_reasons:
         level = "low"

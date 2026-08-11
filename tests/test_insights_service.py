@@ -5,6 +5,25 @@ from copy import deepcopy
 import pytest
 
 from daylens.services.insights_service import select_primary_insight
+from daylens.services.trusted_metrics_service import (
+    REASON_COVERAGE_BELOW_80,
+    REASON_FORMAT_INVALID,
+    REASON_LEGACY_GRANULARITY,
+    REASON_LEGACY_LOG_ANOMALY,
+    REASON_LEGACY_SHARE_ABOVE_20,
+    REASON_MISSING_METRIC_VERSION,
+    REASON_MULTIPLE_METRIC_VERSIONS,
+    REASON_NO_RECORDS,
+    REASON_TIMING_ANOMALY_ABOVE_LIMIT,
+)
+
+
+class _UnhashableLevel:
+    __hash__ = None
+
+
+class _StringLevel(str):
+    pass
 
 
 def _payload(**overrides):
@@ -138,7 +157,7 @@ def test_low_trust_always_returns_data_health_before_behavior_candidates():
         "kind": "data_health",
         "title": "先让数据口径稳定",
         "evidence": "范围内存在多个计量版本",
-        "action": "继续记录，新旧口径不会被直接混合比较。",
+        "action": "继续记录，并避免直接混合比较新旧或不同版本数据。",
         "confidence": "low",
         "date_range": ["2026-07-28", "2026-08-10"],
     }
@@ -187,6 +206,69 @@ def test_low_trust_never_echoes_unknown_or_behavioral_reasons(untrusted_reason):
     assert str(untrusted_reason) not in rendered
     assert "效率" not in rendered
     assert "生产力" not in rendered
+
+
+@pytest.mark.parametrize(
+    ("reason", "expected_action"),
+    [
+        (
+            REASON_COVERAGE_BELOW_80,
+            "继续记录，并避免直接混合比较新旧或不同版本数据。",
+        ),
+        (
+            REASON_LEGACY_SHARE_ABOVE_20,
+            "继续记录，并避免直接混合比较新旧或不同版本数据。",
+        ),
+        (
+            REASON_MULTIPLE_METRIC_VERSIONS,
+            "继续记录，并避免直接混合比较新旧或不同版本数据。",
+        ),
+        (
+            REASON_MISSING_METRIC_VERSION,
+            "继续记录，并避免直接混合比较新旧或不同版本数据。",
+        ),
+        (
+            REASON_FORMAT_INVALID,
+            "检查记录状态和数据文件，确认异常后再查看趋势。",
+        ),
+        (
+            REASON_TIMING_ANOMALY_ABOVE_LIMIT,
+            "检查记录状态和数据文件，确认异常后再查看趋势。",
+        ),
+        (
+            REASON_LEGACY_LOG_ANOMALY,
+            "检查记录状态和数据文件，确认异常后再查看趋势。",
+        ),
+        (
+            REASON_NO_RECORDS,
+            "继续记录，积累同一口径数据后再查看趋势。",
+        ),
+        (
+            REASON_LEGACY_GRANULARITY,
+            "旧日志缺少可比粒度，请避免与新口径直接比较。",
+        ),
+    ],
+)
+def test_data_health_action_matches_the_known_problem(reason, expected_action):
+    insight = select_primary_insight(
+        _payload(
+            trust={
+                "level": "low",
+                "reasons": [reason],
+                "category_comparable": False,
+            }
+        )
+    )
+
+    assert insight is not None
+    assert insight["evidence"] == reason
+    assert insight["action"] == expected_action
+    if reason in {
+        REASON_FORMAT_INVALID,
+        REASON_TIMING_ANOMALY_ABOVE_LIMIT,
+        REASON_LEGACY_LOG_ANOMALY,
+    }:
+        assert "继续记录" not in insight["action"]
 
 
 def test_best_window_requires_a_matching_continuous_fourteen_day_period():
@@ -306,12 +388,14 @@ def test_selects_qualified_external_interruptions():
 
     assert insight == {
         "kind": "interruptions",
-        "title": "外部打断开始影响工作连续性",
+        "title": "工作前后频繁出现社交或娱乐",
         "evidence": "最近7天，社交或娱乐在工作前后15分钟内出现了8次。",
         "action": "在优势时段静音，并集中安排一次消息处理窗口。",
         "confidence": "high",
         "date_range": ["2026-07-28", "2026-08-10"],
     }
+    assert "影响" not in insight["title"] + insight["evidence"]
+    assert "导致" not in insight["title"] + insight["evidence"]
 
 
 @pytest.mark.parametrize(
@@ -410,6 +494,60 @@ def test_work_trend_requires_total_and_category_comparability(
     assert insight is None
 
 
+def test_trend_extreme_max_date_fails_closed_without_overflow():
+    payload = _payload(
+        date_range=["9999-12-18", "9999-12-31"],
+        trend={
+            "prior_range": ["9999-12-25", "9999-12-31"],
+            "recent_range": ["9999-12-18", "9999-12-24"],
+            "recent_work_engaged_seconds": 15_000,
+            "prior_work_engaged_seconds": 10_000,
+            "comparison_comparable": True,
+            "category_comparable": True,
+        },
+    )
+
+    assert select_primary_insight(payload) is None
+
+
+@pytest.mark.parametrize(
+    ("main_range", "prior_range", "recent_range"),
+    [
+        (
+            ["0001-01-01", "0001-01-14"],
+            ["0001-01-01", "0001-01-07"],
+            ["0001-01-08", "0001-01-14"],
+        ),
+        (
+            ["9999-12-18", "9999-12-31"],
+            ["9999-12-18", "9999-12-24"],
+            ["9999-12-25", "9999-12-31"],
+        ),
+    ],
+)
+def test_trend_accepts_adjacent_periods_at_iso_date_extremes(
+    main_range,
+    prior_range,
+    recent_range,
+):
+    insight = select_primary_insight(
+        _payload(
+            date_range=main_range,
+            trend={
+                "prior_range": prior_range,
+                "recent_range": recent_range,
+                "recent_work_engaged_seconds": 15_000,
+                "prior_work_engaged_seconds": 10_000,
+                "comparison_comparable": True,
+                "category_comparable": True,
+            },
+        )
+    )
+
+    assert insight is not None
+    assert insight["kind"] == "trend"
+
+
 def test_selects_a_collaborative_workflow_without_switching_warning():
     insight = select_primary_insight(
         _payload(
@@ -431,6 +569,70 @@ def test_selects_a_collaborative_workflow_without_switching_warning():
         "date_range": ["2026-07-28", "2026-08-10"],
     }
     assert "过度切换" not in "".join(str(value) for value in insight.values())
+
+
+def test_workflow_normalizes_safe_display_names_with_nfkc():
+    insight = select_primary_insight(
+        _payload(
+            workflow={
+                "tool_count": 2,
+                "switch_count": 8,
+                "non_work_interruptions": 0,
+                "tools": ["Ｃｏｄｅｘ", "Obsidian"],
+            }
+        )
+    )
+
+    assert insight is not None
+    assert insight["kind"] == "workflow"
+    assert insight["evidence"].startswith("Codex、Obsidian ")
+    assert "Ｃｏｄｅｘ" not in insight["evidence"]
+
+
+@pytest.mark.parametrize(
+    "tools",
+    [
+        ["Codex", "codex"],
+        ["Ｃｏｄｅｘ", "Codex"],
+    ],
+)
+def test_workflow_counts_nfkc_casefold_duplicates_as_one_tool(tools):
+    insight = select_primary_insight(
+        _payload(
+            workflow={
+                "tool_count": 2,
+                "switch_count": 8,
+                "non_work_interruptions": 0,
+                "tools": tools,
+            }
+        )
+    )
+
+    assert insight is None
+
+
+@pytest.mark.parametrize(
+    "unsafe_name",
+    [
+        "Code\nX",
+        "Code\tX",
+        "Code\u200bX",
+        "X" * 65,
+    ],
+)
+def test_workflow_rejects_control_format_and_overlong_tool_names(unsafe_name):
+    insight = select_primary_insight(
+        _payload(
+            workflow={
+                "tool_count": 2,
+                "switch_count": 8,
+                "non_work_interruptions": 0,
+                "tools": [unsafe_name, "Obsidian"],
+            }
+        )
+    )
+
+    assert insight is None
 
 
 @pytest.mark.parametrize(
@@ -575,6 +777,22 @@ def test_mixed_classification_suppresses_every_behavior_candidate():
     ],
 )
 def test_malformed_top_level_payload_fails_closed_without_raising(payload):
+    assert select_primary_insight(payload) is None
+
+
+@pytest.mark.parametrize(
+    "bad_level",
+    [[], {}, set(), _UnhashableLevel(), _StringLevel("high")],
+)
+def test_trust_level_requires_a_real_string_and_never_raises(bad_level):
+    payload = _payload(
+        trust={
+            "level": bad_level,
+            "reasons": [],
+            "category_comparable": True,
+        }
+    )
+
     assert select_primary_insight(payload) is None
 
 

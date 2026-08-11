@@ -2,24 +2,44 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+import unicodedata
+from datetime import date
+
+from daylens.services.trusted_metrics_service import (
+    DATA_HEALTH_REASONS,
+    REASON_COVERAGE_BELOW_80,
+    REASON_FORMAT_INVALID,
+    REASON_LEGACY_GRANULARITY,
+    REASON_LEGACY_LOG_ANOMALY,
+    REASON_LEGACY_SHARE_ABOVE_20,
+    REASON_MISSING_METRIC_VERSION,
+    REASON_MULTIPLE_METRIC_VERSIONS,
+    REASON_NO_RECORDS,
+    REASON_TIMING_ANOMALY_ABOVE_LIMIT,
+)
 
 
 _DEFAULT_HEALTH_REASON = "新口径数据仍在积累"
-_TRUSTED_HEALTH_REASONS = frozenset(
-    (
-        "统计数据格式异常",
-        "范围内没有可评估记录",
-        "旧日志缺少会话粒度",
-        "旧日志存在异常记录",
-        "记录日期覆盖不足80%",
-        "旧计量口径占比超过20%",
-        "计时组成异常率超过0.5%",
-        "范围内存在多个计量版本",
-        "范围内缺少计量版本",
-    )
+_DEFAULT_HEALTH_ACTION = "继续记录，新旧口径不会被直接混合比较。"
+_CONTINUE_WITHOUT_MIXING_ACTION = (
+    "继续记录，并避免直接混合比较新旧或不同版本数据。"
 )
+_CHECK_RECORDING_ACTION = "检查记录状态和数据文件，确认异常后再查看趋势。"
+_DATA_HEALTH_ACTIONS = {
+    REASON_FORMAT_INVALID: _CHECK_RECORDING_ACTION,
+    REASON_NO_RECORDS: "继续记录，积累同一口径数据后再查看趋势。",
+    REASON_LEGACY_GRANULARITY: (
+        "旧日志缺少可比粒度，请避免与新口径直接比较。"
+    ),
+    REASON_LEGACY_LOG_ANOMALY: _CHECK_RECORDING_ACTION,
+    REASON_COVERAGE_BELOW_80: _CONTINUE_WITHOUT_MIXING_ACTION,
+    REASON_LEGACY_SHARE_ABOVE_20: _CONTINUE_WITHOUT_MIXING_ACTION,
+    REASON_TIMING_ANOMALY_ABOVE_LIMIT: _CHECK_RECORDING_ACTION,
+    REASON_MULTIPLE_METRIC_VERSIONS: _CONTINUE_WITHOUT_MIXING_ACTION,
+    REASON_MISSING_METRIC_VERSION: _CONTINUE_WITHOUT_MIXING_ACTION,
+}
 _INSIGHT_FIELDS = frozenset(("kind", "title", "evidence", "action"))
+_MAX_TOOL_NAME_LENGTH = 64
 
 
 def _nonnegative_int(value) -> int | None:
@@ -166,7 +186,7 @@ def build_interruption_candidate(payload: dict) -> dict | None:
         return None
     return {
         "kind": "interruptions",
-        "title": "外部打断开始影响工作连续性",
+        "title": "工作前后频繁出现社交或娱乐",
         "evidence": (
             "最近7天，社交或娱乐在工作前后"
             f"{window_minutes}分钟内出现了{count}次。"
@@ -188,7 +208,7 @@ def build_trend_candidate(payload: dict) -> dict | None:
         return None
     prior_end = date.fromisoformat(prior_range[1])
     recent_start = date.fromisoformat(recent_range[0])
-    if prior_end + timedelta(days=1) != recent_start:
+    if (recent_start - prior_end).days != 1:
         return None
     if main_range != [prior_range[0], recent_range[1]]:
         return None
@@ -256,12 +276,26 @@ def build_workflow_candidate(payload: dict) -> dict | None:
         return None
 
     normalized_tools: list[str] = []
+    unique_tools: set[str] = set()
     for tool in tools:
         if type(tool) is not str or not tool or tool.strip() != tool:
             return None
-        if tool in normalized_tools:
+        display_name = unicodedata.normalize("NFKC", tool)
+        if (
+            not display_name
+            or display_name.strip() != display_name
+            or len(display_name) > _MAX_TOOL_NAME_LENGTH
+            or any(
+                unicodedata.category(character).startswith("C")
+                for character in display_name
+            )
+        ):
             return None
-        normalized_tools.append(tool)
+        uniqueness_key = display_name.casefold()
+        if uniqueness_key in unique_tools:
+            return None
+        unique_tools.add(uniqueness_key)
+        normalized_tools.append(display_name)
     if tool_count < 2 or switch_count < 8 or interruptions >= 8:
         return None
 
@@ -279,18 +313,20 @@ def build_workflow_candidate(payload: dict) -> dict | None:
 def _data_health_candidate(trust: dict) -> dict:
     reasons = trust.get("reasons", [])
     reason = _DEFAULT_HEALTH_REASON
+    action = _DEFAULT_HEALTH_ACTION
     if isinstance(reasons, (list, tuple)) and reasons:
         first_reason = reasons[0]
         if (
             type(first_reason) is str
-            and first_reason in _TRUSTED_HEALTH_REASONS
+            and first_reason in DATA_HEALTH_REASONS
         ):
             reason = first_reason
+            action = _DATA_HEALTH_ACTIONS[first_reason]
     return {
         "kind": "data_health",
         "title": "先让数据口径稳定",
         "evidence": reason,
-        "action": "继续记录，新旧口径不会被直接混合比较。",
+        "action": action,
     }
 
 
@@ -314,7 +350,7 @@ def select_primary_insight(payload: dict) -> dict | None:
         return None
 
     level = trust.get("level")
-    if level not in {"high", "medium", "low"}:
+    if type(level) is not str or level not in {"high", "medium", "low"}:
         return None
     if level == "low":
         candidate = _data_health_candidate(trust)
