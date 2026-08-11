@@ -662,6 +662,33 @@ def query_today_sessions(read_conn, db_path: str, date_str: str) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def query_sessions_for_dates(
+    read_conn,
+    db_path: str,
+    dates: list[str],
+) -> list[dict]:
+    """Read complete session evidence for a date range in one query."""
+    unique_dates = list(dict.fromkeys(dates))
+    if not unique_dates:
+        return []
+    placeholders = ",".join("?" * len(unique_dates))
+    with read_conn(db_path) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT session_id, start_time, end_time, date, process_name,
+                   normalized_title, category_key, category_name,
+                   duration_seconds, effective_seconds, engaged_seconds,
+                   passive_seconds, idle_seconds, metric_version,
+                   classification_version
+            FROM activity_sessions
+            WHERE date IN ({placeholders})
+            ORDER BY start_time, id
+            """,
+            unique_dates,
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def query_category_detail(read_conn, db_path: str, date_str: str, category_key: str, limit: int = 5) -> list[dict]:
     with read_conn(db_path) as conn:
         rows = conn.execute(

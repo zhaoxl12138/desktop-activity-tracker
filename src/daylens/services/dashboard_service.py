@@ -3,12 +3,31 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+import html
+import logging
+import unicodedata
 
 from .. import database, timeline
 from ..utils import fmt_seconds
+from .insights_service import select_primary_insight
+from .trusted_metrics_service import (
+    REASON_FORMAT_INVALID,
+    assess_range,
+    compare_ranges,
+)
 
 WORK_KEYS = {"ai_tools", "coding", "office", "reading", "creative"}
 ENTERTAINMENT_KEYS = {"video", "gaming"}
+WRAPPER_TOOL_PROCESSES = {
+    "chrome.exe",
+    "msedge.exe",
+    "firefox.exe",
+    "windowsterminal.exe",
+    "cmd.exe",
+    "powershell.exe",
+    "pwsh.exe",
+}
+LOGGER = logging.getLogger(__name__)
 
 
 def _rolling_date_strings(end_date: date, days: int) -> list[str]:
@@ -18,6 +37,228 @@ def _rolling_date_strings(end_date: date, days: int) -> list[str]:
         (end_date - timedelta(days=offset)).strftime("%Y-%m-%d")
         for offset in reversed(range(count))
     ]
+
+
+def _sessions_for_date(sessions: list[dict], date_str: str) -> list[dict]:
+    return [
+        session
+        for session in sessions
+        if str(session.get("date", "") or "") == date_str
+    ]
+
+
+def _engaged_seconds_by_hour(sessions: list[dict]) -> list[float]:
+    hourly = [0.0] * 24
+    for session in sessions:
+        if str(session.get("category_key", "") or "") not in WORK_KEYS:
+            continue
+        engaged = float(session.get("engaged_seconds", 0) or 0)
+        start_dt = _parse_dt(str(session.get("start_time", "") or ""))
+        end_dt = _parse_dt(str(session.get("end_time", "") or ""))
+        if engaged <= 0 or start_dt is None or end_dt is None:
+            continue
+        span = (end_dt - start_dt).total_seconds()
+        if span <= 0:
+            hourly[start_dt.hour] += engaged
+            continue
+        current = start_dt
+        while current < end_dt:
+            next_hour = (
+                current.replace(minute=0, second=0, microsecond=0)
+                + timedelta(hours=1)
+            )
+            segment_end = min(end_dt, next_hour)
+            segment_seconds = (segment_end - current).total_seconds()
+            hourly[current.hour] += engaged * segment_seconds / span
+            current = segment_end
+    return hourly
+
+
+def _build_best_window_section(
+    sessions: list[dict],
+    date_range: list[str],
+) -> dict[str, object]:
+    hourly = _engaged_seconds_by_hour(sessions)
+    start_hour = max(
+        range(23),
+        key=lambda hour: hourly[hour] + hourly[hour + 1],
+    )
+    workday_count = len(
+        {
+            str(session.get("date", "") or "")
+            for session in sessions
+            if str(session.get("category_key", "") or "") in WORK_KEYS
+            and int(session.get("engaged_seconds", 0) or 0) > 0
+        }
+    )
+    return {
+        "date_range": list(date_range),
+        "workday_count": workday_count,
+        "start_hour": start_hour,
+        "end_hour": start_hour + 2,
+        "window_work_engaged_seconds": int(
+            round(hourly[start_hour] + hourly[start_hour + 1])
+        ),
+        "total_work_engaged_seconds": int(round(sum(hourly))),
+    }
+
+
+def _session_interval(session: dict) -> tuple[datetime, datetime] | None:
+    start_dt = _parse_dt(str(session.get("start_time", "") or ""))
+    end_dt = _parse_dt(str(session.get("end_time", "") or ""))
+    if start_dt is None or end_dt is None or end_dt < start_dt:
+        return None
+    return start_dt, end_dt
+
+
+def _interval_gap_seconds(
+    left: tuple[datetime, datetime],
+    right: tuple[datetime, datetime],
+) -> float:
+    if left[1] < right[0]:
+        return (right[0] - left[1]).total_seconds()
+    if right[1] < left[0]:
+        return (left[0] - right[1]).total_seconds()
+    return 0.0
+
+
+def _build_interruptions_section(
+    sessions: list[dict],
+    date_range: list[str],
+    classification_comparable: bool,
+) -> dict[str, object]:
+    work_intervals = [
+        interval
+        for session in sessions
+        if str(session.get("category_key", "") or "") in WORK_KEYS
+        if (interval := _session_interval(session)) is not None
+    ]
+    count = 0
+    for session in sessions:
+        category_key = str(session.get("category_key", "") or "")
+        if category_key != "social" and category_key not in ENTERTAINMENT_KEYS:
+            continue
+        interval = _session_interval(session)
+        if interval is None:
+            continue
+        if any(
+            interval[0].date() == work_interval[0].date()
+            and _interval_gap_seconds(interval, work_interval) <= 15 * 60
+            for work_interval in work_intervals
+        ):
+            count += 1
+    return {
+        "date_range": list(date_range),
+        "count": count,
+        "window_minutes": 15,
+        "classification_comparable": bool(classification_comparable),
+    }
+
+
+def _safe_tool_label(session: dict) -> str | None:
+    process_name = str(session.get("process_name", "") or "").strip()
+    normalized_title = str(session.get("normalized_title", "") or "").strip()
+    source = (
+        normalized_title
+        if process_name.casefold() in WRAPPER_TOOL_PROCESSES and normalized_title
+        else process_name or normalized_title
+    )
+    source = source.removesuffix(".exe").removesuffix(".EXE")
+    label = unicodedata.normalize("NFKC", source)
+    if not label or len(label) > 64 or label.strip() != label:
+        return None
+    if any(unicodedata.category(char).startswith("C") for char in label):
+        return None
+    decoded = label
+    for _ in range(3):
+        decoded_next = html.unescape(decoded)
+        if decoded_next == decoded:
+            break
+        decoded = decoded_next
+    if "<" in decoded and ">" in decoded:
+        return None
+    return label
+
+
+def _build_workflow_section(
+    sessions: list[dict],
+    date_range: list[str],
+) -> dict[str, object]:
+    by_date: dict[str, list[dict]] = {}
+    for session in sessions:
+        by_date.setdefault(str(session.get("date", "") or ""), []).append(session)
+
+    tools: list[str] = []
+    seen_tools: set[str] = set()
+    switch_count = 0
+    non_work_interruptions = 0
+    for date_str in sorted(by_date):
+        ordered = sorted(
+            by_date[date_str],
+            key=lambda session: (
+                str(session.get("start_time", "") or ""),
+                str(session.get("end_time", "") or ""),
+            ),
+        )
+        for session in ordered:
+            if str(session.get("category_key", "") or "") not in WORK_KEYS:
+                continue
+            tool = _safe_tool_label(session)
+            if tool is None:
+                continue
+            key = tool.casefold()
+            if key not in seen_tools:
+                seen_tools.add(key)
+                tools.append(tool)
+
+        for previous, current in zip(ordered, ordered[1:]):
+            if (
+                str(previous.get("category_key", "") or "") in WORK_KEYS
+                and str(current.get("category_key", "") or "") in WORK_KEYS
+            ):
+                previous_tool = _safe_tool_label(previous)
+                current_tool = _safe_tool_label(current)
+                if (
+                    previous_tool
+                    and current_tool
+                    and previous_tool.casefold() != current_tool.casefold()
+                ):
+                    switch_count += 1
+
+        for index, session in enumerate(ordered):
+            if str(session.get("category_key", "") or "") in WORK_KEYS:
+                continue
+            has_work_before = any(
+                str(item.get("category_key", "") or "") in WORK_KEYS
+                for item in ordered[:index]
+            )
+            has_work_after = any(
+                str(item.get("category_key", "") or "") in WORK_KEYS
+                for item in ordered[index + 1 :]
+            )
+            if has_work_before and has_work_after:
+                non_work_interruptions += 1
+
+    return {
+        "date_range": list(date_range),
+        "tool_count": len(tools),
+        "switch_count": switch_count,
+        "non_work_interruptions": non_work_interruptions,
+        "tools": tools,
+    }
+
+
+def _fallback_trust() -> dict[str, object]:
+    return {
+        "level": "low",
+        "reasons": [REASON_FORMAT_INVALID],
+        "coverage_ratio": 0.0,
+        "legacy_ratio": 1.0,
+        "anomaly_ratio": 0.0,
+        "metric_versions": [],
+        "classification_versions": [],
+        "category_comparable": False,
+    }
 
 
 def resolve_display_name(
@@ -386,44 +627,173 @@ def _session_time_range(session: dict) -> str:
 
 
 def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    captured_now = datetime.now()
+    today_date = captured_now.date()
+    today_str = today_date.strftime("%Y-%m-%d")
+    yesterday_str = (captured_now - timedelta(days=1)).strftime("%Y-%m-%d")
+    seven_day_dates = _rolling_date_strings(today_date, 7)
+    fourteen_day_dates = _rolling_date_strings(today_date, 14)
+    prior_seven_day_dates = fourteen_day_dates[:7]
+    thirty_day_dates = _rolling_date_strings(today_date, 30)
+
     stats = database.query_date_stats(db_path, today_str)
+    yesterday_stats = database.query_date_stats(db_path, yesterday_str)
     totals = stats.get("totals", {})
     effective_seconds = int(totals.get("effective_seconds", 0) or 0)
+    engaged_seconds = int(totals.get("engaged_seconds", 0) or 0)
+    passive_seconds = int(totals.get("passive_seconds", 0) or 0)
     idle_seconds = int(totals.get("idle_seconds", 0) or 0)
     total_seconds = effective_seconds + idle_seconds
-    active_ratio = int(round((effective_seconds / total_seconds) * 100)) if total_seconds else 0
+    attention_total = engaged_seconds + passive_seconds + idle_seconds
+    active_ratio = (
+        int(round((engaged_seconds / attention_total) * 100))
+        if attention_total
+        else 0
+    )
+    passive_ratio = (
+        int(round((passive_seconds / attention_total) * 100))
+        if attention_total
+        else 0
+    )
+    idle_ratio = max(0, 100 - active_ratio - passive_ratio) if attention_total else 0
 
-    yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-    yesterday_stats = database.query_date_stats(db_path, yesterday_str)
-    sessions = database.query_today_sessions(db_path, today_str)
-    yesterday_sessions = database.query_today_sessions(db_path, yesterday_str)
-
-    today_date = date.today()
-    seven_day_dates = _rolling_date_strings(today_date, 7)
-    thirty_day_dates = _rolling_date_strings(today_date, 30)
     thirty_day_stats = database.query_date_range_stats(
         db_path,
         thirty_day_dates,
     )
-    seven_day_sessions = [
-        database.query_today_sessions(db_path, day_str)
-        for day_str in seven_day_dates
-    ]
+    try:
+        fourteen_day_sessions = database.query_sessions_for_dates(
+            db_path,
+            fourteen_day_dates,
+        )
+        sessions = _sessions_for_date(fourteen_day_sessions, today_str)
+        yesterday_sessions = _sessions_for_date(
+            fourteen_day_sessions,
+            yesterday_str,
+        )
+        seven_day_sessions = [
+            _sessions_for_date(fourteen_day_sessions, day_str)
+            for day_str in seven_day_dates
+        ]
+    except Exception:
+        LOGGER.exception("Failed to read dashboard session range")
+        fourteen_day_sessions = []
+        sessions = database.query_today_sessions(db_path, today_str)
+        yesterday_sessions = database.query_today_sessions(
+            db_path,
+            yesterday_str,
+        )
+        seven_day_sessions = [[] for _ in seven_day_dates]
 
     focus_summary, consecutive_days = build_focus_summary(db_path, today_str)
     distribution_sections = build_distribution_sections(stats, effective_seconds)
     day_comparison = build_day_over_day_comparison(stats, yesterday_stats)
     split_today = build_hourly_series_split(sessions)
     split_yesterday = build_hourly_series_split(yesterday_sessions)
+    try:
+        fourteen_day_stats = database.query_date_range_stats(
+            db_path,
+            fourteen_day_dates,
+        )
+        recent_stats = database.query_date_range_stats(db_path, seven_day_dates)
+        prior_stats = database.query_date_range_stats(
+            db_path,
+            prior_seven_day_dates,
+        )
+        trust = assess_range(
+            fourteen_day_stats.get("totals", {}),
+            fourteen_day_dates,
+        )
+        recent_trust = assess_range(
+            recent_stats.get("totals", {}),
+            seven_day_dates,
+        )
+        prior_trust = assess_range(
+            prior_stats.get("totals", {}),
+            prior_seven_day_dates,
+        )
+        comparison = compare_ranges(prior_trust, recent_trust)
+        category_comparable = bool(
+            trust.get("category_comparable", False)
+            and comparison.get("category_comparable", False)
+        )
+        recent_sessions = [
+            session
+            for session in fourteen_day_sessions
+            if str(session.get("date", "") or "") in set(seven_day_dates)
+        ]
+        insight_payload = {
+            "date_range": [fourteen_day_dates[0], fourteen_day_dates[-1]],
+            "trust": trust,
+            "best_window": _build_best_window_section(
+                fourteen_day_sessions,
+                [fourteen_day_dates[0], fourteen_day_dates[-1]],
+            ),
+            "interruptions": _build_interruptions_section(
+                recent_sessions,
+                [seven_day_dates[0], seven_day_dates[-1]],
+                category_comparable,
+            ),
+            "trend": {
+                "prior_range": [
+                    prior_seven_day_dates[0],
+                    prior_seven_day_dates[-1],
+                ],
+                "recent_range": [seven_day_dates[0], seven_day_dates[-1]],
+                "recent_work_engaged_seconds": int(
+                    recent_stats.get("totals", {}).get(
+                        "work_engaged_seconds", 0
+                    )
+                    or 0
+                ),
+                "prior_work_engaged_seconds": int(
+                    prior_stats.get("totals", {}).get(
+                        "work_engaged_seconds", 0
+                    )
+                    or 0
+                ),
+                "comparison_comparable": bool(
+                    comparison.get("comparable", False)
+                ),
+                "category_comparable": category_comparable,
+            },
+            "workflow": _build_workflow_section(
+                recent_sessions,
+                [seven_day_dates[0], seven_day_dates[-1]],
+            ),
+        }
+    except Exception:
+        LOGGER.exception("Failed to build trusted dashboard metrics")
+        trust = _fallback_trust()
+        comparison = {
+            "comparable": False,
+            "category_comparable": False,
+            "reason": "数据质量不足，无法比较",
+        }
+        insight_payload = {
+            "date_range": [
+                fourteen_day_dates[0],
+                fourteen_day_dates[-1],
+            ],
+            "trust": trust,
+        }
+    try:
+        insight = select_primary_insight(insight_payload)
+    except Exception:
+        LOGGER.exception("Failed to build dashboard insight")
+        insight = None
     return {
         "today": today_str,
         "stats": stats,
         "totals": {
             "effective_seconds": effective_seconds,
+            "engaged_seconds": engaged_seconds,
+            "passive_seconds": passive_seconds,
             "idle_seconds": idle_seconds,
             "total_seconds": total_seconds,
             "active_ratio": active_ratio,
+            "passive_ratio": passive_ratio,
+            "idle_ratio": idle_ratio,
         },
         "distribution_sections": distribution_sections,
         "day_comparison": day_comparison,
@@ -431,6 +801,9 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
         "focus_summary": focus_summary,
         "consecutive_days": consecutive_days,
         "top_app_rows": build_top_app_rows(stats, resolve_display),
+        "trust": trust,
+        "comparison": comparison,
+        "insight": insight,
         "trend": {
             "today": split_today["total"],
             "today_work": split_today["work"],

@@ -136,3 +136,20 @@ def test_page_hint_uses_font_aware_elision_with_full_tooltip(tmp_path):
 
     window.dashboard_refresh.shutdown(timeout_ms=1_000)
     window.deleteLater()
+
+
+def test_trusted_insight_card_stays_compact_above_trend_at_1280x720(tmp_path):
+    app, window = _window(tmp_path)
+    window.resize(1280, 720)
+    app.processEvents()
+
+    page = window.pages["today"]
+    assert window.page_scroll.horizontalScrollBar().maximum() == 0
+    assert page.insight_card.height() <= 124
+    assert page.insight_card.geometry().bottom() <= page.trend_card.geometry().top()
+    assert page.trend_card.height() >= page.trend_card.minimumHeight()
+    assert page.insight_card.title_label.textFormat() == Qt.PlainText
+    assert page.insight_card.evidence_label.wordWrap() is True
+
+    window.dashboard_refresh.shutdown(timeout_ms=1_000)
+    window.deleteLater()

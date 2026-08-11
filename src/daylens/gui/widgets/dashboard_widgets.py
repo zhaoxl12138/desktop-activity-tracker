@@ -888,12 +888,102 @@ class SessionTop3Widget(QFrame):
         dialog.show()
 
 
+class TrustedInsightCard(QFrame):
+    """Compact, plain-text renderer for one trusted local insight."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("dashboardCard")
+        self.setStyleSheet(ui_style.get_dashboard_card_style())
+        self.setMinimumHeight(96)
+        self.setMaximumHeight(124)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(14, 10, 14, 10)
+        root.setSpacing(4)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
+        self.title_label = ElidedLabel("", max_lines=1)
+        self.title_label.setTextFormat(Qt.PlainText)
+        self.title_label.setStyleSheet(
+            f"font-size: 14px; font-weight: 800; color: {COLORS['text']};"
+        )
+        header.addWidget(self.title_label, 1)
+
+        self.confidence_label = QLabel("")
+        self.confidence_label.setTextFormat(Qt.PlainText)
+        self.confidence_label.setAlignment(Qt.AlignCenter)
+        self.confidence_label.setMinimumWidth(58)
+        header.addWidget(self.confidence_label, 0, Qt.AlignTop)
+        root.addLayout(header)
+
+        self.evidence_label = ElidedLabel("", max_lines=2)
+        self.evidence_label.setTextFormat(Qt.PlainText)
+        self.evidence_label.setStyleSheet(
+            f"font-size: 12px; color: {COLORS['text_secondary']};"
+        )
+        root.addWidget(self.evidence_label)
+
+        self.action_label = ElidedLabel("", max_lines=1)
+        self.action_label.setTextFormat(Qt.PlainText)
+        self.action_label.setStyleSheet(
+            f"font-size: 12px; color: {COLORS['primary']}; font-weight: 700;"
+        )
+        root.addWidget(self.action_label)
+
+        self.set_insight(None)
+
+    def set_insight(self, insight: dict[str, object] | None) -> None:
+        if not insight:
+            self.title_label.setText("洞察积累中")
+            self.evidence_label.setText("继续记录以形成可靠基线")
+            self.action_label.setText("")
+            self._set_confidence("数据不足", "low")
+            return
+        self.title_label.setText(str(insight.get("title", "今日建议")))
+        self.evidence_label.setText(str(insight.get("evidence", "")))
+        self.action_label.setText(str(insight.get("action", "")))
+        confidence = str(insight.get("confidence", "low"))
+        confidence_text = {
+            "high": "高可信",
+            "medium": "中可信",
+            "low": "低可信",
+        }.get(confidence, "低可信")
+        self._set_confidence(
+            confidence_text,
+            confidence if confidence in {"high", "medium", "low"} else "low",
+        )
+
+    def _set_confidence(self, text: str, confidence: str) -> None:
+        color = {
+            "high": COLORS["success_green"],
+            "medium": COLORS["warning_yellow"],
+            "low": COLORS["text_muted"],
+        }[confidence]
+        background = (
+            COLORS["success_bg"]
+            if confidence == "high"
+            else COLORS["warning_bg"]
+            if confidence == "medium"
+            else COLORS["panel_bg_alt"]
+        )
+        self.confidence_label.setText(text)
+        self.confidence_label.setStyleSheet(
+            "font-size: 11px; font-weight: 800; padding: 2px 7px; "
+            f"color: {color}; background: {background}; "
+            f"border: 1px solid {COLORS['border']}; border-radius: 8px;"
+        )
+
+
 class TrendChartWidget(QFrame):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("dashboardCard")
         self.setStyleSheet(ui_style.get_dashboard_card_style())
-        self.setMinimumHeight(280)
+        self.setMinimumHeight(230)
         self._mode = "today"
         self._series: dict[str, list] = {"today": [], "7d": [], "30d": []}
         self._labels: dict[str, list[str]] = {"today": [], "7d": [], "30d": []}
@@ -944,6 +1034,17 @@ class TrendChartWidget(QFrame):
                 button.setChecked(True)
         root.addLayout(header)
 
+        self.classification_notice = QLabel(
+            "分类规则已变化，分类趋势暂不可比"
+        )
+        self.classification_notice.setTextFormat(Qt.PlainText)
+        self.classification_notice.setWordWrap(True)
+        self.classification_notice.setStyleSheet(
+            f"font-size: 11px; color: {COLORS['warning_yellow']}; font-weight: 700;"
+        )
+        self.classification_notice.setVisible(False)
+        root.addWidget(self.classification_notice)
+
         self.canvas = _TrendCanvas()
         self.canvas.setMinimumHeight(160)
         root.addWidget(self.canvas, 1)
@@ -958,6 +1059,9 @@ class TrendChartWidget(QFrame):
         )
         self._cmp_legend.setVisible(False)
         root.addWidget(self._cmp_legend)
+
+    def set_classification_comparable(self, comparable: bool) -> None:
+        self.classification_notice.setVisible(not bool(comparable))
 
     def set_mode(self, mode: str) -> None:
         if mode in self._series:

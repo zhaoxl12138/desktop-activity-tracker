@@ -30,6 +30,7 @@ from ..widgets.dashboard_widgets import (
     TimelineWidget,
     TopAppListWidget,
     TrendChartWidget,
+    TrustedInsightCard,
 )
 
 
@@ -84,13 +85,15 @@ class TodayOverviewPage(QWidget):
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(14)
+        self.insight_card = TrustedInsightCard()
         self.trend_card = TrendChartWidget()
+        self.classification_notice = self.trend_card.classification_notice
         self.top_app_card = TopAppListWidget()
+        right_layout.addWidget(self.insight_card, 0)
         right_layout.addWidget(self.trend_card, 4)
         right_layout.addWidget(self.top_app_card, 6)
         columns.addWidget(right_panel, 4)
 
-        self.insight_card = None
         self.insight_grid_widget = None
         self.insight_empty_label = None
 
@@ -163,7 +166,7 @@ class TodayOverviewPage(QWidget):
 
         layout.addLayout(row, 1)
 
-        # Status bar: active ratio + idle
+        # Status bar: engaged + passive + idle + trust
         status_row = QHBoxLayout()
         status_row.setSpacing(6)
         self.active_dot = QLabel("●")
@@ -171,22 +174,47 @@ class TodayOverviewPage(QWidget):
             f"font-size: 13px; color: {ui_style.COLORS['success_green']}; font-weight: 700;"
         )
         status_row.addWidget(self.active_dot)
-        self.active_status_label = QLabel("活跃占比 --")
+        self.active_status_label = QLabel("参与 --")
+        self.active_status_label.setTextFormat(Qt.PlainText)
         self.active_status_label.setStyleSheet(
             f"font-size: 14px; font-weight: 700; color: {ui_style.COLORS['text']};"
         )
         status_row.addWidget(self.active_status_label)
-        status_row.addSpacing(16)
+        status_row.addSpacing(10)
+        self.passive_dot = QLabel("●")
+        self.passive_dot.setTextFormat(Qt.PlainText)
+        self.passive_dot.setStyleSheet(
+            f"font-size: 13px; color: {ui_style.COLORS['video_orange']}; font-weight: 700;"
+        )
+        status_row.addWidget(self.passive_dot)
+        self.passive_status_label = QLabel("被动媒体 --")
+        self.passive_status_label.setTextFormat(Qt.PlainText)
+        self.passive_status_label.setStyleSheet(
+            f"font-size: 14px; color: {ui_style.COLORS['text_secondary']}; font-weight: 700;"
+        )
+        status_row.addWidget(self.passive_status_label)
+        status_row.addSpacing(10)
         self.idle_dot = QLabel("●")
         self.idle_dot.setStyleSheet(
             f"font-size: 13px; color: {ui_style.COLORS['idle_gray']}; font-weight: 700;"
         )
         status_row.addWidget(self.idle_dot)
         self.idle_status_label = QLabel("挂机 --")
+        self.idle_status_label.setTextFormat(Qt.PlainText)
         self.idle_status_label.setStyleSheet(
             f"font-size: 14px; color: {ui_style.COLORS['text_secondary']};"
         )
         status_row.addWidget(self.idle_status_label)
+        status_row.addSpacing(8)
+        self.trust_badge = QLabel("口径待稳定")
+        self.trust_badge.setTextFormat(Qt.PlainText)
+        self.trust_badge.setStyleSheet(
+            f"font-size: 11px; color: {ui_style.COLORS['warning_yellow']}; "
+            f"background: {ui_style.COLORS['warning_bg']}; "
+            f"border: 1px solid {ui_style.COLORS['border']}; "
+            "border-radius: 8px; padding: 2px 7px; font-weight: 800;"
+        )
+        status_row.addWidget(self.trust_badge)
         status_row.addStretch()
         layout.addLayout(status_row)
 
@@ -402,19 +430,46 @@ class TodayOverviewPage(QWidget):
 
     def apply_snapshot(self, snapshot: dict[str, object]) -> None:
         """Render an already-loaded dashboard snapshot on the GUI thread."""
-        self.last_stats_date = str(snapshot["today"])
-        self.last_stats = dict(snapshot["stats"])
-        totals = snapshot["totals"]
+        self.last_stats_date = str(snapshot.get("today", ""))
+        self.last_stats = dict(snapshot.get("stats", {}) or {})
+        totals = dict(snapshot.get("totals", {}) or {})
         self.last_snapshot_totals = dict(totals)
-        effective = int(totals["effective_seconds"])
-        idle_seconds = int(totals["idle_seconds"])
-        active_ratio = int(totals["active_ratio"])
+        effective = int(totals.get("effective_seconds", 0) or 0)
+        engaged_seconds = int(totals.get("engaged_seconds", 0) or 0)
+        passive_seconds = int(totals.get("passive_seconds", 0) or 0)
+        idle_seconds = int(totals.get("idle_seconds", 0) or 0)
+        active_ratio = int(totals.get("active_ratio", 0) or 0)
+        passive_ratio = int(totals.get("passive_ratio", 0) or 0)
+
+        trust = dict(snapshot.get("trust", {}) or {})
+        trust_level = str(trust.get("level", "low") or "low")
+        self.trust_badge.setVisible(trust_level != "high")
+        self.insight_card.set_insight(snapshot.get("insight"))
+
+        comparison = dict(snapshot.get("comparison", {}) or {})
+        comparison_reason = str(comparison.get("reason", "") or "")
+        trust_reasons = [
+            str(reason)
+            for reason in trust.get("reasons", [])
+            if isinstance(reason, str)
+        ]
+        classification_changed = (
+            "分类规则" in comparison_reason
+            or any("分类版本" in reason for reason in trust_reasons)
+            or len(trust.get("classification_versions", []) or []) > 1
+        )
+        self.trend_card.set_classification_comparable(
+            not classification_changed
+        )
 
         distribution = [
             (str(item["label"]), int(item["seconds"]), self._distribution_color(str(item["category_key"])))
-            for item in snapshot["distribution_sections"]
+            for item in snapshot.get("distribution_sections", [])
         ]
-        category_seconds = {str(item["category_key"]): int(item["seconds"]) for item in snapshot["distribution_sections"]}
+        category_seconds = {
+            str(item["category_key"]): int(item["seconds"])
+            for item in snapshot.get("distribution_sections", [])
+        }
         self.last_shell_summary = {
             "effective_seconds": effective,
             "work_seconds": category_seconds.get("work", 0),
@@ -424,7 +479,10 @@ class TodayOverviewPage(QWidget):
         self.donut_widget.set_data(effective, distribution)
         self.legend_widget.set_items(distribution, effective)
 
-        self.active_status_label.setText(f"活跃占比 {active_ratio}%")
+        self.active_status_label.setText(f"参与 {active_ratio}%")
+        self.active_status_label.setToolTip(_compact_duration(engaged_seconds))
+        self.passive_status_label.setText(f"被动媒体 {passive_ratio}%")
+        self.passive_status_label.setToolTip(_compact_duration(passive_seconds))
         self.idle_status_label.setText(f"挂机/空闲 {_compact_duration(idle_seconds)}")
 
         for key, label in self.distribution_cmp_labels.items():
@@ -436,7 +494,13 @@ class TodayOverviewPage(QWidget):
                     f"font-size: 13px; color: {ui_style.COLORS['text']}; font-weight: 800;"
                 )
             else:
-                item = snapshot["day_comparison"].get(key, {})
+                if classification_changed:
+                    label.setText("分类不可比")
+                    label.setStyleSheet(
+                        f"font-size: 13px; color: {ui_style.COLORS['warning_yellow']}; font-weight: 800;"
+                    )
+                    continue
+                item = dict(snapshot.get("day_comparison", {}) or {}).get(key, {})
                 direction = str(item.get("direction", "empty"))
                 delta = int(item.get("delta_seconds", 0) or 0)
                 if direction == "empty":
@@ -468,7 +532,7 @@ class TodayOverviewPage(QWidget):
                     str(session.get("category_name", "") or ""),
                 ),
             }
-            for session in snapshot["sessions"]
+            for session in snapshot.get("sessions", [])
         ]
         sessions_with_icons = []
         for session in sessions:
@@ -483,25 +547,25 @@ class TodayOverviewPage(QWidget):
         )
         self.session_top3_widget.set_sessions(sessions_with_icons, self.display_name_mapping)
         self.focus_axis.set_minutes(self._build_focus_axis(timeline_sessions))
-        trend = snapshot["trend"]
+        trend = dict(snapshot.get("trend", {}) or {})
         self.trend_card.set_data(
-            trend["today"],
-            trend["yesterday"],
-            trend["seven_days"],
-            trend["thirty_days"],
+            trend.get("today", []),
+            trend.get("yesterday", []),
+            trend.get("seven_days", []),
+            trend.get("thirty_days", []),
             work_today=trend.get("today_work", []),
             entertainment_today=trend.get("today_entertainment", []),
             yesterday_work=trend.get("yesterday_work", []),
             yesterday_entertainment=trend.get("yesterday_entertainment", []),
             seven_day_labels=trend.get("seven_day_labels", []),
         )
-        focus_summary = str(snapshot["focus_summary"])
+        focus_summary = str(snapshot.get("focus_summary", ""))
         self.focus_hint.setText(focus_summary)
         self.focus_hint.setVisible("暂未识别" not in focus_summary)
-        consecutive_days = int(snapshot["consecutive_days"])
+        consecutive_days = int(snapshot.get("consecutive_days", 0) or 0)
         self.last_consecutive_days = consecutive_days
         self.consecutive_label.setText(f"连续专注 {consecutive_days}天" if consecutive_days > 0 else "")
-        self._update_top_apps(snapshot["top_app_rows"])
+        self._update_top_apps(snapshot.get("top_app_rows", []))
 
     def _update_top_apps(self, rows_data: list[dict[str, object]]) -> None:
         rows = []

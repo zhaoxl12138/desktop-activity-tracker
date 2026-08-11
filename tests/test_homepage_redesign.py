@@ -78,6 +78,43 @@ def _write_config(path: Path):
     return config
 
 
+def _dashboard_snapshot(**overrides):
+    payload = {
+        "today": "2026-08-11",
+        "stats": {"totals": {}, "by_category": [], "by_app": [], "by_app_detail": []},
+        "totals": {
+            "effective_seconds": 0,
+            "idle_seconds": 0,
+            "total_seconds": 0,
+            "active_ratio": 0,
+        },
+        "distribution_sections": [],
+        "day_comparison": {
+            key: {"direction": "empty", "delta_seconds": 0}
+            for key in ("work", "entertainment", "social")
+        },
+        "sessions": [],
+        "focus_summary": "今日暂未识别到连续专注时段。",
+        "consecutive_days": 0,
+        "top_app_rows": [],
+        "trend": {
+            "today": [0] * 24,
+            "today_work": [0] * 24,
+            "today_entertainment": [0] * 24,
+            "yesterday": [0] * 24,
+            "yesterday_work": [0] * 24,
+            "yesterday_entertainment": [0] * 24,
+            "seven_days": [[0] * 24 for _ in range(7)],
+            "seven_day_labels": [
+                f"2026-08-{day:02d}" for day in range(5, 12)
+            ],
+            "thirty_days": [0] * 30,
+        },
+    }
+    payload.update(overrides)
+    return payload
+
+
 def test_homepage_shell_matches_reference_structure():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -136,10 +173,12 @@ def test_homepage_shell_matches_reference_structure():
         assert window.pages["today"].metric_cards == {}
         assert getattr(window.pages["today"], "time_stats_ratio_ring", None) is None
         assert window.pages["today"].time_stats_card is None
-        assert window.pages["today"].insight_card is None
+        assert window.pages["today"].insight_card is not None
         assert getattr(window.pages["today"], "insight_grid_widget", None) is None
         assert getattr(window.pages["today"], "insight_empty_label", None) is None
-        assert window.pages["today"].trend_card.minimumHeight() >= 280
+        assert window.pages["today"].insight_card.maximumHeight() <= 124
+        assert window.pages["today"].insight_card.geometry().bottom() <= window.pages["today"].trend_card.geometry().top()
+        assert window.pages["today"].trend_card.minimumHeight() >= 230
         assert window.pages["today"].top_app_card.minimumHeight() >= 230
         assert set(window.pages["today"].distribution_cmp_labels) == {"work", "entertainment", "social", "idle"}
         assert ui_style.get_category_color("other") != ui_style.COLORS["social_purple"]
@@ -160,4 +199,107 @@ def test_homepage_shell_matches_reference_structure():
         window.close()
         app.processEvents()
         assert window.dashboard_refresh.timer.isActive() is False
+        assert window.dashboard_refresh.shutdown(timeout_ms=1_000) is True
+
+
+def test_today_overview_applies_old_and_trusted_snapshots_safely():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        config_path = tmp_path / "config.yaml"
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        config = _write_config(config_path)
+        db_path = tmp_path / "usage.db"
+        database.init_db(str(db_path)).close()
+        app = QApplication.instance() or QApplication([])
+        window = MainWindow(
+            str(tmp_path),
+            config,
+            str(db_path),
+            str(config_path),
+            str(reports_dir),
+            DummyWorker(),
+        )
+        window.resize(1280, 720)
+        window.show()
+        app.processEvents()
+        page = window.pages["today"]
+
+        page.apply_snapshot(_dashboard_snapshot())
+        app.processEvents()
+
+        assert page.active_status_label.text().startswith("参与 ")
+        assert page.passive_status_label.text().startswith("被动媒体 ")
+        assert page.trust_badge.text() == "口径待稳定"
+        assert page.trust_badge.isVisible() is True
+        assert page.insight_card.title_label.fullText() == "洞察积累中"
+        assert page.classification_notice.isVisible() is False
+
+        trusted = _dashboard_snapshot(
+            totals={
+                "effective_seconds": 5_400,
+                "engaged_seconds": 3_600,
+                "passive_seconds": 1_800,
+                "idle_seconds": 600,
+                "total_seconds": 6_000,
+                "active_ratio": 60,
+                "passive_ratio": 30,
+                "idle_ratio": 10,
+            },
+            trust={
+                "level": "high",
+                "reasons": [],
+                "category_comparable": True,
+            },
+            comparison={
+                "comparable": True,
+                "category_comparable": True,
+                "reason": "",
+            },
+            insight={
+                "kind": "best_window",
+                "title": "你的优势时段是 09:00–11:00",
+                "evidence": "最近14天有7个工作日。",
+                "action": "保护这个时间窗口。",
+                "confidence": "high",
+            },
+        )
+        page.apply_snapshot(trusted)
+        app.processEvents()
+
+        assert page.active_status_label.text() == "参与 60%"
+        assert page.passive_status_label.text() == "被动媒体 30%"
+        assert page.trust_badge.isVisible() is False
+        assert page.insight_card.title_label.fullText() == "你的优势时段是 09:00–11:00"
+        assert page.classification_notice.isVisible() is False
+
+        mixed = dict(trusted)
+        mixed["trust"] = {
+            "level": "medium",
+            "reasons": ["范围内存在多个分类版本"],
+            "category_comparable": False,
+        }
+        mixed["comparison"] = {
+            "comparable": True,
+            "category_comparable": False,
+            "reason": "分类规则不一致，仅总参与时间可比",
+        }
+        mixed["insight"] = None
+        mixed["day_comparison"] = {
+            key: {"direction": "up", "delta_seconds": 600}
+            for key in ("work", "entertainment", "social")
+        }
+        page.apply_snapshot(mixed)
+        app.processEvents()
+
+        assert page.trust_badge.isVisible() is True
+        assert page.classification_notice.text() == "分类规则已变化，分类趋势暂不可比"
+        assert page.classification_notice.isVisible() is True
+        assert page.distribution_cmp_labels["work"].text() == "分类不可比"
+        assert page.insight_card.title_label.fullText() == "洞察积累中"
+
+        window.close()
+        app.processEvents()
         assert window.dashboard_refresh.shutdown(timeout_ms=1_000) is True

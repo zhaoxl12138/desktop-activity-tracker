@@ -4,6 +4,7 @@ import os
 import sys
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QLabel
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +17,7 @@ from desktop_activity_tracker.gui.widgets.dashboard_widgets import (  # noqa: E4
     TrendChartWidget,
     _TrendCanvas,
 )
+from daylens.gui.widgets import dashboard_widgets  # noqa: E402
 
 
 def _app() -> QApplication:
@@ -353,4 +355,50 @@ def test_timeline_session_label_preserves_full_title_for_font_elision():
 
     assert label == f"demo.exe({long_title})"
     widget.deleteLater()
+    app.processEvents()
+
+
+def test_trusted_insight_card_renders_complete_plain_text_and_waiting_state():
+    app = _app()
+    card_type = getattr(dashboard_widgets, "TrustedInsightCard", None)
+    assert card_type is not None
+    card = card_type()
+    card.resize(440, 120)
+    card.show()
+    app.processEvents()
+
+    card.set_insight(
+        {
+            "title": "你的优势时段是 09:00–11:00",
+            "evidence": "ChatGPT、Codex <按纯文本显示>，贡献了 42% 的参与时间。",
+            "action": "把最难的任务优先放进这个窗口。",
+            "confidence": "medium",
+        }
+    )
+    app.processEvents()
+
+    assert card.title_label.fullText() == "你的优势时段是 09:00–11:00"
+    assert card.evidence_label.fullText() == "ChatGPT、Codex <按纯文本显示>，贡献了 42% 的参与时间。"
+    assert card.action_label.fullText() == "把最难的任务优先放进这个窗口。"
+    assert card.confidence_label.text() == "中可信"
+    assert card.maximumHeight() <= 124
+    for label in (
+        card.title_label,
+        card.evidence_label,
+        card.action_label,
+        card.confidence_label,
+    ):
+        assert label.textFormat() == Qt.PlainText
+
+    card.set_insight(None)
+    app.processEvents()
+
+    assert card.title_label.fullText() == "洞察积累中"
+    assert card.evidence_label.fullText() == "继续记录以形成可靠基线"
+    assert card.action_label.fullText() == ""
+    assert card.confidence_label.text() == "数据不足"
+
+    card.set_insight({"title": "未知置信度", "confidence": "unexpected"})
+    assert card.confidence_label.text() == "低可信"
+    card.deleteLater()
     app.processEvents()

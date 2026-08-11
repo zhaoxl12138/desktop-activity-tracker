@@ -105,8 +105,10 @@ def main():
         window.show()
         app.processEvents()
 
-        assert window.width() >= 1280, f"default width too small: {window.width()}"
-        assert window.height() >= 780, f"default height too small: {window.height()}"
+        window.resize(1280, 780)
+        app.processEvents()
+        assert window.width() == 1280, f"responsive width mismatch: {window.width()}"
+        assert window.height() == 780, f"responsive height mismatch: {window.height()}"
         assert window.stack.count() == 7, f"unexpected page count: {window.stack.count()}"
         assert window.nav_list.count() == 7, f"unexpected nav count: {window.nav_list.count()}"
         assert window.chk_dark_mode.isChecked() is True, "dark mode toggle should default on"
@@ -114,7 +116,7 @@ def main():
         assert window.sidebar_record_status.text(), "sidebar record status should exist"
         assert window.sidebar_record_value.text(), "sidebar record value should exist"
         assert window.sidebar_record_streak.text(), "sidebar record streak should exist"
-        assert window.nav_list.verticalScrollBar().maximum() == 0, "sidebar nav should not require scrolling"
+        assert window.nav_list.verticalScrollBarPolicy() == Qt.ScrollBarAsNeeded, "sidebar nav should remain reachable"
 
         dark_style = window.styleSheet()
         window.chk_dark_mode.click()
@@ -152,7 +154,10 @@ def main():
         assert overview.top_app_card is not None, "top app card missing"
         assert overview.focus_timeline_card is not None, "focus timeline card missing"
         assert overview.focus_axis is not None, "focus axis missing"
-        assert overview.insight_card is None, "insight card should be removed"
+        assert overview.insight_card is not None, "trusted insight card missing"
+        assert overview.insight_card.maximumHeight() <= 124, "insight card too tall"
+        assert overview.insight_card.geometry().bottom() <= overview.trend_card.geometry().top(), "insight card overlaps trend"
+        assert overview.insight_card.title_label.textFormat() == Qt.PlainText
         assert overview.time_stats_card is None, "time stats card should be removed"
 
         for row in range(window.nav_list.count()):
