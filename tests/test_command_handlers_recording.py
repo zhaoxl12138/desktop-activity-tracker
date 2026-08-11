@@ -6,6 +6,22 @@ import pytest
 from daylens.services import command_handlers
 
 
+class FakeRecordingLock:
+    def close(self):
+        pass
+
+
+@pytest.fixture(autouse=True)
+def isolate_recording_lock(monkeypatch):
+    fake_lock = FakeRecordingLock()
+    monkeypatch.setattr(
+        command_handlers,
+        "acquire_recording_lock",
+        lambda: (True, fake_lock),
+    )
+    return fake_lock
+
+
 def test_cli_shutdown_persists_short_tail_via_tracker_protocol(monkeypatch):
     tail = SimpleNamespace(duration_seconds=1, switch_reason="")
     persisted = []
