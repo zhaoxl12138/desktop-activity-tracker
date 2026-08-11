@@ -5,6 +5,262 @@ import sqlite3
 from daylens import database
 
 
+def _insert_trusted_session(
+    conn,
+    *,
+    session_id: str,
+    date: str = "2026-07-20",
+    start_time: str = "2026-07-20 10:00:00",
+    end_time: str = "2026-07-20 10:01:40",
+    category_key: str = "coding",
+    duration_seconds: int = 100,
+    effective_seconds: int = 90,
+    engaged_seconds: int = 90,
+    passive_seconds: int = 0,
+    idle_seconds: int = 10,
+    metric_version: str = "attention-v1",
+    classification_version: str = "rules-a",
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO activity_sessions
+            (session_id,start_time,end_time,date,process_name,normalized_title,
+             category_key,category_name,duration_seconds,effective_seconds,
+             engaged_seconds,passive_seconds,idle_seconds,metric_version,
+             classification_version)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            session_id,
+            start_time,
+            end_time,
+            date,
+            f"{category_key}.exe",
+            session_id,
+            category_key,
+            category_key,
+            duration_seconds,
+            effective_seconds,
+            engaged_seconds,
+            passive_seconds,
+            idle_seconds,
+            metric_version,
+            classification_version,
+        ),
+    )
+
+
+def test_date_and_range_summaries_include_trusted_attention_fields(tmp_path):
+    db_path = tmp_path / "usage.db"
+    database.init_db(str(db_path)).close()
+    conn = sqlite3.connect(db_path)
+    _insert_trusted_session(conn, session_id="coding")
+    _insert_trusted_session(
+        conn,
+        session_id="video",
+        start_time="2026-07-20 11:00:00",
+        end_time="2026-07-20 11:01:30",
+        category_key="video",
+        duration_seconds=90,
+        effective_seconds=90,
+        engaged_seconds=30,
+        passive_seconds=60,
+        idle_seconds=0,
+    )
+    conn.commit()
+    conn.close()
+
+    day = database.query_date_stats(str(db_path), "2026-07-20")
+    date_range = database.query_date_range_stats(str(db_path), ["2026-07-20"])
+
+    expected = {
+        "engaged_seconds": 120,
+        "passive_seconds": 60,
+        "work_engaged_seconds": 90,
+        "session_count": 2,
+        "legacy_session_count": 0,
+        "anomaly_count": 0,
+        "dates_with_data": ["2026-07-20"],
+        "metric_versions": ["attention-v1"],
+        "classification_versions": ["rules-a"],
+    }
+    for key, value in expected.items():
+        assert day["totals"][key] == value
+        assert date_range["totals"][key] == value
+        assert date_range["daily"][0][key] == value
+    assert day["totals"]["effective_seconds"] == 180
+    assert date_range["totals"]["effective_seconds"] == 180
+
+
+def test_range_summary_sorts_and_deduplicates_version_sets(tmp_path):
+    db_path = tmp_path / "usage.db"
+    database.init_db(str(db_path)).close()
+    conn = sqlite3.connect(db_path)
+    _insert_trusted_session(
+        conn,
+        session_id="newer",
+        metric_version="attention-v2",
+        classification_version="rules-b",
+    )
+    _insert_trusted_session(
+        conn,
+        session_id="older",
+        start_time="2026-07-20 11:00:00",
+        end_time="2026-07-20 11:01:40",
+        metric_version="attention-v1",
+        classification_version="rules-a",
+    )
+    _insert_trusted_session(
+        conn,
+        session_id="duplicate-version",
+        start_time="2026-07-20 12:00:00",
+        end_time="2026-07-20 12:01:40",
+        metric_version="attention-v1",
+        classification_version="rules-a",
+    )
+    conn.commit()
+    conn.close()
+
+    result = database.query_date_range_stats(str(db_path), ["2026-07-20"])
+
+    assert result["totals"]["metric_versions"] == [
+        "attention-v1",
+        "attention-v2",
+    ]
+    assert result["totals"]["classification_versions"] == [
+        "rules-a",
+        "rules-b",
+    ]
+
+
+def test_session_anomalies_use_sampling_and_wall_clock_tolerances(tmp_path):
+    db_path = tmp_path / "usage.db"
+    database.init_db(str(db_path)).close()
+    conn = sqlite3.connect(db_path)
+    _insert_trusted_session(conn, session_id="clean")
+    _insert_trusted_session(
+        conn,
+        session_id="one-second-tolerance",
+        start_time="2026-07-20 11:00:00",
+        end_time="2026-07-20 11:00:10",
+        duration_seconds=10,
+        effective_seconds=9,
+        engaged_seconds=9,
+        idle_seconds=0,
+    )
+    _insert_trusted_session(
+        conn,
+        session_id="composition",
+        start_time="2026-07-20 12:00:00",
+        end_time="2026-07-20 12:00:10",
+        duration_seconds=10,
+        effective_seconds=8,
+        engaged_seconds=8,
+        idle_seconds=0,
+    )
+    _insert_trusted_session(
+        conn,
+        session_id="negative",
+        start_time="2026-07-20 13:00:00",
+        end_time="2026-07-20 13:00:00",
+        duration_seconds=-1,
+        effective_seconds=0,
+        engaged_seconds=0,
+        idle_seconds=0,
+    )
+    _insert_trusted_session(
+        conn,
+        session_id="wall-clock",
+        start_time="2026-07-20 14:00:00",
+        end_time="2026-07-20 14:10:00",
+        duration_seconds=10,
+        effective_seconds=10,
+        engaged_seconds=10,
+        idle_seconds=0,
+    )
+    for hour in (15, 16):
+        _insert_trusted_session(
+            conn,
+            session_id="duplicate-id",
+            start_time=f"2026-07-20 {hour}:00:00",
+            end_time=f"2026-07-20 {hour}:00:10",
+            duration_seconds=10,
+            effective_seconds=10,
+            engaged_seconds=10,
+            idle_seconds=0,
+        )
+    conn.commit()
+    conn.close()
+
+    result = database.query_date_range_stats(str(db_path), ["2026-07-20"])
+
+    assert result["totals"]["session_count"] == 7
+    assert result["totals"]["anomaly_count"] == 4
+
+
+def test_composition_tolerance_uses_recording_sample_interval(tmp_path):
+    db_path = tmp_path / "usage.db"
+    database.init_db(str(db_path)).close()
+    database.save_settings(str(db_path), {"sample_interval_seconds": 5})
+    conn = sqlite3.connect(db_path)
+    _insert_trusted_session(
+        conn,
+        session_id="within-one-sample",
+        start_time="2026-07-20 10:00:00",
+        end_time="2026-07-20 10:00:30",
+        duration_seconds=30,
+        effective_seconds=35,
+        engaged_seconds=35,
+        idle_seconds=0,
+    )
+    _insert_trusted_session(
+        conn,
+        session_id="beyond-one-sample",
+        start_time="2026-07-20 11:00:00",
+        end_time="2026-07-20 11:00:30",
+        duration_seconds=30,
+        effective_seconds=36,
+        engaged_seconds=36,
+        idle_seconds=0,
+    )
+    conn.commit()
+    conn.close()
+
+    result = database.query_date_range_stats(str(db_path), ["2026-07-20"])
+
+    assert result["totals"]["anomaly_count"] == 1
+
+
+def test_legacy_sessions_are_not_anomalous_only_for_missing_new_counters(
+    tmp_path,
+):
+    db_path = tmp_path / "usage.db"
+    database.init_db(str(db_path)).close()
+    conn = sqlite3.connect(db_path)
+    _insert_trusted_session(
+        conn,
+        session_id="legacy",
+        start_time="2026-07-20 10:00:00",
+        end_time="2026-07-20 10:10:00",
+        duration_seconds=600,
+        effective_seconds=600,
+        engaged_seconds=0,
+        passive_seconds=0,
+        idle_seconds=0,
+        metric_version="legacy",
+        classification_version="legacy",
+    )
+    conn.commit()
+    conn.close()
+
+    result = database.query_date_range_stats(str(db_path), ["2026-07-20"])
+
+    assert result["totals"]["engaged_seconds"] == 0
+    assert result["totals"]["passive_seconds"] == 0
+    assert result["totals"]["legacy_session_count"] == 1
+    assert result["totals"]["anomaly_count"] == 0
+
+
 def test_range_stats_keep_process_and_category_as_separate_dimensions(tmp_path):
     db_path = tmp_path / "usage.db"
     database.init_db(str(db_path)).close()

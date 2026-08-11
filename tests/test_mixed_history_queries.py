@@ -42,6 +42,9 @@ def _build_mixed_history(db_path):
             active_rule="passive_allowed",
             duration_seconds=180,
             effective_seconds=180,
+            engaged_seconds=120,
+            passive_seconds=60,
+            classification_version="rules-a",
         ),
     )
     database.close_db(conn)
@@ -57,6 +60,20 @@ def test_date_range_preserves_legacy_dates_when_sessions_exist(tmp_path):
     assert [row["effective_seconds"] for row in result["daily"]] == [120, 180]
     assert result["totals"]["effective_seconds"] == 300
     assert result["totals"]["video_seconds"] == 300
+    assert result["daily"][0]["engaged_seconds"] == 0
+    assert result["daily"][0]["passive_seconds"] == 0
+    assert result["daily"][0]["metric_versions"] == ["legacy"]
+    assert result["daily"][1]["engaged_seconds"] == 120
+    assert result["daily"][1]["passive_seconds"] == 60
+    assert result["totals"]["engaged_seconds"] == 120
+    assert result["totals"]["passive_seconds"] == 60
+    assert result["totals"]["work_engaged_seconds"] == 0
+    assert result["totals"]["session_count"] == 2
+    assert result["totals"]["legacy_session_count"] == 1
+    assert result["totals"]["anomaly_count"] == 0
+    assert result["totals"]["dates_with_data"] == [yesterday, today]
+    assert result["totals"]["metric_versions"] == ["attention-v1", "legacy"]
+    assert result["totals"]["classification_versions"] == ["legacy", "rules-a"]
 
 
 def test_entertainment_trend_preserves_legacy_dates_when_sessions_exist(tmp_path):

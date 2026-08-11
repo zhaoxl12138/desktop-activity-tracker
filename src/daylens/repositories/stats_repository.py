@@ -5,6 +5,166 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 
+WORK_CATEGORY_KEYS = frozenset(
+    {"ai_tools", "coding", "office", "reading", "creative"}
+)
+DEFAULT_SAMPLE_INTERVAL_SECONDS = 1
+DEFAULT_WALL_CLOCK_TOLERANCE_SECONDS = 300
+
+
+def _empty_trusted_summary() -> dict:
+    return {
+        "engaged_seconds": 0,
+        "passive_seconds": 0,
+        "work_engaged_seconds": 0,
+        "session_count": 0,
+        "legacy_session_count": 0,
+        "anomaly_count": 0,
+        "dates_with_data": [],
+        "metric_versions": [],
+        "classification_versions": [],
+    }
+
+
+def _sample_interval_from_connection(conn) -> int:
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key = 'sample_interval_seconds'"
+    ).fetchone()
+    if not row:
+        return DEFAULT_SAMPLE_INTERVAL_SECONDS
+    try:
+        return max(DEFAULT_SAMPLE_INTERVAL_SECONDS, int(row[0]))
+    except (TypeError, ValueError):
+        return DEFAULT_SAMPLE_INTERVAL_SECONDS
+
+
+def _integer(value) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _session_row_is_anomalous(row, sample_interval: int) -> bool:
+    duration = _integer(row["duration_seconds"])
+    effective = _integer(row["effective_seconds"])
+    engaged = _integer(row["engaged_seconds"])
+    passive = _integer(row["passive_seconds"])
+    idle = _integer(row["idle_seconds"])
+    if any(value < 0 for value in (duration, effective, engaged, passive, idle)):
+        return True
+
+    metric_version = str(row["metric_version"] or "legacy")
+    if metric_version != "legacy":
+        components = engaged + passive + idle
+        if abs(duration - components) > sample_interval:
+            return True
+
+    try:
+        start_time = datetime.fromisoformat(str(row["start_time"]))
+        end_time = datetime.fromisoformat(str(row["end_time"]))
+    except (TypeError, ValueError):
+        return True
+    wall_seconds = (end_time - start_time).total_seconds()
+    return (
+        wall_seconds < 0
+        or abs(wall_seconds - duration) > DEFAULT_WALL_CLOCK_TOLERANCE_SECONDS
+    )
+
+
+def _summarize_session_rows(rows, sample_interval: int) -> tuple[dict, dict[str, dict]]:
+    totals = _empty_trusted_summary()
+    by_date: dict[str, dict] = {}
+    seen_session_ids: set[str] = set()
+
+    for row in rows:
+        date_str = str(row["date"] or "")
+        daily = by_date.setdefault(date_str, _empty_trusted_summary())
+        session_id = str(row["session_id"] or "")
+        duplicate = session_id in seen_session_ids
+        seen_session_ids.add(session_id)
+        anomalous = duplicate or _session_row_is_anomalous(row, sample_interval)
+        metric_version = str(row["metric_version"] or "legacy")
+        classification_version = str(row["classification_version"] or "legacy")
+        engaged = _integer(row["engaged_seconds"])
+        passive = _integer(row["passive_seconds"])
+        work_engaged = (
+            engaged if str(row["category_key"] or "") in WORK_CATEGORY_KEYS else 0
+        )
+
+        for summary in (totals, daily):
+            summary["engaged_seconds"] += engaged
+            summary["passive_seconds"] += passive
+            summary["work_engaged_seconds"] += work_engaged
+            summary["session_count"] += 1
+            summary["legacy_session_count"] += int(metric_version == "legacy")
+            summary["anomaly_count"] += int(anomalous)
+            summary["dates_with_data"].append(date_str)
+            summary["metric_versions"].append(metric_version)
+            summary["classification_versions"].append(classification_version)
+
+    for summary in [totals, *by_date.values()]:
+        summary["dates_with_data"] = sorted(
+            {date for date in summary["dates_with_data"] if date}
+        )
+        summary["metric_versions"] = sorted(set(summary["metric_versions"]))
+        summary["classification_versions"] = sorted(
+            set(summary["classification_versions"])
+        )
+    return totals, by_date
+
+
+def _summarize_legacy_log_rows(rows) -> tuple[dict, dict[str, dict]]:
+    totals = _empty_trusted_summary()
+    by_date: dict[str, dict] = {}
+    for row in rows:
+        date_str = str(row["date"] or "")
+        daily = by_date.setdefault(date_str, _empty_trusted_summary())
+        anomalous = _integer(row["duration_seconds"]) < 0
+        for summary in (totals, daily):
+            summary["session_count"] += 1
+            summary["legacy_session_count"] += 1
+            summary["anomaly_count"] += int(anomalous)
+            summary["dates_with_data"].append(date_str)
+            summary["metric_versions"].append("legacy")
+            summary["classification_versions"].append("legacy")
+
+    for summary in [totals, *by_date.values()]:
+        summary["dates_with_data"] = sorted(
+            {date for date in summary["dates_with_data"] if date}
+        )
+        summary["metric_versions"] = sorted(set(summary["metric_versions"]))
+        summary["classification_versions"] = sorted(
+            set(summary["classification_versions"])
+        )
+    return totals, by_date
+
+
+def _trusted_summary_from_daily(daily: list[dict]) -> dict:
+    totals = _empty_trusted_summary()
+    for row in daily:
+        for field in (
+            "engaged_seconds",
+            "passive_seconds",
+            "work_engaged_seconds",
+            "session_count",
+            "legacy_session_count",
+            "anomaly_count",
+        ):
+            totals[field] += _integer(row.get(field, 0))
+        totals["dates_with_data"].extend(row.get("dates_with_data", []))
+        totals["metric_versions"].extend(row.get("metric_versions", []))
+        totals["classification_versions"].extend(
+            row.get("classification_versions", [])
+        )
+    totals["dates_with_data"] = sorted(set(totals["dates_with_data"]))
+    totals["metric_versions"] = sorted(set(totals["metric_versions"]))
+    totals["classification_versions"] = sorted(
+        set(totals["classification_versions"])
+    )
+    return totals
+
+
 def query_date_stats_from_logs(read_conn, db_path: str, date_str: str) -> dict:
     with read_conn(db_path) as conn:
         totals = conn.execute(
@@ -66,8 +226,22 @@ def query_date_stats_from_logs(read_conn, db_path: str, date_str: str) -> dict:
             (date_str,),
         ).fetchall()
 
+        trust_rows = conn.execute(
+            """
+            SELECT date, duration_seconds
+            FROM activity_logs
+            WHERE date = ?
+            ORDER BY id
+            """,
+            (date_str,),
+        ).fetchall()
+
+    trusted_totals, _ = _summarize_legacy_log_rows(trust_rows)
+    totals_payload = dict(totals)
+    totals_payload.update(trusted_totals)
+
     return {
-        "totals": dict(totals),
+        "totals": totals_payload,
         "by_category": [dict(row) for row in by_category],
         "by_app": [dict(row) for row in by_app],
         "by_app_detail": [dict(row) for row in by_app_detail],
@@ -94,6 +268,8 @@ def query_date_stats_from_sessions(read_conn, db_path: str, date_str: str) -> di
                 category_key,
                 category_name,
                 SUM(effective_seconds) as effective_seconds,
+                SUM(engaged_seconds) as engaged_seconds,
+                SUM(passive_seconds) as passive_seconds,
                 SUM(idle_seconds) as idle_seconds,
                 SUM(duration_seconds) as total_seconds
             FROM activity_sessions WHERE date = ? AND category_name != '空闲'
@@ -111,6 +287,8 @@ def query_date_stats_from_sessions(read_conn, db_path: str, date_str: str) -> di
                 category_key,
                 category_name,
                 SUM(effective_seconds) as effective_seconds,
+                SUM(engaged_seconds) as engaged_seconds,
+                SUM(passive_seconds) as passive_seconds,
                 COUNT(*) as samples
             FROM activity_sessions WHERE date = ? AND effective_seconds > 0
             GROUP BY process_name, category_key
@@ -126,7 +304,9 @@ def query_date_stats_from_sessions(read_conn, db_path: str, date_str: str) -> di
                 normalized_title as window_title,
                 category_key,
                 category_name,
-                SUM(effective_seconds) as effective_seconds
+                SUM(effective_seconds) as effective_seconds,
+                SUM(engaged_seconds) as engaged_seconds,
+                SUM(passive_seconds) as passive_seconds
             FROM activity_sessions WHERE date = ? AND effective_seconds > 0
             GROUP BY process_name, normalized_title, category_key, category_name
             ORDER BY effective_seconds DESC
@@ -135,8 +315,26 @@ def query_date_stats_from_sessions(read_conn, db_path: str, date_str: str) -> di
             (date_str,),
         ).fetchall()
 
+        trust_rows = conn.execute(
+            """
+            SELECT session_id, start_time, end_time, date, category_key,
+                   duration_seconds, effective_seconds, engaged_seconds,
+                   passive_seconds, idle_seconds, metric_version,
+                   classification_version
+            FROM activity_sessions
+            WHERE date = ?
+            ORDER BY id
+            """,
+            (date_str,),
+        ).fetchall()
+        sample_interval = _sample_interval_from_connection(conn)
+
+    trusted_totals, _ = _summarize_session_rows(trust_rows, sample_interval)
+    totals_payload = dict(totals)
+    totals_payload.update(trusted_totals)
+
     return {
-        "totals": dict(totals),
+        "totals": totals_payload,
         "by_category": [dict(row) for row in by_category],
         "by_app": [dict(row) for row in by_app],
         "by_app_detail": [dict(row) for row in by_app_detail],
@@ -190,6 +388,8 @@ def query_date_range_from_sessions(read_conn, db_path: str, dates: list[str]) ->
             f"""
             SELECT category_key, category_name,
                    SUM(effective_seconds) as effective_seconds,
+                   SUM(engaged_seconds) as engaged_seconds,
+                   SUM(passive_seconds) as passive_seconds,
                    SUM(idle_seconds) as idle_seconds,
                    SUM(duration_seconds) as total_seconds
             FROM activity_sessions
@@ -204,6 +404,8 @@ def query_date_range_from_sessions(read_conn, db_path: str, dates: list[str]) ->
             f"""
             SELECT process_name, category_key,
                    SUM(effective_seconds) as effective_seconds,
+                   SUM(engaged_seconds) as engaged_seconds,
+                   SUM(passive_seconds) as passive_seconds,
                    COUNT(*) as samples
             FROM activity_sessions
             WHERE date IN ({placeholders}) AND effective_seconds > 0
@@ -214,7 +416,29 @@ def query_date_range_from_sessions(read_conn, db_path: str, dates: list[str]) ->
             dates,
         ).fetchall()
 
-    return _build_range_payload(dates, daily_rows, work_video_rows, category_rows, app_rows)
+        trust_rows = conn.execute(
+            f"""
+            SELECT session_id, start_time, end_time, date, category_key,
+                   duration_seconds, effective_seconds, engaged_seconds,
+                   passive_seconds, idle_seconds, metric_version,
+                   classification_version
+            FROM activity_sessions
+            WHERE date IN ({placeholders})
+            ORDER BY id
+            """,
+            dates,
+        ).fetchall()
+        sample_interval = _sample_interval_from_connection(conn)
+
+    _, trusted_by_date = _summarize_session_rows(trust_rows, sample_interval)
+    return _build_range_payload(
+        dates,
+        daily_rows,
+        work_video_rows,
+        category_rows,
+        app_rows,
+        trusted_by_date,
+    )
 
 
 def query_date_range_from_logs(read_conn, db_path: str, dates: list[str]) -> dict:
@@ -278,7 +502,25 @@ def query_date_range_from_logs(read_conn, db_path: str, dates: list[str]) -> dic
             dates,
         ).fetchall()
 
-    return _build_range_payload(dates, daily_rows, work_video_rows, category_rows, app_rows)
+        trust_rows = conn.execute(
+            f"""
+            SELECT date, duration_seconds
+            FROM activity_logs
+            WHERE date IN ({placeholders})
+            ORDER BY id
+            """,
+            dates,
+        ).fetchall()
+
+    _, trusted_by_date = _summarize_legacy_log_rows(trust_rows)
+    return _build_range_payload(
+        dates,
+        daily_rows,
+        work_video_rows,
+        category_rows,
+        app_rows,
+        trusted_by_date,
+    )
 
 
 def query_date(read_conn, db_path: str, date_str: str) -> list[dict]:
@@ -468,7 +710,7 @@ def count_consecutive_days(read_conn, db_path: str) -> int:
 
 def query_date_range_stats(read_conn, db_path: str, dates: list[str]) -> dict:
     if not dates:
-        return {"dates": [], "daily": [], "by_category": [], "by_app": [], "totals": {}}
+        return _merge_range_payloads([], [])
 
     with read_conn(db_path) as conn:
         placeholders = ",".join("?" * len(dates))
@@ -505,11 +747,19 @@ def _merge_range_payloads(dates: list[str], payloads: list[dict]) -> dict:
                     "category_key": key[0],
                     "category_name": key[1],
                     "effective_seconds": 0,
+                    "engaged_seconds": 0,
+                    "passive_seconds": 0,
                     "idle_seconds": 0,
                     "total_seconds": 0,
                 },
             )
-            for field in ("effective_seconds", "idle_seconds", "total_seconds"):
+            for field in (
+                "effective_seconds",
+                "engaged_seconds",
+                "passive_seconds",
+                "idle_seconds",
+                "total_seconds",
+            ):
                 merged[field] += row.get(field, 0) or 0
 
         for row in payload.get("by_app", []):
@@ -520,10 +770,14 @@ def _merge_range_payloads(dates: list[str], payloads: list[dict]) -> dict:
                     "process_name": key[0],
                     "category_key": key[1],
                     "effective_seconds": 0,
+                    "engaged_seconds": 0,
+                    "passive_seconds": 0,
                     "samples": 0,
                 },
             )
             merged["effective_seconds"] += row.get("effective_seconds", 0) or 0
+            merged["engaged_seconds"] += row.get("engaged_seconds", 0) or 0
+            merged["passive_seconds"] += row.get("passive_seconds", 0) or 0
             merged["samples"] += row.get("samples", 0) or 0
 
     daily = [
@@ -532,10 +786,19 @@ def _merge_range_payloads(dates: list[str], payloads: list[dict]) -> dict:
             {
                 "date": date_str,
                 "effective_seconds": 0,
+                "engaged_seconds": 0,
+                "passive_seconds": 0,
                 "idle_seconds": 0,
                 "total_seconds": 0,
                 "work_seconds": 0,
                 "video_seconds": 0,
+                "work_engaged_seconds": 0,
+                "session_count": 0,
+                "legacy_session_count": 0,
+                "anomaly_count": 0,
+                "dates_with_data": [],
+                "metric_versions": [],
+                "classification_versions": [],
             },
         )
         for date_str in dates
@@ -544,6 +807,7 @@ def _merge_range_payloads(dates: list[str], payloads: list[dict]) -> dict:
     totals_idle = sum(row.get("idle_seconds", 0) or 0 for row in daily)
     totals_work = sum(row.get("work_seconds", 0) or 0 for row in daily)
     totals_video = sum(row.get("video_seconds", 0) or 0 for row in daily)
+    trusted_totals = _trusted_summary_from_daily(daily)
 
     return {
         "dates": dates,
@@ -560,11 +824,19 @@ def _merge_range_payloads(dates: list[str], payloads: list[dict]) -> dict:
             "total_seconds": totals_effective + totals_idle,
             "work_seconds": totals_work,
             "video_seconds": totals_video,
+            **trusted_totals,
         },
     }
 
 
-def _build_range_payload(dates: list[str], daily_rows, work_video_rows, category_rows, app_rows) -> dict:
+def _build_range_payload(
+    dates: list[str],
+    daily_rows,
+    work_video_rows,
+    category_rows,
+    app_rows,
+    trusted_by_date: dict[str, dict],
+) -> dict:
     daily_map = {row["date"]: dict(row) for row in daily_rows}
     work_video_map = {row["date"]: dict(row) for row in work_video_rows}
 
@@ -572,6 +844,7 @@ def _build_range_payload(dates: list[str], daily_rows, work_video_rows, category
     for date_str in dates:
         entry = daily_map.get(date_str, {"effective_seconds": 0, "idle_seconds": 0, "total_seconds": 0})
         work_video = work_video_map.get(date_str, {"work_seconds": 0, "video_seconds": 0})
+        trusted = trusted_by_date.get(date_str, _empty_trusted_summary())
         daily.append(
             {
                 "date": date_str,
@@ -580,6 +853,7 @@ def _build_range_payload(dates: list[str], daily_rows, work_video_rows, category
                 "total_seconds": entry.get("total_seconds", 0) or 0,
                 "work_seconds": work_video.get("work_seconds", 0) or 0,
                 "video_seconds": work_video.get("video_seconds", 0) or 0,
+                **trusted,
             }
         )
 
@@ -587,6 +861,7 @@ def _build_range_payload(dates: list[str], daily_rows, work_video_rows, category
     totals_idle = sum(item["idle_seconds"] for item in daily)
     totals_work = sum(item["work_seconds"] for item in daily)
     totals_video = sum(item["video_seconds"] for item in daily)
+    trusted_totals = _trusted_summary_from_daily(daily)
 
     return {
         "dates": dates,
@@ -599,5 +874,6 @@ def _build_range_payload(dates: list[str], daily_rows, work_video_rows, category
             "total_seconds": totals_effective + totals_idle,
             "work_seconds": totals_work,
             "video_seconds": totals_video,
+            **trusted_totals,
         },
     }
