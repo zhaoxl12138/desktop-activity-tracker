@@ -4,6 +4,8 @@ import sys
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
@@ -455,6 +457,80 @@ def test_insight_failure_hides_only_the_card_and_preserves_trust(
     assert snapshot["trust"]["reasons"][0] == "范围内没有可评估记录"
     assert "统计数据格式异常" not in snapshot["trust"]["reasons"]
     assert snapshot["totals"]["effective_seconds"] == 0
+
+
+@pytest.mark.parametrize("failure_target", ["assess_range", "compare_ranges"])
+def test_trusted_calculation_failure_hides_insight_without_calling_selector(
+    tmp_path: Path,
+    monkeypatch,
+    caplog,
+    failure_target,
+):
+    db_path = tmp_path / "usage.db"
+    database.init_db(str(db_path)).close()
+    selector_calls = 0
+
+    def fail_calculation(*_args, **_kwargs):
+        raise RuntimeError(f"{failure_target} unavailable")
+
+    def select_insight(_payload):
+        nonlocal selector_calls
+        selector_calls += 1
+        return {"kind": "should-not-be-used"}
+
+    monkeypatch.setattr(dashboard_service, failure_target, fail_calculation)
+    monkeypatch.setattr(dashboard_service, "select_primary_insight", select_insight)
+
+    snapshot = load_today_snapshot(
+        str(db_path),
+        lambda process_name, _details: process_name,
+    )
+
+    assert selector_calls == 0
+    assert snapshot["insight"] is None
+    assert snapshot["trust"]["level"] == "low"
+    assert snapshot["trust"]["reasons"] == ["统计数据格式异常"]
+    assert snapshot["totals"]["effective_seconds"] == 0
+    assert len(snapshot["trend"]["today"]) == 24
+    assert "Failed to build trusted dashboard metrics" in caplog.text
+
+
+def test_range_query_failure_preserves_old_snapshot_and_never_selects_insight(
+    tmp_path: Path,
+    monkeypatch,
+    caplog,
+):
+    db_path = tmp_path / "usage.db"
+    database.init_db(str(db_path)).close()
+    selector_calls = 0
+
+    def fail_range_query(*_args, **_kwargs):
+        raise RuntimeError("range query unavailable")
+
+    def select_insight(_payload):
+        nonlocal selector_calls
+        selector_calls += 1
+        return {"kind": "should-not-be-used"}
+
+    monkeypatch.setattr(
+        dashboard_service.database,
+        "query_date_range_stats",
+        fail_range_query,
+    )
+    monkeypatch.setattr(dashboard_service, "select_primary_insight", select_insight)
+
+    snapshot = load_today_snapshot(
+        str(db_path),
+        lambda process_name, _details: process_name,
+    )
+
+    assert selector_calls == 0
+    assert snapshot["insight"] is None
+    assert snapshot["trust"]["level"] == "low"
+    assert snapshot["totals"]["effective_seconds"] == 0
+    assert snapshot["trend"]["thirty_days"] == []
+    assert len(snapshot["trend"]["today"]) == 24
+    assert "range query unavailable" in caplog.text
 
 
 def test_dashboard_trend_ranges_are_rolling_windows():

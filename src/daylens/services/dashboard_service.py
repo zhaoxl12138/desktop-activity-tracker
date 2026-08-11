@@ -657,10 +657,16 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
     )
     idle_ratio = max(0, 100 - active_ratio - passive_ratio) if attention_total else 0
 
-    thirty_day_stats = database.query_date_range_stats(
-        db_path,
-        thirty_day_dates,
-    )
+    trusted_calculation_failed = False
+    try:
+        thirty_day_stats = database.query_date_range_stats(
+            db_path,
+            thirty_day_dates,
+        )
+    except Exception:
+        LOGGER.exception("Failed to read dashboard thirty-day range")
+        thirty_day_stats = {"daily": []}
+        trusted_calculation_failed = True
     try:
         fourteen_day_sessions = database.query_sessions_for_dates(
             db_path,
@@ -677,6 +683,7 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
         ]
     except Exception:
         LOGGER.exception("Failed to read dashboard session range")
+        trusted_calculation_failed = True
         fourteen_day_sessions = []
         sessions = database.query_today_sessions(db_path, today_str)
         yesterday_sessions = database.query_today_sessions(
@@ -690,98 +697,106 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
     day_comparison = build_day_over_day_comparison(stats, yesterday_stats)
     split_today = build_hourly_series_split(sessions)
     split_yesterday = build_hourly_series_split(yesterday_sessions)
-    try:
-        fourteen_day_stats = database.query_date_range_stats(
-            db_path,
-            fourteen_day_dates,
-        )
-        recent_stats = database.query_date_range_stats(db_path, seven_day_dates)
-        prior_stats = database.query_date_range_stats(
-            db_path,
-            prior_seven_day_dates,
-        )
-        trust = assess_range(
-            fourteen_day_stats.get("totals", {}),
-            fourteen_day_dates,
-        )
-        recent_trust = assess_range(
-            recent_stats.get("totals", {}),
-            seven_day_dates,
-        )
-        prior_trust = assess_range(
-            prior_stats.get("totals", {}),
-            prior_seven_day_dates,
-        )
-        comparison = compare_ranges(prior_trust, recent_trust)
-        category_comparable = bool(
-            trust.get("category_comparable", False)
-            and comparison.get("category_comparable", False)
-        )
-        recent_sessions = [
-            session
-            for session in fourteen_day_sessions
-            if str(session.get("date", "") or "") in set(seven_day_dates)
-        ]
-        insight_payload = {
-            "date_range": [fourteen_day_dates[0], fourteen_day_dates[-1]],
-            "trust": trust,
-            "best_window": _build_best_window_section(
-                fourteen_day_sessions,
-                [fourteen_day_dates[0], fourteen_day_dates[-1]],
-            ),
-            "interruptions": _build_interruptions_section(
-                recent_sessions,
-                [seven_day_dates[0], seven_day_dates[-1]],
-                category_comparable,
-            ),
-            "trend": {
-                "prior_range": [
-                    prior_seven_day_dates[0],
-                    prior_seven_day_dates[-1],
-                ],
-                "recent_range": [seven_day_dates[0], seven_day_dates[-1]],
-                "recent_work_engaged_seconds": int(
-                    recent_stats.get("totals", {}).get(
-                        "work_engaged_seconds", 0
-                    )
-                    or 0
+    trust = _fallback_trust()
+    comparison = {
+        "comparable": False,
+        "category_comparable": False,
+        "reason": "数据质量不足，无法比较",
+    }
+    insight = None
+    insight_payload: dict[str, object] | None = None
+    if not trusted_calculation_failed:
+        try:
+            fourteen_day_stats = database.query_date_range_stats(
+                db_path,
+                fourteen_day_dates,
+            )
+            recent_stats = database.query_date_range_stats(
+                db_path,
+                seven_day_dates,
+            )
+            prior_stats = database.query_date_range_stats(
+                db_path,
+                prior_seven_day_dates,
+            )
+            trust = assess_range(
+                fourteen_day_stats.get("totals", {}),
+                fourteen_day_dates,
+            )
+            recent_trust = assess_range(
+                recent_stats.get("totals", {}),
+                seven_day_dates,
+            )
+            prior_trust = assess_range(
+                prior_stats.get("totals", {}),
+                prior_seven_day_dates,
+            )
+            comparison = compare_ranges(prior_trust, recent_trust)
+            category_comparable = bool(
+                trust.get("category_comparable", False)
+                and comparison.get("category_comparable", False)
+            )
+            recent_date_set = set(seven_day_dates)
+            recent_sessions = [
+                session
+                for session in fourteen_day_sessions
+                if str(session.get("date", "") or "") in recent_date_set
+            ]
+            insight_payload = {
+                "date_range": [fourteen_day_dates[0], fourteen_day_dates[-1]],
+                "trust": trust,
+                "best_window": _build_best_window_section(
+                    fourteen_day_sessions,
+                    [fourteen_day_dates[0], fourteen_day_dates[-1]],
                 ),
-                "prior_work_engaged_seconds": int(
-                    prior_stats.get("totals", {}).get(
-                        "work_engaged_seconds", 0
-                    )
-                    or 0
+                "interruptions": _build_interruptions_section(
+                    recent_sessions,
+                    [seven_day_dates[0], seven_day_dates[-1]],
+                    category_comparable,
                 ),
-                "comparison_comparable": bool(
-                    comparison.get("comparable", False)
+                "trend": {
+                    "prior_range": [
+                        prior_seven_day_dates[0],
+                        prior_seven_day_dates[-1],
+                    ],
+                    "recent_range": [seven_day_dates[0], seven_day_dates[-1]],
+                    "recent_work_engaged_seconds": int(
+                        recent_stats.get("totals", {}).get(
+                            "work_engaged_seconds", 0
+                        )
+                        or 0
+                    ),
+                    "prior_work_engaged_seconds": int(
+                        prior_stats.get("totals", {}).get(
+                            "work_engaged_seconds", 0
+                        )
+                        or 0
+                    ),
+                    "comparison_comparable": bool(
+                        comparison.get("comparable", False)
+                    ),
+                    "category_comparable": category_comparable,
+                },
+                "workflow": _build_workflow_section(
+                    recent_sessions,
+                    [seven_day_dates[0], seven_day_dates[-1]],
                 ),
-                "category_comparable": category_comparable,
-            },
-            "workflow": _build_workflow_section(
-                recent_sessions,
-                [seven_day_dates[0], seven_day_dates[-1]],
-            ),
-        }
-    except Exception:
-        LOGGER.exception("Failed to build trusted dashboard metrics")
-        trust = _fallback_trust()
-        comparison = {
-            "comparable": False,
-            "category_comparable": False,
-            "reason": "数据质量不足，无法比较",
-        }
-        insight_payload = {
-            "date_range": [
-                fourteen_day_dates[0],
-                fourteen_day_dates[-1],
-            ],
-            "trust": trust,
-        }
-    try:
-        insight = select_primary_insight(insight_payload)
-    except Exception:
-        LOGGER.exception("Failed to build dashboard insight")
-        insight = None
+            }
+        except Exception:
+            LOGGER.exception("Failed to build trusted dashboard metrics")
+            trusted_calculation_failed = True
+            trust = _fallback_trust()
+            comparison = {
+                "comparable": False,
+                "category_comparable": False,
+                "reason": "数据质量不足，无法比较",
+            }
+
+    if not trusted_calculation_failed and insight_payload is not None:
+        try:
+            insight = select_primary_insight(insight_payload)
+        except Exception:
+            LOGGER.exception("Failed to build dashboard insight")
     return {
         "today": today_str,
         "stats": stats,
