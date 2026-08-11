@@ -841,12 +841,10 @@ def count_consecutive_days(read_conn, db_path: str) -> int:
 
 def query_date_range_stats(read_conn, db_path: str, dates: list[str]) -> dict:
     dates = list(dict.fromkeys(dates))
-    if not dates:
-        return _aggregate_mixed_history([], [], [])
-    session_rows, legacy_rows = _load_mixed_history_rows(
-        read_conn,
-        db_path,
-        dates,
+    session_rows, legacy_rows = (
+        _load_mixed_history_rows(read_conn, db_path, dates)
+        if dates
+        else ([], [])
     )
     payload = _aggregate_mixed_history(dates, session_rows, legacy_rows)
     payload.pop("by_app_detail", None)

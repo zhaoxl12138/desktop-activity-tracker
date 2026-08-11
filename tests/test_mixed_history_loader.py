@@ -70,6 +70,41 @@ def _insert_log(
     )
 
 
+def test_empty_range_uses_the_public_range_shape():
+    result = stats_repository.query_date_range_stats(
+        lambda _path: pytest.fail("empty ranges must not read the database"),
+        "unused.db",
+        [],
+    )
+
+    assert result == {
+        "dates": [],
+        "daily": [],
+        "by_category": [],
+        "by_app": [],
+        "totals": {
+            "effective_seconds": 0,
+            "idle_seconds": 0,
+            "total_seconds": 0,
+            "work_seconds": 0,
+            "video_seconds": 0,
+            "engaged_seconds": 0,
+            "passive_seconds": 0,
+            "work_engaged_seconds": 0,
+            "session_count": 0,
+            "legacy_session_count": 0,
+            "legacy_log_sample_count": 0,
+            "legacy_granularity_unknown": False,
+            "session_anomaly_count": 0,
+            "legacy_log_anomaly_count": 0,
+            "anomaly_count": 0,
+            "dates_with_data": [],
+            "metric_versions": [],
+            "classification_versions": [],
+        },
+    }
+
+
 @pytest.mark.parametrize(
     ("date_str", "start_time", "end_time", "log_timestamp"),
     [
