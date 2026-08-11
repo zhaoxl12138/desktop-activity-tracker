@@ -300,6 +300,93 @@ def test_well_formed_legacy_log_granularity_flag_is_not_a_format_error():
     assert result["reasons"] == ["旧日志缺少会话粒度"]
 
 
+@pytest.mark.parametrize(
+    ("summary", "expected_dates"),
+    [
+        (
+            _summary(
+                session_count=1,
+                dates_with_data=["2026-07-01", "2026-07-02"],
+            ),
+            ["2026-07-01", "2026-07-02"],
+        ),
+        (
+            _summary(
+                session_count=1,
+                dates_with_data=["2026-07-01"],
+                metric_versions=["attention-v1", "legacy"],
+            ),
+            ["2026-07-01"],
+        ),
+        (
+            _summary(
+                legacy_log_sample_count=1,
+                legacy_granularity_unknown=True,
+                metric_versions=["attention-v1"],
+                classification_versions=["legacy", "rules-a"],
+            ),
+            ["2026-07-01", "2026-07-02"],
+        ),
+        (
+            _summary(
+                legacy_log_sample_count=1,
+                legacy_granularity_unknown=True,
+                metric_versions=["attention-v1", "legacy"],
+                classification_versions=["rules-a"],
+            ),
+            ["2026-07-01", "2026-07-02"],
+        ),
+        (
+            _summary(
+                session_count=1,
+                dates_with_data=["2026-07-01"],
+                metric_versions=["attention-v1", "attention-v2"],
+            ),
+            ["2026-07-01"],
+        ),
+        (
+            _summary(
+                session_count=1,
+                dates_with_data=["2026-07-01"],
+                classification_versions=["rules-a", "rules-b"],
+            ),
+            ["2026-07-01"],
+        ),
+    ],
+)
+def test_cross_field_source_contradictions_are_format_errors(
+    summary,
+    expected_dates,
+):
+    result = assess_range(summary, expected_dates)
+    valid = assess_range(
+        _summary(),
+        ["2026-07-01", "2026-07-02"],
+    )
+
+    assert result["level"] == "low"
+    assert result["reasons"] == ["统计数据格式异常"]
+    assert result["category_comparable"] is False
+    assert compare_ranges(result, valid) == {
+        "comparable": False,
+        "category_comparable": False,
+        "reason": "数据质量不足，无法比较",
+    }
+
+
+def test_multiple_classification_versions_are_valid_with_enough_sessions():
+    result = assess_range(
+        _summary(
+            session_count=2,
+            classification_versions=["rules-b", "rules-a"],
+        ),
+        ["2026-07-01", "2026-07-02"],
+    )
+
+    assert result["level"] == "medium"
+    assert result["reasons"] == ["范围内存在多个分类版本"]
+
+
 def test_compare_ranges_allows_total_time_but_not_categories_after_rule_change():
     left = assess_range(
         _summary(classification_versions=["rules-a"]),

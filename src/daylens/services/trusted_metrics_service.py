@@ -118,6 +118,28 @@ def assess_range(summary: dict, expected_dates: list[str]) -> dict[str, object]:
     nonlegacy_metric_versions = [
         version for version in metric_versions if version != "legacy"
     ]
+    nonlegacy_classification_versions = [
+        version for version in classification_versions if version != "legacy"
+    ]
+    new_session_count = max(0, session_count - legacy_count)
+    source_record_count = session_count + legacy_log_sample_count
+    legacy_source_present = (
+        legacy_count > 0 or legacy_log_sample_count > 0
+    )
+    if len(recorded) > source_record_count:
+        format_valid = False
+    if legacy_metric_present != legacy_source_present:
+        format_valid = False
+    if legacy_log_sample_count > 0 and "legacy" not in classification_versions:
+        format_valid = False
+    if len(nonlegacy_metric_versions) > new_session_count:
+        format_valid = False
+    if len(nonlegacy_classification_versions) > new_session_count:
+        format_valid = False
+    if len(metric_versions) > source_record_count:
+        format_valid = False
+    if len(classification_versions) > source_record_count:
+        format_valid = False
     if session_count > 0 and metric_versions == ["legacy"]:
         if legacy_count != session_count:
             format_valid = False
