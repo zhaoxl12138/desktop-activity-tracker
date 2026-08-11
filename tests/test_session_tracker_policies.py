@@ -800,6 +800,42 @@ def test_idle_back_correction_spans_current_and_pending_ledgers():
     ) == 2
 
 
+def test_idle_back_correction_preserves_each_sessions_audio_evidence():
+    tracker = _tracker(
+        idle_threshold=3,
+        passive_threshold=99,
+        audio_detector=AudioForPid(playing_pid=81),
+    )
+    video = {
+        "process_name": "VLC.exe",
+        "window_title": "Movie",
+        "exe_path": "",
+        "pid": 81,
+    }
+    social = {
+        "process_name": "Chat.exe",
+        "window_title": "Friends",
+        "exe_path": "",
+        "pid": 82,
+    }
+
+    tracker.tick(0, video)
+    tracker.tick(0, video)
+    tracker.tick(0, social)
+    tracker.tick(0, social)
+
+    session = tracker.current_session
+    pending = tracker._pending_switch
+    assert session.category_key == "video"
+    assert session.engaged_seconds == 0
+    assert session.passive_seconds == 2
+    assert session.idle_seconds == 0
+    _assert_attention_conserved(session)
+    assert pending["engaged_during_grace"] == 0
+    assert pending["passive_during_grace"] == 0
+    assert pending["idle_during_grace"] == 2
+
+
 def test_pending_started_after_idle_correction_does_not_reclassify_active_time():
     tracker = _tracker(idle_threshold=1, passive_threshold=99)
     coding = {
@@ -1113,6 +1149,144 @@ def test_ordinary_boundary_inherits_physical_idle_without_gifting_engaged(bounda
     _assert_attention_conserved(session)
 
 
+@pytest.mark.parametrize("boundary", ["app_change", "title_change", "classifier"])
+def test_provisional_idle_window_is_rewritten_across_ordinary_boundary(boundary):
+    persisted = {}
+
+    def persist(session):
+        persisted[session.session_id] = (
+            session.engaged_seconds,
+            session.passive_seconds,
+            session.idle_seconds,
+            session.duration_seconds,
+            session.classification_version,
+        )
+        return True
+
+    classifier = (
+        ConfigurableVersionClassifier("rules-old")
+        if boundary == "classifier"
+        else MappingClassifier()
+    )
+    tracker = SessionTracker(
+        config={
+            "tracker": {
+                "sample_interval_seconds": 1,
+                "idle_threshold_seconds": 3,
+                "entertainment_idle_threshold_seconds": 99,
+            }
+        },
+        classifier=classifier,
+        on_session_end=persist,
+    )
+    if boundary == "title_change":
+        initial = {
+            "process_name": "VLC.exe",
+            "window_title": "Episode 1",
+            "exe_path": "",
+            "pid": 83,
+        }
+        target = {**initial, "window_title": "Episode 2"}
+    else:
+        initial = {
+            "process_name": "Code.exe",
+            "window_title": "main.py",
+            "exe_path": "",
+            "pid": 84,
+        }
+        target = (
+            {
+                "process_name": "Notes.exe",
+                "window_title": "notes.md",
+                "exe_path": "",
+                "pid": 85,
+            }
+            if boundary == "app_change"
+            else initial
+        )
+
+    tracker.tick(0, initial)
+    tracker.tick(0, initial)
+    old_session = tracker.current_session
+    if boundary == "classifier":
+        assert tracker.replace_classifier(
+            ConfigurableVersionClassifier("rules-new")
+        ) is True
+    tracker.tick(0, target)
+    tracker.tick(0, target)
+
+    assert persisted[old_session.session_id][:4] == (0, 0, 2, 2)
+    assert tracker.current_session.engaged_seconds == 0
+    assert tracker.current_session.passive_seconds == 0
+    assert tracker.current_session.idle_seconds == 2
+    _assert_attention_conserved(tracker.current_session)
+
+
+@pytest.mark.parametrize("failure_mode", ["return_false", "exception"])
+def test_failed_provisional_boundary_rewrite_retries_without_double_counting(
+    failure_mode,
+):
+    outcomes = iter([True, failure_mode, True])
+    persisted = {}
+    attempts = []
+
+    def persist(session):
+        outcome = next(outcomes)
+        attempts.append((session.session_id, outcome))
+        if outcome == "exception":
+            raise OSError("database busy")
+        if outcome is True:
+            persisted[session.session_id] = (
+                session.engaged_seconds,
+                session.passive_seconds,
+                session.idle_seconds,
+                session.duration_seconds,
+            )
+        return False if outcome == "return_false" else outcome
+
+    tracker = SessionTracker(
+        config={
+            "tracker": {
+                "sample_interval_seconds": 1,
+                "idle_threshold_seconds": 3,
+                "entertainment_idle_threshold_seconds": 99,
+            }
+        },
+        classifier=MappingClassifier(),
+        on_session_end=persist,
+    )
+    coding = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 88,
+    }
+    notes = {
+        "process_name": "Notes.exe",
+        "window_title": "notes.md",
+        "exe_path": "",
+        "pid": 89,
+    }
+    tracker.tick(0, coding)
+    tracker.tick(0, coding)
+    old_session = tracker.current_session
+    tracker.tick(0, notes)
+
+    if failure_mode == "exception":
+        with pytest.raises(OSError, match="database busy"):
+            tracker.tick(0, notes)
+    else:
+        tracker.tick(0, notes)
+    tracker.tick(0, notes)
+
+    assert len(attempts) == 3
+    assert persisted[old_session.session_id] == (0, 0, 2, 2)
+    assert tracker.current_session.engaged_seconds == 0
+    assert tracker.current_session.passive_seconds == 0
+    assert tracker.current_session.idle_seconds == 3
+    _assert_attention_conserved(tracker.current_session)
+
+
 def test_video_title_change_after_sixty_idle_seconds_starts_idle():
     ended = []
     tracker = SessionTracker(
@@ -1279,6 +1453,49 @@ def test_pending_silent_video_streak_is_inherited_and_trimmed_after_retries():
     assert video_attempt[1] == "VLC.exe"
     assert video_attempt[2:6] == (0, 0, 0, 0)
     assert video_attempt[6] == "entertainment_idle"
+
+
+def test_non_video_grace_interrupts_silent_video_streak_when_cancelled():
+    ended = []
+    tracker = SessionTracker(
+        config={
+            "tracker": {
+                "sample_interval_seconds": 1,
+                "idle_threshold_seconds": 1,
+                "entertainment_idle_threshold_seconds": 2,
+                "cross_group_grace_seconds": 30,
+            }
+        },
+        classifier=MappingClassifier(),
+        on_session_end=lambda session: ended.append(session) or True,
+    )
+    video = {
+        "process_name": "VLC.exe",
+        "window_title": "Movie",
+        "exe_path": "",
+        "pid": 86,
+    }
+    social = {
+        "process_name": "Chat.exe",
+        "window_title": "Friends",
+        "exe_path": "",
+        "pid": 87,
+    }
+
+    tracker.tick(0, video)
+    tracker.tick(0, video)
+    assert tracker._video_silent_idle == 2
+    tracker.tick(0, social)
+    assert tracker._pending_switch["video_silent_idle"] == 0
+
+    tracker.tick(0, video)
+
+    assert ended == []
+    assert tracker.current_session is not None
+    assert tracker.current_session.category_key == "video"
+    assert tracker._pending_switch is None
+    assert tracker._video_silent_idle == 1
+    _assert_attention_conserved(tracker.current_session)
 
 
 def test_immediate_entertainment_switch_conserves_abandoned_grace_counters():

@@ -234,6 +234,8 @@ class SessionTracker:
         self._last_tick_wall_time: datetime | None = None
         self._last_attention_state: str = "idle"
         self._video_silent_idle: float = 0.0
+        self._provisional_attention: list[dict] = []
+        self._pending_attention_rewrites: dict[str, ActivitySession] = {}
 
     # ── Public API ──────────────────────────────────────────────────
 
@@ -243,6 +245,8 @@ class SessionTracker:
 
     def finish_current(self, reason="manual"):
         """End the current session without starting a replacement session."""
+        if not self._retry_attention_rewrites():
+            return False
         if self._current is None:
             return True
         if self._pending_switch is not None:
@@ -250,10 +254,15 @@ class SessionTracker:
             self._pending_switch = None
         self._current.end_time = datetime.now()
         self._current.switch_reason = reason
-        return self._emit_session()
+        persisted = self._emit_session()
+        if persisted:
+            self._provisional_attention.clear()
+        return persisted
 
     def replace_classifier(self, replacement_classifier) -> bool:
         """Atomically replace rules, splitting sessions when their version changes."""
+        if not self._retry_attention_rewrites():
+            return False
         replacement_version = getattr(
             replacement_classifier,
             "classification_version",
@@ -276,8 +285,13 @@ class SessionTracker:
             )
             session.end_time = datetime.now()
             session.switch_reason = "classification_change"
-            if self._pending_switch is not None:
-                self._credit_pending_to_session(session, self._pending_switch)
+            pending = self._pending_switch
+            if pending is not None:
+                self._credit_pending_to_session(
+                    session,
+                    pending,
+                    transfer_provisional=False,
+                )
             try:
                 persisted = self._emit_session()
             except Exception:
@@ -302,6 +316,9 @@ class SessionTracker:
                     session.idle_seconds,
                 ) = original_state
                 return False
+            if pending is not None:
+                self._reassign_provisional_owner(pending, session)
+                self._mark_provisional_persisted(session)
 
         self._pending_switch = None
         self.classifier = replacement_classifier
@@ -321,6 +338,7 @@ class SessionTracker:
         self._activity_from_hook = True
         self._awaiting_activity = False
         self._video_silent_idle = 0.0
+        self._provisional_attention.clear()
 
     def _attention_bucket(self, category_key: str, audio_playing: bool) -> str:
         if self._persistent_idle <= self.idle_threshold:
@@ -343,18 +361,87 @@ class SessionTracker:
             pending.get("idle_during_grace", 0),
         )
 
+    def _reassign_provisional_owner(self, previous_owner, new_owner) -> None:
+        for entry in self._provisional_attention:
+            if entry["owner"] is previous_owner:
+                entry["owner"] = new_owner
+
+    def _mark_provisional_persisted(self, session: ActivitySession) -> None:
+        for entry in self._provisional_attention:
+            if entry["owner"] is session:
+                entry["persisted"] = True
+
+    def _record_provisional_attention(
+        self,
+        owner,
+        category_key: str,
+        audio_playing: bool,
+    ) -> None:
+        self._provisional_attention.append(
+            {
+                "owner": owner,
+                "seconds": self.sample_interval,
+                "target": (
+                    "passive"
+                    if category_key == "video" and audio_playing
+                    else "idle"
+                ),
+                "persisted": False,
+            }
+        )
+
     @classmethod
+    def _move_provisional_entry(cls, entry: dict) -> None:
+        owner = entry["owner"]
+        seconds = entry["seconds"]
+        target = entry["target"]
+        if isinstance(owner, dict):
+            owner["engaged_during_grace"] -= seconds
+            owner[f"{target}_during_grace"] += seconds
+            owner["idle_corrected"] = True
+            return
+        owner.engaged_seconds -= seconds
+        setattr(owner, f"{target}_seconds", getattr(owner, f"{target}_seconds") + seconds)
+        cls._sync_effective(owner)
+
+    def _retry_attention_rewrites(self) -> bool:
+        callback = self._on_flush or self._on_session_end
+        if callback is None:
+            self._pending_attention_rewrites.clear()
+            return True
+        for session_id, session in list(self._pending_attention_rewrites.items()):
+            persisted = callback(session)
+            if persisted is False:
+                return False
+            self._pending_attention_rewrites.pop(session_id, None)
+        return True
+
+    def _correct_provisional_attention(self) -> bool:
+        entries = self._provisional_attention
+        self._provisional_attention = []
+        for entry in entries:
+            self._move_provisional_entry(entry)
+            owner = entry["owner"]
+            if entry.get("persisted") and not isinstance(owner, dict):
+                self._pending_attention_rewrites[owner.session_id] = owner
+        self._idle_corrected = True
+        return self._retry_attention_rewrites()
+
     def _credit_pending_to_session(
-        cls,
+        self,
         session: ActivitySession,
         pending: dict,
+        *,
+        transfer_provisional: bool = True,
     ) -> None:
-        engaged, passive, idle = cls._pending_components(pending)
+        engaged, passive, idle = self._pending_components(pending)
         session.duration_seconds += engaged + passive + idle
         session.engaged_seconds += engaged
         session.passive_seconds += passive
         session.idle_seconds += idle
-        cls._sync_effective(session)
+        self._sync_effective(session)
+        if transfer_provisional:
+            self._reassign_provisional_owner(pending, session)
 
     # ── Tick ────────────────────────────────────────────────────────
 
@@ -400,6 +487,7 @@ class SessionTracker:
                     self._credit_pending_to_session(
                         gap_session,
                         self._pending_switch,
+                        transfer_provisional=False,
                     )
                     self._pending_switch = None
                 gap_session.end_time = self._last_tick_wall_time
@@ -446,11 +534,18 @@ class SessionTracker:
                     self._current = gap_session
                     self._pending_switch = original_pending
                     return self._make_snapshot(idle_seconds)
+                if original_pending is not None:
+                    self._reassign_provisional_owner(
+                        original_pending,
+                        gap_session,
+                    )
+                    self._mark_provisional_persisted(gap_session)
             self._pending_switch = None
             self._persistent_idle = 0.0
             self._idle_corrected = False
             self._video_silent_idle = 0.0
             self._awaiting_activity = True
+            self._provisional_attention.clear()
         self._last_tick_wall_time = now
 
         # Resolve window info
@@ -526,9 +621,14 @@ class SessionTracker:
             # ── Same domain ────────────────────────────────────────
             else:
                 if self._pending_switch is not None:
+                    cancelled_pending = self._pending_switch
                     self._credit_pending_to_session(
                         self._current,
-                        self._pending_switch,
+                        cancelled_pending,
+                    )
+                    self._video_silent_idle = cancelled_pending.get(
+                        "video_silent_idle",
+                        0,
                     )
                     self._pending_switch = None
 
@@ -720,6 +820,7 @@ class SessionTracker:
                 passive_seconds=passive,
                 classification_version=self.classification_version,
             )
+            self._reassign_provisional_owner(p, self._current)
             self._pending_switch = None
             return True
 
@@ -784,6 +885,7 @@ class SessionTracker:
             passive_seconds=passive,
             classification_version=self.classification_version,
         )
+        self._reassign_provisional_owner(p, self._current)
         self._pending_switch = None
         self._video_silent_idle = p.get("video_silent_idle", 0)
         return False
@@ -829,12 +931,19 @@ class SessionTracker:
             self._persistent_idle = 0.0
             self._idle_corrected = False
             p["idle_corrected"] = False
+            self._provisional_attention.clear()
         else:
             self._persistent_idle += self.sample_interval
 
         bucket = self._attention_bucket(p.get("cat_key", ""), audio_playing)
         self._last_attention_state = bucket
         p[f"{bucket}_during_grace"] += self.sample_interval
+        if not active and bucket == "engaged":
+            self._record_provisional_attention(
+                p,
+                p.get("cat_key", ""),
+                audio_playing,
+            )
 
         if p.get("cat_key") == "video" and not active and not audio_playing:
             p["video_silent_idle"] = (
@@ -843,29 +952,16 @@ class SessionTracker:
         else:
             p["video_silent_idle"] = 0
 
+        correction_attempted = False
         if (
             self._persistent_idle > self.idle_threshold
             and not p.get("idle_corrected", False)
         ):
-            remaining_correction = self.idle_threshold
-            pending_correction = min(
-                remaining_correction,
-                p["engaged_during_grace"],
-            )
-            p["engaged_during_grace"] -= pending_correction
-            p[f"{bucket}_during_grace"] += pending_correction
-            remaining_correction -= pending_correction
-
-            if remaining_correction and self._current is not None:
-                current_correction = min(
-                    remaining_correction,
-                    self._current.engaged_seconds,
-                )
-                self._current.engaged_seconds -= current_correction
-                self._current.idle_seconds += current_correction
-                self._sync_effective(self._current)
             p["idle_corrected"] = True
-            self._idle_corrected = True
+            correction_attempted = True
+            self._correct_provisional_attention()
+        if not correction_attempted:
+            self._retry_attention_rewrites()
 
     # ── Internals ──────────────────────────────────────────────────
 
@@ -904,6 +1000,7 @@ class SessionTracker:
             self._persistent_idle = 0.0
             self._idle_corrected = False
             self._activity_from_hook = False
+            self._provisional_attention.clear()
         else:
             self._persistent_idle += self.sample_interval
 
@@ -924,18 +1021,17 @@ class SessionTracker:
             self._current.passive_seconds += self.sample_interval
         else:
             self._current.idle_seconds += self.sample_interval
-
-        if self._persistent_idle > self.idle_threshold and not self._idle_corrected:
-            correction = min(
-                self.idle_threshold,
-                self._current.engaged_seconds,
+        if not active and bucket == "engaged":
+            self._record_provisional_attention(
+                self._current,
+                self._current.category_key,
+                audio_playing,
             )
-            self._current.engaged_seconds -= correction
-            if bucket == "passive":
-                self._current.passive_seconds += correction
-            else:
-                self._current.idle_seconds += correction
-            self._idle_corrected = True
+
+        correction_attempted = False
+        if self._persistent_idle > self.idle_threshold and not self._idle_corrected:
+            correction_attempted = True
+            self._correct_provisional_attention()
 
         self._sync_effective(self._current)
 
@@ -1004,14 +1100,19 @@ class SessionTracker:
             self._awaiting_activity = True
             self._last_attention_state = "idle"
             self._video_silent_idle = 0.0
+            self._provisional_attention.clear()
+        if not correction_attempted:
+            self._retry_attention_rewrites()
 
     def _emit_session(self):
         if self._current is None:
             return True
+        session = self._current
         if self._on_session_end:
-            persisted = self._on_session_end(self._current)
+            persisted = self._on_session_end(session)
             if persisted is False:
                 return False
+            self._mark_provisional_persisted(session)
         self._current = None
         return True
 
