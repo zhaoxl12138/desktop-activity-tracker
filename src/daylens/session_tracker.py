@@ -247,6 +247,62 @@ class SessionTracker:
         self._current.switch_reason = reason
         return self._emit_session()
 
+    def replace_classifier(self, replacement_classifier) -> bool:
+        """Atomically replace rules, splitting sessions when their version changes."""
+        replacement_version = getattr(
+            replacement_classifier,
+            "classification_version",
+            "legacy",
+        )
+        if replacement_version == self.classification_version:
+            self.classifier = replacement_classifier
+            return True
+
+        session = self._current
+        if session is not None:
+            original_state = (
+                session.end_time,
+                session.switch_reason,
+                session.duration_seconds,
+                session.effective_seconds,
+                session.idle_seconds,
+            )
+            pending_effective = 0
+            pending_idle = 0
+            if self._pending_switch is not None:
+                pending_effective = self._pending_switch["effective_during_grace"]
+                pending_idle = self._pending_switch["idle_during_grace"]
+            session.end_time = datetime.now()
+            session.switch_reason = "classification_change"
+            session.duration_seconds += pending_effective + pending_idle
+            session.effective_seconds += pending_effective
+            session.idle_seconds += pending_idle
+            try:
+                persisted = self._emit_session()
+            except Exception:
+                (
+                    session.end_time,
+                    session.switch_reason,
+                    session.duration_seconds,
+                    session.effective_seconds,
+                    session.idle_seconds,
+                ) = original_state
+                raise
+            if not persisted:
+                (
+                    session.end_time,
+                    session.switch_reason,
+                    session.duration_seconds,
+                    session.effective_seconds,
+                    session.idle_seconds,
+                ) = original_state
+                return False
+
+        self._pending_switch = None
+        self.classifier = replacement_classifier
+        self.classification_version = replacement_version
+        return True
+
     def mark_user_active(self):
         """Called from pynput keyboard listener (any thread) on keypress.
 

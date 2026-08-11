@@ -628,7 +628,13 @@ class RecordingWorker(QThread):
                         replacement_classifier = classifier.Classifier(
                             self.config_path, self.db_path
                         )
-                        self._tracker.classifier = replacement_classifier
+                        if not self._tracker.replace_classifier(
+                            replacement_classifier
+                        ):
+                            raise RuntimeError(
+                                "classifier replacement could not finish "
+                                "current session"
+                            )
             except Exception as error:
                 self._report_error(error, "degraded")
 
@@ -659,6 +665,11 @@ class RecordingWorker(QThread):
             "cross_group_grace_seconds", 30
         )
 
+        if not self._tracker.replace_classifier(replacement_classifier):
+            raise RuntimeError(
+                "classifier replacement could not finish current session"
+            )
+
         # All fallible work above has completed. Publish the new settings as
         # one worker-thread transaction so readers never see a partial update.
         self.config = replacement_config
@@ -672,7 +683,6 @@ class RecordingWorker(QThread):
         self._tracker.cross_group_grace = cross_group_grace
         self._tracker.sample_interval = self.sample_interval
         self._tracker.flush_interval = self.flush_interval
-        self._tracker.classifier = replacement_classifier
         self._sampling_cadence.reset()
 
     def _sleep_check(self, ms):

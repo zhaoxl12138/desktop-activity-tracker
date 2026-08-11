@@ -143,6 +143,26 @@ def _fingerprint_config() -> dict:
     }
 
 
+def _write_classifier_config(path: Path, categories: dict) -> Classifier:
+    path.write_text(
+        yaml.safe_dump(
+            {"categories": categories},
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    return Classifier(str(path))
+
+
+def _category(active_rule="interactive_required", **match) -> dict:
+    return {
+        "display_name": "Category",
+        "active_rule": active_rule,
+        "match": match,
+    }
+
+
 def test_rule_fingerprint_is_stable_for_equivalent_rule_mappings():
     config_a = _fingerprint_config()
     config_b = {
@@ -224,3 +244,124 @@ def test_classifier_versions_final_rules_after_custom_merge(tmp_path: Path, monk
 
     assert classifier.classification_version == Classifier.rule_fingerprint(classifier.config)
     assert classifier.classification_version != Classifier.rule_fingerprint(config_before_merge)
+
+
+def test_equivalent_rule_order_and_duplicates_classify_with_stable_priority(tmp_path: Path):
+    categories_a = {
+        "coding": _category(title_keywords=["shared"]),
+        "social": _category(title_keywords=["shared"]),
+        "browser_general": _category(process_names=["chrome.exe"]),
+        "other": _category(),
+    }
+    categories_b = {
+        "social": _category(title_keywords=[" SHARED ", "shared"]),
+        "coding": _category(title_keywords=["shared"]),
+        "other": _category(),
+        "browser_general": _category(process_names=["CHROME.EXE"]),
+    }
+    classifier_a = _write_classifier_config(tmp_path / "a.yaml", categories_a)
+    classifier_b = _write_classifier_config(tmp_path / "b.yaml", categories_b)
+
+    result_a = classifier_a.classify("chrome.exe", "Shared")
+    result_b = classifier_b.classify("chrome.exe", "Shared")
+
+    assert classifier_a.classification_version == classifier_b.classification_version
+    assert result_a["category_key"] == "coding"
+    assert result_b["category_key"] == "coding"
+
+
+def test_equivalent_process_names_use_trimmed_casefold_matching(tmp_path: Path):
+    categories_a = {
+        "coding": _category(process_names=[" Straße.exe ", "straße.exe"]),
+        "other": _category(),
+    }
+    categories_b = {
+        "coding": _category(process_names=["STRASSE.EXE"]),
+        "other": _category(),
+    }
+    classifier_a = _write_classifier_config(tmp_path / "a.yaml", categories_a)
+    classifier_b = _write_classifier_config(tmp_path / "b.yaml", categories_b)
+
+    result_a = classifier_a.classify("STRASSE.EXE", "Project")
+    result_b = classifier_b.classify("STRASSE.EXE", "Project")
+
+    assert classifier_a.classification_version == classifier_b.classification_version
+    assert result_a["category_key"] == "coding"
+    assert result_b["category_key"] == "coding"
+
+
+def test_equivalent_title_keywords_use_trimmed_casefold_matching(tmp_path: Path):
+    categories_a = {
+        "coding": _category(title_keywords=[" Straße ", "straße"]),
+        "browser_general": _category(process_names=["chrome.exe"]),
+        "other": _category(),
+    }
+    categories_b = {
+        "coding": _category(title_keywords=["STRASSE"]),
+        "browser_general": _category(process_names=["CHROME.EXE"]),
+        "other": _category(),
+    }
+    classifier_a = _write_classifier_config(tmp_path / "a.yaml", categories_a)
+    classifier_b = _write_classifier_config(tmp_path / "b.yaml", categories_b)
+
+    result_a = classifier_a.classify("chrome.exe", "STRASSE")
+    result_b = classifier_b.classify("chrome.exe", "STRASSE")
+
+    assert classifier_a.classification_version == classifier_b.classification_version
+    assert result_a["category_key"] == "coding"
+    assert result_b["category_key"] == "coding"
+
+
+def test_equivalent_title_patterns_use_trimmed_unique_matching(tmp_path: Path):
+    categories_a = {
+        "coding": _category(title_patterns=[" shared "]),
+        "browser_general": _category(process_names=["chrome.exe"]),
+        "other": _category(),
+    }
+    categories_b = {
+        "coding": _category(title_patterns=["shared"]),
+        "browser_general": _category(process_names=["CHROME.EXE"]),
+        "other": _category(),
+    }
+    classifier_a = _write_classifier_config(tmp_path / "a.yaml", categories_a)
+    classifier_b = _write_classifier_config(tmp_path / "b.yaml", categories_b)
+
+    result_a = classifier_a.classify("chrome.exe", "shared")
+    result_b = classifier_b.classify("chrome.exe", "shared")
+
+    assert classifier_a.classification_version == classifier_b.classification_version
+    assert result_a["category_key"] == "coding"
+    assert result_b["category_key"] == "coding"
+
+
+def test_learning_content_keeps_priority_over_video(tmp_path: Path):
+    categories = {
+        "video": _category(
+            active_rule="passive_allowed",
+            title_keywords=["tutorial", "python"],
+        ),
+        "coding": _category(title_keywords=["python"]),
+        "browser_general": _category(process_names=["chrome.exe"]),
+        "other": _category(),
+    }
+    classifier = _write_classifier_config(tmp_path / "rules.yaml", categories)
+
+    result = classifier.classify("chrome.exe", "Python tutorial")
+
+    assert result["category_key"] == "coding"
+
+
+def test_desktop_video_process_keeps_priority_over_creative_overlap(tmp_path: Path):
+    categories = {
+        "creative": _category(process_names=["player.exe"]),
+        "video": _category(
+            active_rule="passive_allowed",
+            process_names=["player.exe"],
+        ),
+        "other": _category(),
+    }
+    classifier = _write_classifier_config(tmp_path / "rules.yaml", categories)
+
+    result = classifier.classify("player.exe", "Episode")
+
+    assert result["category_key"] == "video"

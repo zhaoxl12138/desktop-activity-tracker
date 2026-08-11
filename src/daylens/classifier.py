@@ -12,6 +12,26 @@ from . import get_app_root
 # video/entertainment, they win (content-is-king principle).
 _LEARNING_CATEGORIES = {"reading", "coding", "ai_tools", "office", "creative"}
 
+# Stable tie-breaking for categories with equally specific matches. This is
+# the built-in rule order; title matches apply content-is-king separately.
+_CATEGORY_PRIORITY = (
+    "ai_tools",
+    "coding",
+    "office",
+    "reading",
+    "video",
+    "creative",
+    "gaming",
+    "social",
+    "tools",
+    "browser_general",
+    "other",
+    "idle_leave",
+)
+_CATEGORY_PRIORITY_RANK = {
+    key: index for index, key in enumerate(_CATEGORY_PRIORITY)
+}
+
 _DEFAULT_BROWSER_PROCESSES = {
     "chrome.exe",
     "msedge.exe",
@@ -29,12 +49,47 @@ _DEFAULT_BROWSER_PROCESSES = {
 }
 
 
-def _match_title(title_lower, match_rules, compiled_patterns=None):
+def _normalize_rule_values(values, *, case_insensitive):
+    normalized = {str(value).strip() for value in (values or [])}
+    if case_insensitive:
+        normalized = {value.casefold() for value in normalized}
+    return sorted(normalized)
+
+
+def _canonical_rules(config):
+    categories = config.get("categories", {}) or {}
+    canonical = {}
+    for key in sorted(categories):
+        category = categories[key] or {}
+        match = category.get("match", {}) or {}
+        canonical[key] = {
+            "active_rule": str(category.get("active_rule", "")),
+            "process_names": _normalize_rule_values(
+                match.get("process_names", []),
+                case_insensitive=True,
+            ),
+            "title_keywords": _normalize_rule_values(
+                match.get("title_keywords", []),
+                case_insensitive=True,
+            ),
+            "title_patterns": _normalize_rule_values(
+                match.get("title_patterns", []),
+                case_insensitive=False,
+            ),
+        }
+    return canonical
+
+
+def _category_priority_key(key):
+    return (_CATEGORY_PRIORITY_RANK.get(key, len(_CATEGORY_PRIORITY)), key)
+
+
+def _match_title(title_folded, match_rules, compiled_patterns=None):
     """Return (matched_keywords, matched_patterns) for title against rules."""
-    kws = [k.lower() for k in match_rules.get("title_keywords", [])]
-    matched_kws = [kw for kw in kws if kw in title_lower]
+    kws = match_rules.get("title_keywords", [])
+    matched_kws = [kw for kw in kws if kw in title_folded]
     patterns = compiled_patterns or []
-    matched_pats = [p.pattern for p in patterns if p.search(title_lower)]
+    matched_pats = [p.pattern for p in patterns if p.search(title_folded)]
     return matched_kws, matched_pats
 
 
@@ -42,25 +97,7 @@ class Classifier:
     @staticmethod
     def rule_fingerprint(config: dict) -> str:
         """Return a deterministic version for the effective classifier rules."""
-        canonical = {}
-        for key in sorted((config.get("categories", {}) or {})):
-            category = config["categories"][key] or {}
-            match = category.get("match", {}) or {}
-            canonical[key] = {
-                "active_rule": str(category.get("active_rule", "")),
-                "process_names": sorted({
-                    str(value).strip().casefold()
-                    for value in (match.get("process_names", []) or [])
-                }),
-                "title_keywords": sorted({
-                    str(value).strip().casefold()
-                    for value in (match.get("title_keywords", []) or [])
-                }),
-                "title_patterns": sorted({
-                    str(value).strip()
-                    for value in (match.get("title_patterns", []) or [])
-                }),
-            }
+        canonical = _canonical_rules(config)
         payload = json.dumps(
             canonical,
             ensure_ascii=False,
@@ -84,10 +121,15 @@ class Classifier:
             self.categories = self.config.get("categories", {})
 
         self.classification_version = self.rule_fingerprint(self.config)
+        self._rules = _canonical_rules(self.config)
+        self._category_items = sorted(
+            self.categories.items(),
+            key=lambda item: _category_priority_key(item[0]),
+        )
 
-        browser_match = self.categories.get("browser_general", {}).get("match", {})
+        browser_match = self._rules.get("browser_general", {})
         self.browser_processes = _DEFAULT_BROWSER_PROCESSES | {
-            process.lower()
+            process
             for process in browser_match.get("process_names", [])
             if process
         }
@@ -95,8 +137,8 @@ class Classifier:
 
         # Precompile regex patterns once at startup (avoid re.compile per tick)
         self._compiled_patterns: dict[str, list[re.Pattern]] = {}
-        for key, cat in self.categories.items():
-            patterns = cat.get("match", {}).get("title_patterns", []) or []
+        for key, _cat in self._category_items:
+            patterns = self._rules[key]["title_patterns"]
             if patterns:
                 self._compiled_patterns[key] = [re.compile(p) for p in patterns]
 
@@ -105,27 +147,32 @@ class Classifier:
         if not process_name and not window_title:
             return self._fallback()
 
-        process_name = (process_name or "").lower()
-        window_title = (window_title or "").lower()
-        title_lower = window_title
+        process_name = (process_name or "").casefold()
+        title_folded = (window_title or "").casefold()
 
         # First pass: match both process_names + title_keywords (highest specificity)
         title_matches = []
-        for key, cat in self.categories.items():
+        for key, cat in self._category_items:
             if key in ("other", "browser_general"):
                 continue
-            match_rules = cat.get("match", {})
-            proc_list = [p.lower() for p in match_rules.get("process_names", [])]
+            match_rules = self._rules[key]
+            proc_list = match_rules["process_names"]
 
             if proc_list and process_name in proc_list:
                 compiled = self._compiled_patterns.get(key, [])
-                matched_kws, matched_pats = _match_title(title_lower, match_rules, compiled)
+                matched_kws, matched_pats = _match_title(
+                    title_folded,
+                    match_rules,
+                    compiled,
+                )
                 if matched_kws or matched_pats:
                     score = len(matched_kws) + len(matched_pats) * 2  # patterns weigh more
                     title_matches.append((key, cat, matched_kws, matched_pats, score))
 
         if title_matches:
-            title_matches.sort(key=lambda x: x[4], reverse=True)
+            title_matches.sort(
+                key=lambda match: (-match[4], _category_priority_key(match[0]))
+            )
             best = self._apply_learning_priority(title_matches[0], title_matches)
             return {
                 "category_key": best[0],
@@ -139,16 +186,25 @@ class Classifier:
         # browser so title-based classification works.
         if process_name in self.browser_processes:
             title_only_matches = []
-            for key, cat in self.categories.items():
+            for key, cat in self._category_items:
                 if key in ("other", "browser_general"):
                     continue
                 compiled = self._compiled_patterns.get(key, [])
-                matched_kws, matched_pats = _match_title(title_lower, cat.get("match", {}), compiled)
+                matched_kws, matched_pats = _match_title(
+                    title_folded,
+                    self._rules[key],
+                    compiled,
+                )
                 if matched_kws or matched_pats:
                     score = len(matched_kws) + len(matched_pats) * 2
                     title_only_matches.append((key, cat, matched_kws, matched_pats, score))
             if title_only_matches:
-                title_only_matches.sort(key=lambda x: x[4], reverse=True)
+                title_only_matches.sort(
+                    key=lambda match: (
+                        -match[4],
+                        _category_priority_key(match[0]),
+                    )
+                )
                 best = self._apply_learning_priority(title_only_matches[0], title_only_matches)
                 return {
                     "category_key": best[0],
@@ -158,10 +214,10 @@ class Classifier:
 
         # Third pass: match by process_names only
         proc_only_matches = []
-        for key, cat in self.categories.items():
+        for key, cat in self._category_items:
             if key in ("other", "browser_general"):
                 continue
-            proc_list = [p.lower() for p in cat.get("match", {}).get("process_names", [])]
+            proc_list = self._rules[key]["process_names"]
             if proc_list and process_name in proc_list:
                 proc_only_matches.append((key, cat))
 
@@ -172,11 +228,15 @@ class Classifier:
             # title — their episode titles (第\d+集) collide with
             # learning patterns.
             if best[0] == "video" and process_name in self.browser_processes:
-                for key, cat in self.categories.items():
+                for key, cat in self._category_items:
                     if key not in _LEARNING_CATEGORIES:
                         continue
                     compiled = self._compiled_patterns.get(key, [])
-                    matched_kws, matched_pats = _match_title(title_lower, cat.get("match", {}), compiled)
+                    matched_kws, matched_pats = _match_title(
+                        title_folded,
+                        self._rules[key],
+                        compiled,
+                    )
                     if matched_kws or matched_pats:
                         best = (key, cat)
                         break

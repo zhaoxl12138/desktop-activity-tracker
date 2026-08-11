@@ -18,10 +18,19 @@ class TrackerStub:
         self.flush_interval = 5
         self.cross_group_grace = 30
         self.classifier = object()
+        self.replacement_calls = []
+        self.replace_result = True
         self.active_marks = 0
 
     def mark_user_active(self):
         self.active_marks += 1
+
+    def replace_classifier(self, replacement_classifier):
+        self.replacement_calls.append(replacement_classifier)
+        if not self.replace_result:
+            return False
+        self.classifier = replacement_classifier
+        return True
 
 
 class StaticClassifier:
@@ -30,6 +39,23 @@ class StaticClassifier:
             "category_key": "coding",
             "category_name": "Coding",
             "active_rule": "interactive_required",
+        }
+
+
+class VersionedStaticClassifier:
+    def __init__(self, classification_version):
+        self.classification_version = classification_version
+
+    def classify(self, process_name, _window_title):
+        mapping = {
+            "Code.exe": ("coding", "Coding", "interactive_required"),
+            "Chat.exe": ("social", "Social", "passive_allowed"),
+        }
+        category_key, category_name, active_rule = mapping[process_name]
+        return {
+            "category_key": category_key,
+            "category_name": category_name,
+            "active_rule": active_rule,
         }
 
 
@@ -337,6 +363,7 @@ def test_settings_update_is_applied_only_when_worker_consumes_command(monkeypatc
     assert tracker.min_session == 4
     assert tracker.cross_group_grace == 45
     assert tracker.classifier is replacement_classifier
+    assert tracker.replacement_calls == [replacement_classifier]
     assert worker.sample_interval == 3
     assert cadence.reset_calls == 1
 
@@ -361,7 +388,167 @@ def test_classifier_reload_is_applied_only_at_worker_boundary(monkeypatch):
     worker._consume_commands()
 
     assert tracker.classifier is replacement_classifier
+    assert tracker.replacement_calls == [replacement_classifier]
     assert construction_threads == [threading.get_ident()]
+
+
+def test_classifier_reload_failure_keeps_old_classifier_and_reports_error(monkeypatch):
+    worker = worker_module.RecordingWorker("config.yaml", "usage.db", {})
+    tracker = TrackerStub()
+    tracker.replace_result = False
+    original_classifier = tracker.classifier
+    replacement_classifier = object()
+    errors = []
+    worker._tracker = tracker
+    worker.error_occurred.connect(errors.append)
+    monkeypatch.setattr(
+        worker_module.classifier,
+        "Classifier",
+        lambda *_args: replacement_classifier,
+    )
+
+    worker.reload_classifier()
+    worker._consume_commands()
+
+    assert tracker.replacement_calls == [replacement_classifier]
+    assert tracker.classifier is original_classifier
+    assert worker.health.status == "degraded"
+    assert errors == ["classifier replacement could not finish current session"]
+
+
+def test_settings_reload_failure_keeps_previous_settings_and_classifier(monkeypatch):
+    worker = worker_module.RecordingWorker("config.yaml", "usage.db", {})
+    tracker = TrackerStub()
+    tracker.replace_result = False
+    cadence = CadenceSpy()
+    old_config = dict(worker.config)
+    original_classifier = tracker.classifier
+    replacement_classifier = object()
+    errors = []
+    worker._tracker = tracker
+    worker._sampling_cadence = cadence
+    worker.error_occurred.connect(errors.append)
+    monkeypatch.setattr(
+        worker_module.classifier,
+        "Classifier",
+        lambda *_args: replacement_classifier,
+    )
+
+    worker.update_settings({"tracker": {"sample_interval_seconds": 9}})
+    worker._consume_commands()
+
+    assert tracker.replacement_calls == [replacement_classifier]
+    assert tracker.classifier is original_classifier
+    assert worker.config == old_config
+    assert worker.sample_interval == 1
+    assert tracker.sample_interval == 1
+    assert cadence.reset_calls == 0
+    assert worker.health.status == "degraded"
+    assert errors == ["classifier replacement could not finish current session"]
+
+
+def test_classifier_reload_splits_active_session_at_rule_version_boundary(
+    monkeypatch,
+):
+    monkeypatch.setattr("daylens.session_tracker._get_cursor_pos", lambda: (0, 0))
+    monkeypatch.setattr(
+        "daylens.session_tracker._get_keyboard_snapshot",
+        lambda: bytes(256),
+    )
+    ended = []
+    original_classifier = VersionedStaticClassifier("rules-old")
+    replacement_classifier = VersionedStaticClassifier("rules-new")
+    tracker = SessionTracker(
+        config={"tracker": {"min_session_seconds": 1}},
+        classifier=original_classifier,
+        on_session_end=lambda session: ended.append(session) or True,
+    )
+    window = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 200,
+    }
+    tracker.tick(0, window)
+    old_session = tracker.current_session
+    worker = worker_module.RecordingWorker("config.yaml", "usage.db", {})
+    worker._tracker = tracker
+    monkeypatch.setattr(
+        worker_module.classifier,
+        "Classifier",
+        lambda *_args: replacement_classifier,
+    )
+
+    worker.reload_classifier()
+    worker._consume_commands()
+
+    assert ended == [old_session]
+    assert old_session.classification_version == "rules-old"
+    assert tracker.current_session is None
+    assert tracker.classifier is replacement_classifier
+    assert tracker.classification_version == "rules-new"
+
+    tracker.tick(0, window)
+    assert tracker.current_session.classification_version == "rules-new"
+
+
+def test_settings_reload_clears_pending_state_at_rule_version_boundary(
+    monkeypatch,
+):
+    monkeypatch.setattr("daylens.session_tracker._get_cursor_pos", lambda: (0, 0))
+    monkeypatch.setattr(
+        "daylens.session_tracker._get_keyboard_snapshot",
+        lambda: bytes(256),
+    )
+    ended = []
+    tracker = SessionTracker(
+        config={"tracker": {"min_session_seconds": 1}},
+        classifier=VersionedStaticClassifier("rules-old"),
+        on_session_end=lambda session: ended.append(session) or True,
+    )
+    tracker.tick(
+        0,
+        {
+            "process_name": "Code.exe",
+            "window_title": "main.py",
+            "exe_path": "",
+            "pid": 201,
+        },
+    )
+    tracker.tick(
+        0,
+        {
+            "process_name": "Chat.exe",
+            "window_title": "Friends",
+            "exe_path": "",
+            "pid": 202,
+        },
+    )
+    pending_seconds = (
+        tracker._pending_switch["effective_during_grace"]
+        + tracker._pending_switch["idle_during_grace"]
+    )
+    old_duration = tracker.current_session.duration_seconds
+    replacement_classifier = VersionedStaticClassifier("rules-new")
+    worker = worker_module.RecordingWorker("config.yaml", "usage.db", {})
+    worker._tracker = tracker
+    monkeypatch.setattr(
+        worker_module.classifier,
+        "Classifier",
+        lambda *_args: replacement_classifier,
+    )
+
+    worker.update_settings({"tracker": {"sample_interval_seconds": 3}})
+    worker._consume_commands()
+
+    assert len(ended) == 1
+    assert ended[0].duration_seconds == old_duration + pending_seconds
+    assert ended[0].classification_version == "rules-old"
+    assert tracker.current_session is None
+    assert tracker._pending_switch is None
+    assert tracker.classifier is replacement_classifier
+    assert tracker.classification_version == "rules-new"
+    assert tracker.sample_interval == 3
 
 
 def test_keyboard_callback_only_sets_event_until_worker_boundary():

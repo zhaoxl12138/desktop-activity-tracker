@@ -28,6 +28,11 @@ class VersionedMappingClassifier(MappingClassifier):
     classification_version = "rules-0123456789ab"
 
 
+class ConfigurableVersionClassifier(MappingClassifier):
+    def __init__(self, classification_version):
+        self.classification_version = classification_version
+
+
 class ManualClock:
     def __init__(self):
         self.now = 0.0
@@ -346,6 +351,245 @@ def test_cross_domain_session_uses_classifier_version(target_process, target_tit
     assert tracker.current_session.process_name == target_process
     assert tracker.current_session.classification_version == "rules-0123456789ab"
     assert tracker.current_session.metric_version == "attention-v1"
+
+
+def test_classifier_version_change_closes_active_session_before_replacement():
+    ended = []
+    original_classifier = ConfigurableVersionClassifier("rules-old")
+    replacement_classifier = ConfigurableVersionClassifier("rules-new")
+    tracker = SessionTracker(
+        config={"tracker": {"min_session_seconds": 1}},
+        classifier=original_classifier,
+        on_session_end=lambda session: ended.append(session) or True,
+    )
+    window = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 28,
+    }
+    tracker.tick(0, window)
+    old_session = tracker.current_session
+
+    replaced = tracker.replace_classifier(replacement_classifier)
+
+    assert replaced is True
+    assert ended == [old_session]
+    assert old_session.switch_reason == "classification_change"
+    assert old_session.classification_version == "rules-old"
+    assert tracker.current_session is None
+    assert tracker.classifier is replacement_classifier
+    assert tracker.classification_version == "rules-new"
+
+    tracker.tick(0, window)
+
+    assert tracker.current_session.session_id != old_session.session_id
+    assert tracker.current_session.classification_version == "rules-new"
+
+
+def test_same_classifier_version_keeps_active_and_pending_session_state():
+    ended = []
+    original_classifier = ConfigurableVersionClassifier("rules-same")
+    replacement_classifier = ConfigurableVersionClassifier("rules-same")
+    tracker = SessionTracker(
+        config={"tracker": {"min_session_seconds": 1}},
+        classifier=original_classifier,
+        on_session_end=lambda session: ended.append(session) or True,
+    )
+    tracker.tick(
+        0,
+        {
+            "process_name": "Code.exe",
+            "window_title": "main.py",
+            "exe_path": "",
+            "pid": 29,
+        },
+    )
+    tracker.tick(
+        0,
+        {
+            "process_name": "Chat.exe",
+            "window_title": "Friends",
+            "exe_path": "",
+            "pid": 30,
+        },
+    )
+    old_session = tracker.current_session
+    pending = tracker._pending_switch
+
+    replaced = tracker.replace_classifier(replacement_classifier)
+
+    assert replaced is True
+    assert ended == []
+    assert tracker.current_session is old_session
+    assert tracker._pending_switch is pending
+    assert tracker.classifier is replacement_classifier
+    assert tracker.classification_version == "rules-same"
+
+
+def test_classifier_version_change_preserves_and_clears_pending_counters():
+    ended = []
+    tracker = SessionTracker(
+        config={"tracker": {"min_session_seconds": 1}},
+        classifier=ConfigurableVersionClassifier("rules-old"),
+        on_session_end=lambda session: ended.append(session) or True,
+    )
+    tracker.tick(
+        0,
+        {
+            "process_name": "Code.exe",
+            "window_title": "main.py",
+            "exe_path": "",
+            "pid": 31,
+        },
+    )
+    tracker.tick(
+        0,
+        {
+            "process_name": "Chat.exe",
+            "window_title": "Friends",
+            "exe_path": "",
+            "pid": 32,
+        },
+    )
+    expected_duration = tracker.current_session.duration_seconds + (
+        tracker._pending_switch["effective_during_grace"]
+        + tracker._pending_switch["idle_during_grace"]
+    )
+
+    replaced = tracker.replace_classifier(
+        ConfigurableVersionClassifier("rules-new")
+    )
+
+    assert replaced is True
+    assert len(ended) == 1
+    assert ended[0].duration_seconds == expected_duration
+    assert ended[0].duration_seconds == (
+        ended[0].effective_seconds + ended[0].idle_seconds
+    )
+    assert tracker.current_session is None
+    assert tracker._pending_switch is None
+    assert tracker.classification_version == "rules-new"
+
+
+def test_failed_classifier_boundary_keeps_old_version_and_pending_state():
+    persist_results = iter([False, True])
+    persist_attempts = []
+
+    def persist(session):
+        persist_attempts.append(session)
+        return next(persist_results)
+
+    original_classifier = ConfigurableVersionClassifier("rules-old")
+    replacement_classifier = ConfigurableVersionClassifier("rules-new")
+    tracker = SessionTracker(
+        config={"tracker": {"min_session_seconds": 1}},
+        classifier=original_classifier,
+        on_session_end=persist,
+    )
+    tracker.tick(
+        0,
+        {
+            "process_name": "Code.exe",
+            "window_title": "main.py",
+            "exe_path": "",
+            "pid": 33,
+        },
+    )
+    tracker.tick(
+        0,
+        {
+            "process_name": "Chat.exe",
+            "window_title": "Friends",
+            "exe_path": "",
+            "pid": 34,
+        },
+    )
+    old_session = tracker.current_session
+    old_end_time = old_session.end_time
+    old_reason = old_session.switch_reason
+    pending = tracker._pending_switch
+    old_counters = (
+        old_session.duration_seconds,
+        old_session.effective_seconds,
+        old_session.idle_seconds,
+    )
+
+    replaced = tracker.replace_classifier(replacement_classifier)
+
+    assert replaced is False
+    assert tracker.current_session is old_session
+    assert tracker._pending_switch is pending
+    assert tracker.classifier is original_classifier
+    assert tracker.classification_version == "rules-old"
+    assert old_session.end_time == old_end_time
+    assert old_session.switch_reason == old_reason
+    assert (
+        old_session.duration_seconds,
+        old_session.effective_seconds,
+        old_session.idle_seconds,
+    ) == old_counters
+
+    assert tracker.replace_classifier(replacement_classifier) is True
+    assert len(persist_attempts) == 2
+    assert tracker.current_session is None
+    assert tracker._pending_switch is None
+    assert tracker.classification_version == "rules-new"
+
+
+def test_classifier_boundary_exception_rolls_back_active_and_pending_state():
+    def persist(_session):
+        raise OSError("database busy")
+
+    original_classifier = ConfigurableVersionClassifier("rules-old")
+    replacement_classifier = ConfigurableVersionClassifier("rules-new")
+    tracker = SessionTracker(
+        config={"tracker": {"min_session_seconds": 1}},
+        classifier=original_classifier,
+        on_session_end=persist,
+    )
+    tracker.tick(
+        0,
+        {
+            "process_name": "Code.exe",
+            "window_title": "main.py",
+            "exe_path": "",
+            "pid": 35,
+        },
+    )
+    tracker.tick(
+        0,
+        {
+            "process_name": "Chat.exe",
+            "window_title": "Friends",
+            "exe_path": "",
+            "pid": 36,
+        },
+    )
+    old_session = tracker.current_session
+    pending = tracker._pending_switch
+    old_state = (
+        old_session.end_time,
+        old_session.switch_reason,
+        old_session.duration_seconds,
+        old_session.effective_seconds,
+        old_session.idle_seconds,
+    )
+
+    with pytest.raises(OSError, match="database busy"):
+        tracker.replace_classifier(replacement_classifier)
+
+    assert tracker.current_session is old_session
+    assert tracker._pending_switch is pending
+    assert tracker.classifier is original_classifier
+    assert tracker.classification_version == "rules-old"
+    assert (
+        old_session.end_time,
+        old_session.switch_reason,
+        old_session.duration_seconds,
+        old_session.effective_seconds,
+        old_session.idle_seconds,
+    ) == old_state
 
 
 def test_social_passive_grace_uses_pending_policy_at_threshold_boundary():
