@@ -36,7 +36,7 @@ _DATA_HEALTH_ACTIONS = {
     REASON_LEGACY_SHARE_ABOVE_20: _CONTINUE_WITHOUT_MIXING_ACTION,
     REASON_TIMING_ANOMALY_ABOVE_LIMIT: _CHECK_RECORDING_ACTION,
     REASON_MULTIPLE_METRIC_VERSIONS: _CONTINUE_WITHOUT_MIXING_ACTION,
-    REASON_MISSING_METRIC_VERSION: _CONTINUE_WITHOUT_MIXING_ACTION,
+    REASON_MISSING_METRIC_VERSION: _CHECK_RECORDING_ACTION,
 }
 _INSIGHT_FIELDS = frozenset(("kind", "title", "evidence", "action"))
 _MAX_TOOL_NAME_LENGTH = 64
@@ -112,6 +112,14 @@ def _format_duration(seconds: int) -> str:
     if hours:
         return f"{hours}小时"
     return f"{minutes}分钟"
+
+
+def _unsafe_tool_character(character: str) -> bool:
+    category = unicodedata.category(character)
+    return character in "<>&" or category.startswith("C") or category in {
+        "Zl",
+        "Zp",
+    }
 
 
 def build_best_window_candidate(payload: dict) -> dict | None:
@@ -191,7 +199,7 @@ def build_interruption_candidate(payload: dict) -> dict | None:
             "最近7天，社交或娱乐在工作前后"
             f"{window_minutes}分钟内出现了{count}次。"
         ),
-        "action": "在优势时段静音，并集中安排一次消息处理窗口。",
+        "action": "在需要连续工作的时段静音或集中处理社交与娱乐通知。",
     }
 
 
@@ -285,10 +293,7 @@ def build_workflow_candidate(payload: dict) -> dict | None:
             not display_name
             or display_name.strip() != display_name
             or len(display_name) > _MAX_TOOL_NAME_LENGTH
-            or any(
-                unicodedata.category(character).startswith("C")
-                for character in display_name
-            )
+            or any(_unsafe_tool_character(char) for char in display_name)
         ):
             return None
         uniqueness_key = display_name.casefold()
@@ -321,7 +326,10 @@ def _data_health_candidate(trust: dict) -> dict:
             and first_reason in DATA_HEALTH_REASONS
         ):
             reason = first_reason
-            action = _DATA_HEALTH_ACTIONS[first_reason]
+            action = _DATA_HEALTH_ACTIONS.get(
+                first_reason,
+                _CHECK_RECORDING_ACTION,
+            )
     return {
         "kind": "data_health",
         "title": "先让数据口径稳定",

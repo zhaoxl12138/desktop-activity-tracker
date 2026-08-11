@@ -4,8 +4,12 @@ from copy import deepcopy
 
 import pytest
 
-from daylens.services.insights_service import select_primary_insight
+from daylens.services.insights_service import (
+    _DATA_HEALTH_ACTIONS,
+    select_primary_insight,
+)
 from daylens.services.trusted_metrics_service import (
+    DATA_HEALTH_REASONS,
     REASON_COVERAGE_BELOW_80,
     REASON_FORMAT_INVALID,
     REASON_LEGACY_GRANULARITY,
@@ -225,7 +229,7 @@ def test_low_trust_never_echoes_unknown_or_behavioral_reasons(untrusted_reason):
         ),
         (
             REASON_MISSING_METRIC_VERSION,
-            "继续记录，并避免直接混合比较新旧或不同版本数据。",
+            "检查记录状态和数据文件，确认异常后再查看趋势。",
         ),
         (
             REASON_FORMAT_INVALID,
@@ -269,6 +273,29 @@ def test_data_health_action_matches_the_known_problem(reason, expected_action):
         REASON_LEGACY_LOG_ANOMALY,
     }:
         assert "继续记录" not in insight["action"]
+
+
+def test_every_trusted_data_health_reason_has_exactly_one_action_mapping():
+    assert frozenset(_DATA_HEALTH_ACTIONS) == DATA_HEALTH_REASONS
+
+
+def test_missing_action_mapping_fails_safe_at_runtime(monkeypatch):
+    monkeypatch.delitem(_DATA_HEALTH_ACTIONS, REASON_COVERAGE_BELOW_80)
+
+    insight = select_primary_insight(
+        _payload(
+            trust={
+                "level": "low",
+                "reasons": [REASON_COVERAGE_BELOW_80],
+                "category_comparable": False,
+            }
+        )
+    )
+
+    assert insight is not None
+    assert insight["action"] == (
+        "检查记录状态和数据文件，确认异常后再查看趋势。"
+    )
 
 
 def test_best_window_requires_a_matching_continuous_fourteen_day_period():
@@ -390,7 +417,7 @@ def test_selects_qualified_external_interruptions():
         "kind": "interruptions",
         "title": "工作前后频繁出现社交或娱乐",
         "evidence": "最近7天，社交或娱乐在工作前后15分钟内出现了8次。",
-        "action": "在优势时段静音，并集中安排一次消息处理窗口。",
+        "action": "在需要连续工作的时段静音或集中处理社交与娱乐通知。",
         "confidence": "high",
         "date_range": ["2026-07-28", "2026-08-10"],
     }
@@ -589,6 +616,22 @@ def test_workflow_normalizes_safe_display_names_with_nfkc():
     assert "Ｃｏｄｅｘ" not in insight["evidence"]
 
 
+def test_workflow_accepts_safe_chinese_and_english_tool_names():
+    insight = select_primary_insight(
+        _payload(
+            workflow={
+                "tool_count": 2,
+                "switch_count": 8,
+                "non_work_interruptions": 0,
+                "tools": ["源代码编辑器", "Visual Studio Code"],
+            }
+        )
+    )
+
+    assert insight is not None
+    assert insight["evidence"].startswith("源代码编辑器、Visual Studio Code ")
+
+
 @pytest.mark.parametrize(
     "tools",
     [
@@ -617,6 +660,10 @@ def test_workflow_counts_nfkc_casefold_duplicates_as_one_tool(tools):
         "Code\nX",
         "Code\tX",
         "Code\u200bX",
+        "Code\u2028X",
+        "Code\u2029X",
+        "<b>Codex</b>",
+        "AT&amp;T",
         "X" * 65,
     ],
 )
