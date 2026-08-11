@@ -14,6 +14,22 @@ WORK_CATEGORY_KEYS = frozenset(
 ATTENTION_V1_COMPOSITION_TOLERANCE_SECONDS = 0
 DEFAULT_WALL_CLOCK_TOLERANCE_SECONDS = 300
 
+# A legacy sample at either session boundary represents the same observed tick
+# and is excluded. Invalid session timestamps produce NULL from julianday(), so
+# they cannot accidentally hide otherwise usable legacy history.
+_UNCOVERED_LEGACY_LOG = """
+NOT EXISTS (
+    SELECT 1
+    FROM activity_sessions AS covering_session
+    WHERE covering_session.date = activity_logs.date
+      AND julianday(covering_session.start_time) IS NOT NULL
+      AND julianday(covering_session.end_time) IS NOT NULL
+      AND julianday(activity_logs.timestamp) BETWEEN
+          julianday(covering_session.start_time)
+          AND julianday(covering_session.end_time)
+)
+"""
+
 
 def _empty_trusted_summary() -> dict:
     return {
@@ -220,26 +236,28 @@ def summarize_daily_trusted_metrics(
 def query_date_stats_from_logs(read_conn, db_path: str, date_str: str) -> dict:
     with read_conn(db_path) as conn:
         totals = conn.execute(
-            """
+            f"""
             SELECT
                 COUNT(*) as total_samples,
                 SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds,
                 SUM(CASE WHEN is_effective = 0 THEN duration_seconds ELSE 0 END) as idle_seconds,
                 SUM(duration_seconds) as total_seconds
-            FROM activity_logs WHERE date = ?
+            FROM activity_logs
+            WHERE date = ? AND {_UNCOVERED_LEGACY_LOG}
             """,
             (date_str,),
         ).fetchone()
 
         by_category = conn.execute(
-            """
+            f"""
             SELECT
                 category_key,
                 category_name,
                 SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds,
                 SUM(CASE WHEN is_effective = 0 THEN duration_seconds ELSE 0 END) as idle_seconds,
                 SUM(duration_seconds) as total_seconds
-            FROM activity_logs WHERE date = ?
+            FROM activity_logs
+            WHERE date = ? AND {_UNCOVERED_LEGACY_LOG}
             GROUP BY category_key, category_name
             ORDER BY effective_seconds DESC
             """,
@@ -247,7 +265,7 @@ def query_date_stats_from_logs(read_conn, db_path: str, date_str: str) -> dict:
         ).fetchall()
 
         by_app = conn.execute(
-            """
+            f"""
             SELECT
                 process_name,
                 window_title,
@@ -255,7 +273,9 @@ def query_date_stats_from_logs(read_conn, db_path: str, date_str: str) -> dict:
                 category_name,
                 SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds,
                 COUNT(*) as samples
-            FROM activity_logs WHERE date = ? AND is_effective = 1
+            FROM activity_logs
+            WHERE date = ? AND is_effective = 1
+              AND {_UNCOVERED_LEGACY_LOG}
             GROUP BY process_name, category_key
             ORDER BY effective_seconds DESC
             """,
@@ -263,14 +283,16 @@ def query_date_stats_from_logs(read_conn, db_path: str, date_str: str) -> dict:
         ).fetchall()
 
         by_app_detail = conn.execute(
-            """
+            f"""
             SELECT
                 process_name,
                 window_title,
                 category_key,
                 category_name,
                 SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as effective_seconds
-            FROM activity_logs WHERE date = ? AND is_effective = 1
+            FROM activity_logs
+            WHERE date = ? AND is_effective = 1
+              AND {_UNCOVERED_LEGACY_LOG}
             GROUP BY process_name, window_title, category_key, category_name
             ORDER BY effective_seconds DESC
             LIMIT 50
@@ -279,10 +301,10 @@ def query_date_stats_from_logs(read_conn, db_path: str, date_str: str) -> dict:
         ).fetchall()
 
         trust_rows = conn.execute(
-            """
+            f"""
             SELECT date, duration_seconds
             FROM activity_logs
-            WHERE date = ?
+            WHERE date = ? AND {_UNCOVERED_LEGACY_LOG}
             ORDER BY id
             """,
             (date_str,),
@@ -393,15 +415,125 @@ def query_date_stats_from_sessions(read_conn, db_path: str, date_str: str) -> di
 
 
 def query_date_stats(read_conn, db_path: str, date_str: str) -> dict:
-    with read_conn(db_path) as conn:
-        row = conn.execute(
-            "SELECT COUNT(*) as cnt FROM activity_sessions WHERE date = ?",
-            (date_str,),
-        ).fetchone()
+    return _merge_daily_stats_payloads(
+        [
+            query_date_stats_from_sessions(read_conn, db_path, date_str),
+            query_date_stats_from_logs(read_conn, db_path, date_str),
+        ]
+    )
 
-    if row and row["cnt"] > 0:
-        return query_date_stats_from_sessions(read_conn, db_path, date_str)
-    return query_date_stats_from_logs(read_conn, db_path, date_str)
+
+def _merge_daily_stats_payloads(payloads: list[dict]) -> dict:
+    totals = {
+        "total_samples": 0,
+        "effective_seconds": 0,
+        "idle_seconds": 0,
+        "total_seconds": 0,
+    }
+    category_map: dict[tuple[str, str], dict] = {}
+    app_map: dict[tuple[str, str], dict] = {}
+    app_detail_map: dict[tuple[str, str, str, str], dict] = {}
+
+    for payload in payloads:
+        payload_totals = payload.get("totals", {})
+        for field in totals:
+            totals[field] += payload_totals.get(field, 0) or 0
+
+        for row in payload.get("by_category", []):
+            key = (row.get("category_key", ""), row.get("category_name", ""))
+            merged = category_map.setdefault(
+                key,
+                {
+                    "category_key": key[0],
+                    "category_name": key[1],
+                    "effective_seconds": 0,
+                    "engaged_seconds": 0,
+                    "passive_seconds": 0,
+                    "idle_seconds": 0,
+                    "total_seconds": 0,
+                },
+            )
+            for field in (
+                "effective_seconds",
+                "engaged_seconds",
+                "passive_seconds",
+                "idle_seconds",
+                "total_seconds",
+            ):
+                merged[field] += row.get(field, 0) or 0
+
+        for row in payload.get("by_app", []):
+            key = (row.get("process_name", ""), row.get("category_key", ""))
+            merged = app_map.setdefault(
+                key,
+                {
+                    "process_name": key[0],
+                    "window_title": row.get("window_title", ""),
+                    "category_key": key[1],
+                    "category_name": row.get("category_name", ""),
+                    "effective_seconds": 0,
+                    "engaged_seconds": 0,
+                    "passive_seconds": 0,
+                    "samples": 0,
+                },
+            )
+            for field in (
+                "effective_seconds",
+                "engaged_seconds",
+                "passive_seconds",
+                "samples",
+            ):
+                merged[field] += row.get(field, 0) or 0
+
+        for row in payload.get("by_app_detail", []):
+            key = (
+                row.get("process_name", ""),
+                row.get("window_title", ""),
+                row.get("category_key", ""),
+                row.get("category_name", ""),
+            )
+            merged = app_detail_map.setdefault(
+                key,
+                {
+                    "process_name": key[0],
+                    "window_title": key[1],
+                    "category_key": key[2],
+                    "category_name": key[3],
+                    "effective_seconds": 0,
+                    "engaged_seconds": 0,
+                    "passive_seconds": 0,
+                },
+            )
+            for field in (
+                "effective_seconds",
+                "engaged_seconds",
+                "passive_seconds",
+            ):
+                merged[field] += row.get(field, 0) or 0
+
+    totals.update(
+        _merge_trusted_summaries(
+            [payload.get("totals", {}) for payload in payloads]
+        )
+    )
+    return {
+        "totals": totals,
+        "by_category": sorted(
+            category_map.values(),
+            key=lambda row: row["effective_seconds"],
+            reverse=True,
+        ),
+        "by_app": sorted(
+            app_map.values(),
+            key=lambda row: row["effective_seconds"],
+            reverse=True,
+        ),
+        "by_app_detail": sorted(
+            app_detail_map.values(),
+            key=lambda row: row["effective_seconds"],
+            reverse=True,
+        )[:50],
+    }
 
 
 def query_date_range_from_sessions(read_conn, db_path: str, dates: list[str]) -> dict:
@@ -504,6 +636,7 @@ def query_date_range_from_logs(read_conn, db_path: str, dates: list[str]) -> dic
                    SUM(duration_seconds) as total_seconds
             FROM activity_logs
             WHERE date IN ({placeholders})
+              AND {_UNCOVERED_LEGACY_LOG}
             GROUP BY date
             ORDER BY date
             """,
@@ -519,6 +652,7 @@ def query_date_range_from_logs(read_conn, db_path: str, dates: list[str]) -> dic
                        THEN duration_seconds ELSE 0 END) as video_seconds
             FROM activity_logs
             WHERE date IN ({placeholders})
+              AND {_UNCOVERED_LEGACY_LOG}
             GROUP BY date
             ORDER BY date
             """,
@@ -533,6 +667,7 @@ def query_date_range_from_logs(read_conn, db_path: str, dates: list[str]) -> dic
                    SUM(duration_seconds) as total_seconds
             FROM activity_logs
             WHERE date IN ({placeholders})
+              AND {_UNCOVERED_LEGACY_LOG}
             GROUP BY category_key, category_name
             ORDER BY effective_seconds DESC
             """,
@@ -546,6 +681,7 @@ def query_date_range_from_logs(read_conn, db_path: str, dates: list[str]) -> dic
                    COUNT(*) as samples
             FROM activity_logs
             WHERE date IN ({placeholders}) AND is_effective = 1
+              AND {_UNCOVERED_LEGACY_LOG}
             GROUP BY process_name, category_key
             ORDER BY effective_seconds DESC
             LIMIT 20
@@ -558,6 +694,7 @@ def query_date_range_from_logs(read_conn, db_path: str, dates: list[str]) -> dic
             SELECT date, duration_seconds
             FROM activity_logs
             WHERE date IN ({placeholders})
+              AND {_UNCOVERED_LEGACY_LOG}
             ORDER BY id
             """,
             dates,
@@ -614,10 +751,6 @@ def query_entertainment_trend(read_conn, db_path: str, days: int = 3) -> list[di
 
     with read_conn(db_path) as conn:
         placeholders = ",".join("?" * len(dates))
-        session_date_rows = conn.execute(
-            f"SELECT DISTINCT date FROM activity_sessions WHERE date IN ({placeholders})",
-            dates,
-        ).fetchall()
         session_rows = conn.execute(
             f"""
             SELECT date, SUM(effective_seconds) as entertainment_seconds
@@ -627,28 +760,22 @@ def query_entertainment_trend(read_conn, db_path: str, days: int = 3) -> list[di
             """,
             dates,
         ).fetchall()
+        legacy_rows = conn.execute(
+            f"""
+            SELECT date,
+                   SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as entertainment_seconds
+            FROM activity_logs
+            WHERE date IN ({placeholders}) AND category_key = 'video'
+              AND {_UNCOVERED_LEGACY_LOG}
+            GROUP BY date
+            ORDER BY date
+            """,
+            dates,
+        ).fetchall()
 
-        session_dates = {row["date"] for row in session_date_rows}
-        legacy_dates = [date_str for date_str in dates if date_str not in session_dates]
-        legacy_rows = []
-        if legacy_dates:
-            legacy_placeholders = ",".join("?" * len(legacy_dates))
-            legacy_rows = conn.execute(
-                f"""
-                SELECT date,
-                       SUM(CASE WHEN is_effective THEN duration_seconds ELSE 0 END) as entertainment_seconds
-                FROM activity_logs
-                WHERE date IN ({legacy_placeholders}) AND category_key = 'video'
-                GROUP BY date
-                ORDER BY date
-                """,
-                legacy_dates,
-            ).fetchall()
-
-    result_map = {
-        row["date"]: row["entertainment_seconds"] or 0
-        for row in [*session_rows, *legacy_rows]
-    }
+    result_map = {date_str: 0 for date_str in dates}
+    for row in [*session_rows, *legacy_rows]:
+        result_map[row["date"]] += row["entertainment_seconds"] or 0
     return [{"date": date_str, "entertainment_seconds": result_map.get(date_str, 0)} for date_str in dates]
 
 
@@ -793,22 +920,13 @@ def query_date_range_stats(read_conn, db_path: str, dates: list[str]) -> dict:
     if not dates:
         return _merge_range_payloads([], [])
 
-    with read_conn(db_path) as conn:
-        placeholders = ",".join("?" * len(dates))
-        rows = conn.execute(
-            f"SELECT DISTINCT date FROM activity_sessions WHERE date IN ({placeholders})",
-            dates,
-        ).fetchall()
-
-    session_date_set = {row["date"] for row in rows}
-    session_dates = [date_str for date_str in dates if date_str in session_date_set]
-    legacy_dates = [date_str for date_str in dates if date_str not in session_date_set]
-    payloads = []
-    if session_dates:
-        payloads.append(query_date_range_from_sessions(read_conn, db_path, session_dates))
-    if legacy_dates:
-        payloads.append(query_date_range_from_logs(read_conn, db_path, legacy_dates))
-    return _merge_range_payloads(dates, payloads)
+    return _merge_range_payloads(
+        dates,
+        [
+            query_date_range_from_sessions(read_conn, db_path, dates),
+            query_date_range_from_logs(read_conn, db_path, dates),
+        ],
+    )
 
 
 def _merge_range_payloads(dates: list[str], payloads: list[dict]) -> dict:
@@ -818,7 +936,29 @@ def _merge_range_payloads(dates: list[str], payloads: list[dict]) -> dict:
 
     for payload in payloads:
         for row in payload.get("daily", []):
-            daily_map[row["date"]] = dict(row)
+            date_str = row["date"]
+            merged = daily_map.setdefault(
+                date_str,
+                {
+                    "date": date_str,
+                    "effective_seconds": 0,
+                    "idle_seconds": 0,
+                    "total_seconds": 0,
+                    "work_seconds": 0,
+                    "video_seconds": 0,
+                    **_empty_trusted_summary(),
+                },
+            )
+            for field in (
+                "effective_seconds",
+                "idle_seconds",
+                "total_seconds",
+                "work_seconds",
+                "video_seconds",
+            ):
+                merged[field] += row.get(field, 0) or 0
+            trusted = _merge_trusted_summaries([merged, row])
+            merged.update(trusted)
 
         for row in payload.get("by_category", []):
             key = (row.get("category_key", ""), row.get("category_name", ""))
@@ -892,6 +1032,7 @@ def _merge_range_payloads(dates: list[str], payloads: list[dict]) -> dict:
     totals_idle = sum(row.get("idle_seconds", 0) or 0 for row in daily)
     totals_work = sum(row.get("work_seconds", 0) or 0 for row in daily)
     totals_video = sum(row.get("video_seconds", 0) or 0 for row in daily)
+    totals_duration = sum(row.get("total_seconds", 0) or 0 for row in daily)
     trusted_totals = _merge_trusted_summaries(
         [payload.get("totals", {}) for payload in payloads]
     )
@@ -908,7 +1049,7 @@ def _merge_range_payloads(dates: list[str], payloads: list[dict]) -> dict:
         "totals": {
             "effective_seconds": totals_effective,
             "idle_seconds": totals_idle,
-            "total_seconds": totals_effective + totals_idle,
+            "total_seconds": totals_duration,
             "work_seconds": totals_work,
             "video_seconds": totals_video,
             **trusted_totals,

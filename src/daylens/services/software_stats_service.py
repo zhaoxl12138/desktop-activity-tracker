@@ -68,5 +68,25 @@ def _export_to_target(export_func, db_path: str, target_path: str) -> str:
     os.makedirs(os.path.dirname(target), exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="daylens-export-") as temp_dir:
         generated = export_func(db_path, today, temp_dir)
-        shutil.copy2(generated, target)
+        _atomic_copy_to_target(generated, target)
     return target
+
+
+def _atomic_copy_to_target(source_path: str, target_path: str) -> None:
+    """Copy into a unique sibling temp file before replacing the target."""
+    target_dir = os.path.dirname(os.path.abspath(target_path))
+    descriptor, temp_path = tempfile.mkstemp(
+        prefix=f".{os.path.basename(target_path)}.",
+        suffix=".tmp",
+        dir=target_dir,
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as destination:
+            with open(source_path, "rb") as source:
+                shutil.copyfileobj(source, destination)
+            destination.flush()
+            os.fsync(destination.fileno())
+        os.replace(temp_path, target_path)
+    finally:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import logging
 import sqlite3
 from pathlib import Path
 
@@ -31,6 +32,10 @@ def _insert_session(
     idle: int,
     metric_version: str = "attention-v1",
     classification_version: str = "rules-a",
+    process_name: str = "code.exe",
+    title: str = "main.py",
+    category_key: str = "coding",
+    category_name: str = "编程开发",
 ) -> None:
     with sqlite3.connect(db_path) as conn:
         conn.execute(
@@ -48,11 +53,11 @@ def _insert_session(
                 f"{REPORT_DATE} {start}",
                 f"{REPORT_DATE} {end}",
                 REPORT_DATE,
-                "code.exe",
-                "main.py",
-                "main.py",
-                "coding",
-                "编程开发",
+                process_name,
+                title,
+                title,
+                category_key,
+                category_name,
                 "interactive_required",
                 duration,
                 effective,
@@ -283,6 +288,87 @@ def test_daily_csv_preserves_utf8_bom_and_csv_newlines(tmp_path: Path):
     assert b"\r\n" in payload
 
 
+def test_daily_csv_sanitizes_external_text_and_formula_prefixes(tmp_path: Path):
+    db_path = _new_database(tmp_path)
+    _insert_session(
+        db_path,
+        session_id="unsafe-text",
+        start="10:00:00",
+        end="10:01:00",
+        duration=60,
+        effective=60,
+        engaged=60,
+        passive=0,
+        idle=0,
+        process_name="+cmd",
+        title="-1+2\nnext\tcell\u200b",
+        category_key="=1+1",
+        category_name=" =HYPERLINK(\"https://invalid\")",
+    )
+
+    rows = _export_csv_rows(db_path, tmp_path)
+    category_index = rows.index(["分类统计"])
+    software_index = rows.index(["软件详情"])
+    category_row = rows[category_index + 2]
+    software_row = rows[software_index + 2]
+
+    assert category_row[0] == "'=1+1"
+    assert category_row[1].startswith("' =HYPERLINK")
+    assert software_row[0] == "'+cmd"
+    assert software_row[1] == "'-1+2 next cell"
+    assert all(
+        control not in cell
+        for row in rows
+        for cell in row
+        for control in ("\r", "\n", "\t", "\u200b")
+    )
+
+
+def test_daily_csv_sanitizes_trust_reason_that_could_be_a_formula(
+    tmp_path: Path,
+    monkeypatch,
+):
+    db_path = _new_database(tmp_path)
+    monkeypatch.setattr(
+        exporter,
+        "assess_range",
+        lambda *_args: {
+            "level": "low",
+            "reasons": ["\u200b@SUM(1,2)\r\nnext\tcell"],
+        },
+    )
+
+    rows = _export_csv_rows(db_path, tmp_path)
+    reason = rows[1][7]
+
+    assert reason.startswith("'@SUM(1,2)")
+    assert all(control not in reason for control in ("\r", "\n", "\t", "\u200b"))
+
+
+def test_daily_csv_leaves_numeric_negative_values_as_numbers(
+    tmp_path: Path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        exporter.database,
+        "query_date_stats",
+        lambda *_args: {
+            "totals": {
+                "effective_seconds": -5,
+                "idle_seconds": 0,
+                "total_samples": 1,
+            },
+            "by_category": [],
+            "by_app": [],
+            "by_app_detail": [],
+        },
+    )
+
+    rows = _export_csv_rows(tmp_path / "unused.db", tmp_path)
+
+    assert rows[1][1] == "-5"
+
+
 def test_daily_csv_uses_first_real_reason_and_replaces_on_regeneration(tmp_path: Path):
     db_path = _new_database(tmp_path)
     _insert_legacy_log(db_path)
@@ -298,6 +384,7 @@ def test_daily_csv_uses_first_real_reason_and_replaces_on_regeneration(tmp_path:
 def test_trust_calculation_failure_is_sanitized_for_markdown_and_csv(
     tmp_path: Path,
     monkeypatch,
+    caplog,
 ):
     db_path = _new_database(tmp_path)
     monkeypatch.setattr(
@@ -308,10 +395,14 @@ def test_trust_calculation_failure_is_sanitized_for_markdown_and_csv(
         ),
     )
 
-    report = _export_markdown(db_path, tmp_path)
-    rows = _export_csv_rows(db_path, tmp_path)
+    with caplog.at_level(logging.ERROR, logger=exporter.__name__):
+        report = _export_markdown(db_path, tmp_path)
+        rows = _export_csv_rows(db_path, tmp_path)
 
     assert "- 数据可信度：低（可信度计算异常）" in report
     assert rows[1][6:] == ["低", "可信度计算异常"]
     assert "secret internal detail" not in report
     assert all("secret internal detail" not in cell for row in rows for cell in row)
+    assert [record.message for record in caplog.records].count(
+        "Failed to assess daily report trust"
+    ) == 2

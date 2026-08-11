@@ -3,8 +3,10 @@
 import os
 import csv
 import io
+import logging
 import shutil
 import tempfile
+import unicodedata
 from datetime import datetime, timedelta
 from . import database
 from . import timeline
@@ -12,6 +14,7 @@ from .services.trusted_metrics_service import assess_range
 from .utils import fmt_seconds, normalize_category_display_name
 
 
+LOGGER = logging.getLogger(__name__)
 _TRUST_LEVEL_LABELS = {
     "high": "高",
     "medium": "中",
@@ -81,6 +84,7 @@ def _daily_attention_fields(totals: dict, date_str: str) -> dict[str, object]:
             "",
         )
     except Exception:
+        LOGGER.exception("Failed to assess daily report trust")
         level = "low"
         reason = _TRUST_ASSESSMENT_ERROR
     return {
@@ -89,6 +93,27 @@ def _daily_attention_fields(totals: dict, date_str: str) -> dict[str, object]:
         "trust_level": _TRUST_LEVEL_LABELS[level],
         "trust_reason": reason,
     }
+
+
+def _sanitize_csv_cell(value):
+    """Neutralize formulas and record-breaking characters in text cells."""
+    if value is None or isinstance(value, (int, float)):
+        return value
+    sanitized: list[str] = []
+    for character in str(value):
+        category = unicodedata.category(character)
+        if character in "\r\n\t" or category in {"Zl", "Zp"}:
+            sanitized.append(" ")
+        elif category not in {"Cc", "Cf"}:
+            sanitized.append(character)
+    result = "".join(sanitized)
+    if result.lstrip().startswith(("=", "+", "-", "@")):
+        result = "'" + result
+    return result
+
+
+def _write_csv_row(writer, values) -> None:
+    writer.writerow([_sanitize_csv_cell(value) for value in values])
 
 
 def _calculate_efficiency_score(work_sec, video_sec, total_effective_sec):
@@ -157,7 +182,7 @@ def export_csv(db_path, date_str, output_dir):
     buffer = io.StringIO(newline="")
     writer = csv.writer(buffer)
 
-    writer.writerow([
+    _write_csv_row(writer, [
         "日期",
         "总有效时长(秒)",
         "总空闲时长(秒)",
@@ -167,7 +192,7 @@ def export_csv(db_path, date_str, output_dir):
         "数据可信度",
         "可信度原因",
     ])
-    writer.writerow([
+    _write_csv_row(writer, [
         date_str,
         totals.get("effective_seconds", 0),
         totals.get("idle_seconds", 0),
@@ -177,24 +202,24 @@ def export_csv(db_path, date_str, output_dir):
         attention["trust_level"],
         attention["trust_reason"],
     ])
-    writer.writerow([])
+    _write_csv_row(writer, [])
 
-    writer.writerow(["分类统计"])
-    writer.writerow(["分类Key", "分类名称", "有效时长(秒)", "空闲时长(秒)", "总时长(秒)"])
+    _write_csv_row(writer, ["分类统计"])
+    _write_csv_row(writer, ["分类Key", "分类名称", "有效时长(秒)", "空闲时长(秒)", "总时长(秒)"])
     for cat in stats["by_category"]:
-        writer.writerow([
+        _write_csv_row(writer, [
             cat["category_key"],
             cat["category_name"],
             cat["effective_seconds"],
             cat["idle_seconds"],
             cat["total_seconds"],
         ])
-    writer.writerow([])
+    _write_csv_row(writer, [])
 
-    writer.writerow(["软件详情"])
-    writer.writerow(["进程名", "窗口标题", "有效时长(秒)"])
+    _write_csv_row(writer, ["软件详情"])
+    _write_csv_row(writer, ["进程名", "窗口标题", "有效时长(秒)"])
     for app in stats["by_app_detail"]:
-        writer.writerow([
+        _write_csv_row(writer, [
             app["process_name"],
             app["window_title"],
             app["effective_seconds"],
