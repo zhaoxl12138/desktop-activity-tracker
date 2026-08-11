@@ -443,7 +443,11 @@ class SessionTracker:
                     self._pending_switch = None
                 self._current.end_time = now
                 self._current.switch_reason = "cross_day"
-                self._emit_session()
+                try:
+                    self._emit_session()
+                except Exception:
+                    self._tick_current(idle_seconds, now, hwnd)
+                    raise
                 self._pending_switch = None
 
             # ── Cross-domain ───────────────────────────────────────
@@ -477,7 +481,11 @@ class SessionTracker:
                 if app_changed:
                     self._current.end_time = now
                     self._current.switch_reason = "app_change"
-                    self._emit_session()
+                    try:
+                        self._emit_session()
+                    except Exception:
+                        self._tick_current(idle_seconds, now, hwnd)
+                        raise
                     self._pending_switch = None
 
                 if not app_changed:
@@ -491,7 +499,11 @@ class SessionTracker:
                     if title_changed and not _is_transient_title(norm_title):
                         self._current.end_time = now
                         self._current.switch_reason = "title_change"
-                        self._emit_session()
+                        try:
+                            self._emit_session()
+                        except Exception:
+                            self._tick_current(idle_seconds, now, hwnd)
+                            raise
                         self._pending_switch = None
                     else:
                         self._pending_switch = None
@@ -610,7 +622,12 @@ class SessionTracker:
 
             self._current.end_time = p["since"]
             self._current.switch_reason = "domain_change"
-            if not self._emit_session():
+            try:
+                persisted = self._emit_session()
+            except Exception:
+                self._tick_grace_current(now)
+                raise
+            if not persisted:
                 self._tick_grace_current(now)
                 return False
 
@@ -851,22 +868,59 @@ class SessionTracker:
             self._current.category_key == "video"
             and self._video_silent_idle > self.entertainment_idle_threshold
         ):
+            session = self._current
+            original_state = (
+                session.end_time,
+                session.duration_seconds,
+                session.engaged_seconds,
+                session.passive_seconds,
+                session.effective_seconds,
+                session.idle_seconds,
+                session.switch_reason,
+                self._video_silent_idle,
+            )
             trailing = min(
                 self._video_silent_idle,
-                self._current.duration_seconds,
+                session.duration_seconds,
             )
-            self._current.end_time = now - timedelta(seconds=trailing)
-            self._current.duration_seconds -= trailing
+            session.end_time = now - timedelta(seconds=trailing)
+            session.duration_seconds -= trailing
 
-            idle_trim = min(trailing, self._current.idle_seconds)
-            self._current.idle_seconds -= idle_trim
+            idle_trim = min(trailing, session.idle_seconds)
+            session.idle_seconds -= idle_trim
             remaining_trim = trailing - idle_trim
-            engaged_trim = min(remaining_trim, self._current.engaged_seconds)
-            self._current.engaged_seconds -= engaged_trim
-            self._sync_effective(self._current)
+            engaged_trim = min(remaining_trim, session.engaged_seconds)
+            session.engaged_seconds -= engaged_trim
+            self._sync_effective(session)
 
-            self._current.switch_reason = "entertainment_idle"
-            self._emit_session()
+            session.switch_reason = "entertainment_idle"
+            try:
+                persisted = self._emit_session()
+            except Exception:
+                (
+                    session.end_time,
+                    session.duration_seconds,
+                    session.engaged_seconds,
+                    session.passive_seconds,
+                    session.effective_seconds,
+                    session.idle_seconds,
+                    session.switch_reason,
+                    self._video_silent_idle,
+                ) = original_state
+                raise
+            if not persisted:
+                (
+                    session.end_time,
+                    session.duration_seconds,
+                    session.engaged_seconds,
+                    session.passive_seconds,
+                    session.effective_seconds,
+                    session.idle_seconds,
+                    session.switch_reason,
+                    self._video_silent_idle,
+                ) = original_state
+                return
+
             self._awaiting_activity = True
             self._last_attention_state = "idle"
             self._video_silent_idle = 0.0

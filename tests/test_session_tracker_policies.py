@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 
-from daylens.session_tracker import SessionTracker
+from daylens.session_tracker import ActivitySession, SessionTracker
 
 
 class MappingClassifier:
     _MAPPING = {
         "Code.exe": ("coding", "Coding", "interactive_required"),
+        "Notes.exe": ("reading", "Reading", "interactive_required"),
         "Chat.exe": ("social", "Social", "passive_allowed"),
         "Forum.exe": ("social", "Forum", "interactive_required"),
         "VLC.exe": ("video", "Video", "passive_allowed"),
@@ -832,6 +833,14 @@ def test_immediate_entertainment_switch_waits_when_end_callback_returns_false():
     assert tracker.current_session.process_name == "Code.exe"
     assert tracker._pending_switch["domain"] == "entertainment"
     assert tracker._pending_switch["process_name"] == "VLC.exe"
+    assert sum(
+        tracker._pending_switch[key]
+        for key in (
+            "engaged_during_grace",
+            "passive_during_grace",
+            "idle_during_grace",
+        )
+    ) == 1
     assert failed_snapshot["process_name"] == "VLC.exe"
     assert failed_snapshot["category_key"] == "video"
     assert len(callback_sessions) == 1
@@ -840,8 +849,137 @@ def test_immediate_entertainment_switch_waits_when_end_callback_returns_false():
 
     assert tracker.current_session is not original_session
     assert tracker.current_session.process_name == "VLC.exe"
+    assert tracker.current_session.duration_seconds == 2
+    _assert_attention_conserved(tracker.current_session)
     assert tracker._pending_switch is None
     assert len(callback_sessions) == 2
+
+
+def test_immediate_entertainment_switch_exception_accounts_failed_tick_once():
+    persist_attempts = 0
+
+    def persist(_session):
+        nonlocal persist_attempts
+        persist_attempts += 1
+        if persist_attempts == 1:
+            raise OSError("database busy")
+        return True
+
+    tracker = SessionTracker(
+        config={
+            "tracker": {
+                "sample_interval_seconds": 1,
+                "idle_threshold_seconds": 60,
+                "cross_group_grace_seconds": 30,
+            }
+        },
+        classifier=MappingClassifier(),
+        on_session_end=persist,
+    )
+    coding = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 48,
+    }
+    video = {
+        "process_name": "VLC.exe",
+        "window_title": "Movie",
+        "exe_path": "",
+        "pid": 49,
+    }
+    tracker.tick(0, coding)
+
+    with pytest.raises(OSError, match="database busy"):
+        tracker.tick(0, video)
+
+    assert tracker._pending_switch is not None
+    assert sum(
+        tracker._pending_switch[key]
+        for key in (
+            "engaged_during_grace",
+            "passive_during_grace",
+            "idle_during_grace",
+        )
+    ) == 1
+
+    tracker.tick(0, video)
+
+    assert persist_attempts == 2
+    assert tracker._pending_switch is None
+    assert tracker.current_session.process_name == "VLC.exe"
+    assert tracker.current_session.duration_seconds == 2
+    _assert_attention_conserved(tracker.current_session)
+
+
+@pytest.mark.parametrize("boundary", ["app_change", "title_change", "cross_day"])
+def test_session_boundary_exception_accounts_failed_tick_once(boundary):
+    attempts = 0
+
+    def persist(_session):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("database busy")
+        return True
+
+    tracker = SessionTracker(
+        config={
+            "tracker": {
+                "sample_interval_seconds": 1,
+                "idle_threshold_seconds": 60,
+                "entertainment_idle_threshold_seconds": 300,
+            }
+        },
+        classifier=MappingClassifier(),
+        on_session_end=persist,
+    )
+    coding = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 52,
+    }
+    if boundary == "title_change":
+        initial = {
+            "process_name": "VLC.exe",
+            "window_title": "Episode 1",
+            "exe_path": "",
+            "pid": 53,
+        }
+        target = {**initial, "window_title": "Episode 2"}
+    elif boundary == "app_change":
+        initial = coding
+        target = {
+            "process_name": "Notes.exe",
+            "window_title": "notes.md",
+            "exe_path": "",
+            "pid": 54,
+        }
+    else:
+        initial = coding
+        target = coding
+
+    tracker.tick(0, initial)
+    old_session = tracker.current_session
+    if boundary == "cross_day":
+        old_session.date = "1999-01-01"
+
+    with pytest.raises(OSError, match="database busy"):
+        tracker.tick(0, target)
+
+    assert tracker.current_session is old_session
+    assert old_session.duration_seconds == 2
+    _assert_attention_conserved(old_session)
+
+    tracker.tick(0, target)
+
+    assert attempts == 2
+    assert old_session.duration_seconds == 2
+    _assert_attention_conserved(old_session)
+    assert tracker.current_session is not old_session
+    assert tracker.current_session.duration_seconds == 1
+    _assert_attention_conserved(tracker.current_session)
 
 
 def test_pending_video_with_audio_stays_passive_past_auto_close_threshold():
@@ -1179,3 +1317,78 @@ def test_audible_video_is_not_auto_closed_and_silent_tail_does_not_erase_passive
     assert session.passive_seconds == 4
     assert session.idle_seconds == 0
     _assert_attention_conserved(session)
+
+
+@pytest.mark.parametrize("failure_mode", ["exception", "return_false"])
+def test_video_auto_close_failure_rolls_back_before_retry(failure_mode):
+    attempts = []
+
+    def persist(session):
+        attempts.append(
+            (
+                session.duration_seconds,
+                session.engaged_seconds,
+                session.passive_seconds,
+                session.idle_seconds,
+            )
+        )
+        if len(attempts) == 1:
+            if failure_mode == "exception":
+                raise OSError("database busy")
+            return False
+        return True
+
+    tracker = SessionTracker(
+        config={
+            "tracker": {
+                "sample_interval_seconds": 1,
+                "idle_threshold_seconds": 1,
+                "entertainment_idle_threshold_seconds": 3,
+                "min_session_seconds": 1,
+            }
+        },
+        classifier=MappingClassifier(),
+        on_session_end=persist,
+    )
+    session = tracker._current = ActivitySession(
+        session_id="video-retry",
+        start_time=datetime.now(),
+        end_time=datetime.now(),
+        date=datetime.now().strftime("%Y-%m-%d"),
+        process_name="VLC.exe",
+        exe_path="",
+        window_title="Movie",
+        normalized_title="Movie",
+        category_key="video",
+        category_name="Video",
+        active_rule="passive_allowed",
+        duration_seconds=10,
+        effective_seconds=10,
+        engaged_seconds=10,
+        initial_title="Movie",
+    )
+
+    for _ in range(3):
+        tracker._tick_current(10, datetime.now())
+
+    if failure_mode == "exception":
+        with pytest.raises(OSError, match="database busy"):
+            tracker._tick_current(10, datetime.now())
+    else:
+        tracker._tick_current(10, datetime.now())
+
+    assert tracker.current_session is session
+    assert session.switch_reason == ""
+    assert session.duration_seconds == 14
+    assert session.engaged_seconds == 10
+    assert session.passive_seconds == 0
+    assert session.idle_seconds == 4
+    assert tracker._video_silent_idle == 4
+    assert tracker._awaiting_activity is False
+    _assert_attention_conserved(session)
+
+    tracker._tick_current(10, datetime.now())
+
+    assert tracker.current_session is None
+    assert attempts[0] == attempts[1] == (10, 10, 0, 0)
+    assert tracker._awaiting_activity is True
