@@ -80,6 +80,8 @@ def test_date_and_range_summaries_include_trusted_attention_fields(tmp_path):
         "work_engaged_seconds": 90,
         "session_count": 2,
         "legacy_session_count": 0,
+        "session_anomaly_count": 0,
+        "legacy_log_anomaly_count": 0,
         "anomaly_count": 0,
         "dates_with_data": ["2026-07-20"],
         "metric_versions": ["attention-v1"],
@@ -222,6 +224,8 @@ def test_session_anomalies_use_strict_composition_and_wall_clock_tolerance(tmp_p
     result = database.query_date_range_stats(str(db_path), ["2026-07-20"])
 
     assert result["totals"]["session_count"] == 7
+    assert result["totals"]["session_anomaly_count"] == 5
+    assert result["totals"]["legacy_log_anomaly_count"] == 0
     assert result["totals"]["anomaly_count"] == 5
 
 
@@ -260,6 +264,7 @@ def test_malformed_session_values_are_anomalies_without_breaking_query(tmp_path)
     result = database.query_date_range_stats(str(db_path), ["2026-07-20"])
 
     assert result["totals"]["session_count"] == 6
+    assert result["totals"]["session_anomaly_count"] == 6
     assert result["totals"]["anomaly_count"] == 6
 
 
@@ -285,6 +290,7 @@ def test_legacy_session_still_checks_basic_wall_clock_damage(tmp_path):
 
     result = database.query_date_range_stats(str(db_path), ["2026-07-20"])
 
+    assert result["totals"]["session_anomaly_count"] == 1
     assert result["totals"]["anomaly_count"] == 1
 
 
@@ -368,6 +374,8 @@ def test_legacy_sessions_are_not_anomalous_only_for_missing_new_counters(
     assert result["totals"]["engaged_seconds"] == 0
     assert result["totals"]["passive_seconds"] == 0
     assert result["totals"]["legacy_session_count"] == 1
+    assert result["totals"]["session_anomaly_count"] == 0
+    assert result["totals"]["legacy_log_anomaly_count"] == 0
     assert result["totals"]["anomaly_count"] == 0
 
 

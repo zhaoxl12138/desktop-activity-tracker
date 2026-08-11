@@ -24,6 +24,9 @@ def _empty_trusted_summary() -> dict:
         "legacy_session_count": 0,
         "legacy_log_sample_count": 0,
         "legacy_granularity_unknown": False,
+        "session_anomaly_count": 0,
+        "legacy_log_anomaly_count": 0,
+        # Compatibility total: anomalous sessions plus anomalous legacy logs.
         "anomaly_count": 0,
         "dates_with_data": [],
         "metric_versions": [],
@@ -122,6 +125,7 @@ def _summarize_session_rows(rows) -> tuple[dict, dict[str, dict]]:
             summary["work_engaged_seconds"] += work_engaged
             summary["session_count"] += 1
             summary["legacy_session_count"] += int(metric_version == "legacy")
+            summary["session_anomaly_count"] += int(anomalous)
             summary["anomaly_count"] += int(anomalous)
             summary["dates_with_data"].append(date_str)
             summary["metric_versions"].append(metric_version)
@@ -149,6 +153,7 @@ def _summarize_legacy_log_rows(rows) -> tuple[dict, dict[str, dict]]:
         for summary in (totals, daily):
             summary["legacy_log_sample_count"] += 1
             summary["legacy_granularity_unknown"] = True
+            summary["legacy_log_anomaly_count"] += int(anomalous)
             summary["anomaly_count"] += int(anomalous)
             summary["dates_with_data"].append(date_str)
             summary["metric_versions"].append("legacy")
@@ -175,6 +180,8 @@ def _merge_trusted_summaries(summaries: list[dict]) -> dict:
             "session_count",
             "legacy_session_count",
             "legacy_log_sample_count",
+            "session_anomaly_count",
+            "legacy_log_anomaly_count",
             "anomaly_count",
         ):
             totals[field] += _integer(row.get(field, 0))
@@ -828,6 +835,8 @@ def _merge_range_payloads(dates: list[str], payloads: list[dict]) -> dict:
                 "legacy_session_count": 0,
                 "legacy_log_sample_count": 0,
                 "legacy_granularity_unknown": False,
+                "session_anomaly_count": 0,
+                "legacy_log_anomaly_count": 0,
                 "anomaly_count": 0,
                 "dates_with_data": [],
                 "metric_versions": [],

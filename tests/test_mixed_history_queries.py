@@ -72,6 +72,8 @@ def test_date_range_preserves_legacy_dates_when_sessions_exist(tmp_path):
     assert result["totals"]["session_count"] == 1
     assert result["totals"]["legacy_session_count"] == 0
     assert result["totals"]["legacy_log_sample_count"] == 1
+    assert result["totals"]["session_anomaly_count"] == 0
+    assert result["totals"]["legacy_log_anomaly_count"] == 0
     assert result["totals"]["legacy_granularity_unknown"] is True
     assert result["totals"]["anomaly_count"] == 0
     assert result["totals"]["dates_with_data"] == [yesterday, today]
@@ -103,7 +105,7 @@ def test_raw_log_samples_never_impersonate_legacy_sessions(tmp_path):
                 "is_user_active": True,
                 "is_effective": True,
                 "idle_seconds": 0,
-                "duration_seconds": 1,
+                "duration_seconds": "oops" if index == 0 else 1,
             },
         )
     database.close_db(conn)
@@ -114,9 +116,27 @@ def test_raw_log_samples_never_impersonate_legacy_sessions(tmp_path):
     assert result["totals"]["session_count"] == 1
     assert result["totals"]["legacy_session_count"] == 0
     assert result["totals"]["legacy_log_sample_count"] == 100
+    assert result["totals"]["session_anomaly_count"] == 0
+    assert result["totals"]["legacy_log_anomaly_count"] == 1
+    assert result["totals"]["anomaly_count"] == 1
     assert result["totals"]["legacy_granularity_unknown"] is True
     assert trust["level"] == "low"
-    assert trust["reasons"] == ["旧日志缺少会话粒度"]
+    assert trust["anomaly_ratio"] == 0.0
+    assert trust["reasons"] == [
+        "旧日志缺少会话粒度",
+        "旧日志存在异常记录",
+    ]
+
+    legacy_day = database.query_date_stats(str(db_path), yesterday)
+    raw_only_trust = assess_range(legacy_day["totals"], [yesterday])
+    assert legacy_day["totals"]["session_count"] == 0
+    assert legacy_day["totals"]["session_anomaly_count"] == 0
+    assert legacy_day["totals"]["legacy_log_anomaly_count"] == 1
+    assert raw_only_trust["anomaly_ratio"] == 0.0
+    assert raw_only_trust["reasons"] == [
+        "旧日志缺少会话粒度",
+        "旧日志存在异常记录",
+    ]
 
 
 def test_entertainment_trend_preserves_legacy_dates_when_sessions_exist(tmp_path):

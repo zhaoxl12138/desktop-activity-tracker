@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from daylens.services.trusted_metrics_service import assess_range, compare_ranges
 
 
@@ -7,6 +9,10 @@ def _summary(**overrides):
     summary = {
         "session_count": 200,
         "legacy_session_count": 0,
+        "session_anomaly_count": 0,
+        "legacy_log_sample_count": 0,
+        "legacy_log_anomaly_count": 0,
+        "legacy_granularity_unknown": False,
         "anomaly_count": 0,
         "dates_with_data": ["2026-07-01", "2026-07-02"],
         "metric_versions": ["attention-v1"],
@@ -18,7 +24,7 @@ def _summary(**overrides):
 
 def test_complete_single_version_range_is_high_trust():
     result = assess_range(
-        _summary(anomaly_count=1),
+        _summary(anomaly_count=1, session_anomaly_count=1),
         ["2026-07-01", "2026-07-02"],
     )
 
@@ -80,8 +86,8 @@ def test_mostly_legacy_range_is_low_trust():
         _summary(
             session_count=100,
             legacy_session_count=21,
-            metric_versions=["legacy"],
-            classification_versions=["legacy"],
+            metric_versions=["attention-v1", "legacy"],
+            classification_versions=["legacy", "rules-a"],
         ),
         ["2026-07-01", "2026-07-02"],
     )
@@ -102,7 +108,11 @@ def test_multiple_metric_versions_alone_make_range_low_trust():
 
 def test_anomaly_ratio_above_half_percent_is_low_trust():
     result = assess_range(
-        _summary(session_count=199, anomaly_count=1),
+        _summary(
+            session_count=199,
+            anomaly_count=1,
+            session_anomaly_count=1,
+        ),
         ["2026-07-01", "2026-07-02"],
     )
 
@@ -122,7 +132,7 @@ def test_legacy_only_metric_cannot_be_high_when_count_is_inconsistent():
 
     assert result["level"] == "low"
     assert result["legacy_ratio"] == 1.0
-    assert result["reasons"] == ["旧计量口径占比超过20%"]
+    assert result["reasons"] == ["统计数据格式异常"]
     assert result["category_comparable"] is False
 
 
@@ -143,6 +153,7 @@ def test_low_trust_reasons_are_complete_and_deterministically_ordered():
             session_count=100,
             legacy_session_count=21,
             anomaly_count=1,
+            session_anomaly_count=1,
             dates_with_data=["2026-07-01"],
             metric_versions=["legacy", "attention-v2", "attention-v1"],
             classification_versions=["rules-b", "rules-a"],
@@ -178,6 +189,115 @@ def test_empty_range_never_reports_high_trust():
     assert result["coverage_ratio"] == 1.0
     assert result["legacy_ratio"] == 1.0
     assert result["anomaly_ratio"] == 0.0
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "session_count",
+        "legacy_session_count",
+        "session_anomaly_count",
+        "legacy_log_sample_count",
+        "legacy_log_anomaly_count",
+        "anomaly_count",
+    ],
+)
+@pytest.mark.parametrize(
+    "bad_value",
+    [None, True, -1, 1.0, float("nan"), float("inf"), "1", "oops"],
+)
+def test_malformed_counts_fail_closed_without_raising(field, bad_value):
+    result = assess_range(
+        _summary(**{field: bad_value}),
+        ["2026-07-01", "2026-07-02"],
+    )
+
+    assert result["level"] == "low"
+    assert result["reasons"][0] == "统计数据格式异常"
+
+
+@pytest.mark.parametrize("bad_flag", [None, 0, 1, "false", "true"])
+def test_granularity_flag_only_accepts_real_booleans(bad_flag):
+    result = assess_range(
+        _summary(legacy_granularity_unknown=bad_flag),
+        ["2026-07-01", "2026-07-02"],
+    )
+
+    assert result["level"] == "low"
+    assert result["reasons"][0] == "统计数据格式异常"
+
+
+@pytest.mark.parametrize(
+    ("field", "bad_value"),
+    [
+        ("metric_versions", "attention-v1"),
+        ("metric_versions", ["attention-v1", 1]),
+        ("classification_versions", "rules-a"),
+        ("classification_versions", [None]),
+        ("dates_with_data", "2026-07-01"),
+        ("dates_with_data", ["2026-07-01", None]),
+    ],
+)
+def test_malformed_version_or_date_collections_fail_closed(field, bad_value):
+    result = assess_range(
+        _summary(**{field: bad_value}),
+        ["2026-07-01", "2026-07-02"],
+    )
+
+    assert result["level"] == "low"
+    assert result["reasons"][0] == "统计数据格式异常"
+
+
+def test_expected_dates_must_match_summary_scope_to_receive_trust():
+    empty_expected = assess_range(_summary(), [])
+    extra_recorded_date = assess_range(
+        _summary(dates_with_data=["2026-07-03"]),
+        ["2026-07-01", "2026-07-02"],
+    )
+    malformed_expected = assess_range(_summary(), "2026-07-01")
+
+    for result in (empty_expected, extra_recorded_date, malformed_expected):
+        assert result["level"] == "low"
+        assert result["reasons"][0] == "统计数据格式异常"
+
+
+def test_partial_expected_date_coverage_cannot_receive_high_trust():
+    result = assess_range(
+        _summary(
+            dates_with_data=[
+                "2026-07-01",
+                "2026-07-02",
+                "2026-07-03",
+                "2026-07-04",
+            ]
+        ),
+        [
+            "2026-07-01",
+            "2026-07-02",
+            "2026-07-03",
+            "2026-07-04",
+            "2026-07-05",
+        ],
+    )
+
+    assert result["coverage_ratio"] == 0.8
+    assert result["level"] == "medium"
+    assert result["reasons"] == ["记录日期未完全覆盖预期范围"]
+
+
+def test_well_formed_legacy_log_granularity_flag_is_not_a_format_error():
+    result = assess_range(
+        _summary(
+            legacy_log_sample_count=1,
+            legacy_granularity_unknown=True,
+            metric_versions=["attention-v1", "legacy"],
+            classification_versions=["legacy", "rules-a"],
+        ),
+        ["2026-07-01", "2026-07-02"],
+    )
+
+    assert result["level"] == "low"
+    assert result["reasons"] == ["旧日志缺少会话粒度"]
 
 
 def test_compare_ranges_allows_total_time_but_not_categories_after_rule_change():
