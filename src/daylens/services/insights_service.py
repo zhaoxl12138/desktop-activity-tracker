@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import html
+import re
 import unicodedata
 from datetime import date
 
@@ -40,6 +42,15 @@ _DATA_HEALTH_ACTIONS = {
 }
 _INSIGHT_FIELDS = frozenset(("kind", "title", "evidence", "action"))
 _MAX_TOOL_NAME_LENGTH = 64
+_ENTITY_CANDIDATE_PATTERN = re.compile(r"&[^&;]{1,64};")
+_DANGEROUS_ENTITY_PATTERN = re.compile(
+    r"&(?:lt|gt|#(?:x[0-9a-f]+|[0-9]+));",
+    re.IGNORECASE,
+)
+_RICH_TEXT_TAG_PATTERN = re.compile(
+    r"<(?:/?[A-Za-z][A-Za-z0-9:_.-]*(?:\s+[^<>]*?)?\s*/?"
+    r"|![^<>]*|\?[^<>]*)>"
+)
 
 
 def _nonnegative_int(value) -> int | None:
@@ -116,10 +127,33 @@ def _format_duration(seconds: int) -> str:
 
 def _unsafe_tool_character(character: str) -> bool:
     category = unicodedata.category(character)
-    return character in "<>&" or category.startswith("C") or category in {
+    return category.startswith("C") or category in {
         "Zl",
         "Zp",
     }
+
+
+def _contains_rich_text_markup(value: str) -> bool:
+    validation_value = _ENTITY_CANDIDATE_PATTERN.sub(
+        lambda match: re.sub(r"\s+", "", match.group(0)),
+        value,
+    )
+    for _ in range(3):
+        if _RICH_TEXT_TAG_PATTERN.search(validation_value):
+            return True
+        if _DANGEROUS_ENTITY_PATTERN.search(validation_value):
+            return True
+        if any(_unsafe_tool_character(char) for char in validation_value):
+            return True
+        decoded = html.unescape(validation_value)
+        if decoded == validation_value:
+            return False
+        validation_value = decoded
+    return bool(
+        _RICH_TEXT_TAG_PATTERN.search(validation_value)
+        or _DANGEROUS_ENTITY_PATTERN.search(validation_value)
+        or any(_unsafe_tool_character(char) for char in validation_value)
+    )
 
 
 def build_best_window_candidate(payload: dict) -> dict | None:
@@ -294,6 +328,7 @@ def build_workflow_candidate(payload: dict) -> dict | None:
             or display_name.strip() != display_name
             or len(display_name) > _MAX_TOOL_NAME_LENGTH
             or any(_unsafe_tool_character(char) for char in display_name)
+            or _contains_rich_text_markup(display_name)
         ):
             return None
         uniqueness_key = display_name.casefold()

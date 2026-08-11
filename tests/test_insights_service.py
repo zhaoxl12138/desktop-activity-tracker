@@ -633,6 +633,32 @@ def test_workflow_accepts_safe_chinese_and_english_tool_names():
 
 
 @pytest.mark.parametrize(
+    "safe_name",
+    [
+        "R&D Notes",
+        "AT&T Secure Client",
+        "A>B",
+        "x < y",
+        "AT&amp;T",
+    ],
+)
+def test_workflow_allows_plain_text_ampersands_and_angle_brackets(safe_name):
+    insight = select_primary_insight(
+        _payload(
+            workflow={
+                "tool_count": 2,
+                "switch_count": 8,
+                "non_work_interruptions": 0,
+                "tools": [safe_name, "Obsidian"],
+            }
+        )
+    )
+
+    assert insight is not None
+    assert insight["evidence"].startswith(f"{safe_name}、Obsidian ")
+
+
+@pytest.mark.parametrize(
     "tools",
     [
         ["Codex", "codex"],
@@ -663,11 +689,19 @@ def test_workflow_counts_nfkc_casefold_duplicates_as_one_tool(tools):
         "Code\u2028X",
         "Code\u2029X",
         "<b>Codex</b>",
-        "AT&amp;T",
+        "</b>",
+        "<!DOCTYPE note>",
+        "<?xml version='1.0'?>",
+        "&lt;b&gt;Codex&lt;/b&gt;",
+        "& L T ;b& G T ;",
+        "&#60;b&#62;",
+        "&#x3c;b&#x3e;",
+        "&#10;",
+        "&amp;lt;b&amp;gt;",
         "X" * 65,
     ],
 )
-def test_workflow_rejects_control_format_and_overlong_tool_names(unsafe_name):
+def test_workflow_rejects_control_markup_and_overlong_tool_names(unsafe_name):
     insight = select_primary_insight(
         _payload(
             workflow={
