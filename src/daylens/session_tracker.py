@@ -378,17 +378,78 @@ class SessionTracker:
             > max(120, self.idle_threshold * 2)
         ):
             if self._current is not None:
+                gap_session = self._current
+                original_session_state = (
+                    gap_session.end_time,
+                    gap_session.switch_reason,
+                    gap_session.duration_seconds,
+                    gap_session.engaged_seconds,
+                    gap_session.passive_seconds,
+                    gap_session.effective_seconds,
+                    gap_session.idle_seconds,
+                )
+                original_pending = self._pending_switch
+                original_tracker_state = (
+                    self._persistent_idle,
+                    self._idle_corrected,
+                    self._video_silent_idle,
+                    self._awaiting_activity,
+                    self._last_tick_wall_time,
+                )
                 if self._pending_switch is not None:
                     self._credit_pending_to_session(
-                        self._current,
+                        gap_session,
                         self._pending_switch,
                     )
                     self._pending_switch = None
-                self._current.end_time = self._last_tick_wall_time
-                self._current.switch_reason = "system_gap"
-                self._emit_session()
+                gap_session.end_time = self._last_tick_wall_time
+                gap_session.switch_reason = "system_gap"
+                try:
+                    persisted = self._emit_session()
+                except Exception:
+                    (
+                        gap_session.end_time,
+                        gap_session.switch_reason,
+                        gap_session.duration_seconds,
+                        gap_session.engaged_seconds,
+                        gap_session.passive_seconds,
+                        gap_session.effective_seconds,
+                        gap_session.idle_seconds,
+                    ) = original_session_state
+                    (
+                        self._persistent_idle,
+                        self._idle_corrected,
+                        self._video_silent_idle,
+                        self._awaiting_activity,
+                        self._last_tick_wall_time,
+                    ) = original_tracker_state
+                    self._current = gap_session
+                    self._pending_switch = original_pending
+                    raise
+                if not persisted:
+                    (
+                        gap_session.end_time,
+                        gap_session.switch_reason,
+                        gap_session.duration_seconds,
+                        gap_session.engaged_seconds,
+                        gap_session.passive_seconds,
+                        gap_session.effective_seconds,
+                        gap_session.idle_seconds,
+                    ) = original_session_state
+                    (
+                        self._persistent_idle,
+                        self._idle_corrected,
+                        self._video_silent_idle,
+                        self._awaiting_activity,
+                        self._last_tick_wall_time,
+                    ) = original_tracker_state
+                    self._current = gap_session
+                    self._pending_switch = original_pending
+                    return self._make_snapshot(idle_seconds)
             self._pending_switch = None
             self._persistent_idle = 0.0
+            self._idle_corrected = False
+            self._video_silent_idle = 0.0
             self._awaiting_activity = True
         self._last_tick_wall_time = now
 
@@ -534,14 +595,13 @@ class SessionTracker:
             if not (self._activity_from_hook or cursor_moved or kb_changed):
                 return self._make_snapshot(idle_seconds)
             self._awaiting_activity = False
+            self._persistent_idle = 0.0
+            self._idle_corrected = False
+            self._video_silent_idle = 0.0
 
         # Start new session if needed
         if self._current is None:
             self._pending_switch = None
-            self._persistent_idle = 0.0
-            self._last_cursor_pos = None
-            self._last_kb_state = None
-            self._video_silent_idle = 0.0
             self._current = ActivitySession(
                 session_id=uuid.uuid4().hex[:12],
                 start_time=now,
@@ -599,6 +659,7 @@ class SessionTracker:
                     "engaged_during_grace": 0,
                     "passive_during_grace": 0,
                     "idle_during_grace": 0,
+                    "video_silent_idle": 0,
                     "idle_corrected": False,
                 }
                 self._pending_switch = p
@@ -636,8 +697,9 @@ class SessionTracker:
             if pending_duration == 0:
                 self._persistent_idle = 0.0
                 self._idle_corrected = False
-            self._last_cursor_pos = None
-            self._last_kb_state = None
+                self._last_cursor_pos = None
+                self._last_kb_state = None
+            self._video_silent_idle = p.get("video_silent_idle", 0)
             self._current = ActivitySession(
                 session_id=uuid.uuid4().hex[:12],
                 start_time=p["since"],
@@ -681,7 +743,8 @@ class SessionTracker:
                 "engaged_during_grace": 0,
                 "passive_during_grace": 0,
                 "idle_during_grace": 0,
-                "idle_corrected": False,
+                "video_silent_idle": 0,
+                "idle_corrected": self._idle_corrected,
             }
             self._tick_grace_current(now)
             return False
@@ -722,8 +785,7 @@ class SessionTracker:
             classification_version=self.classification_version,
         )
         self._pending_switch = None
-        self._last_cursor_pos = None
-        self._last_kb_state = None
+        self._video_silent_idle = p.get("video_silent_idle", 0)
         return False
 
     def _maybe_flush(self):
@@ -774,16 +836,34 @@ class SessionTracker:
         self._last_attention_state = bucket
         p[f"{bucket}_during_grace"] += self.sample_interval
 
+        if p.get("cat_key") == "video" and not active and not audio_playing:
+            p["video_silent_idle"] = (
+                p.get("video_silent_idle", 0) + self.sample_interval
+            )
+        else:
+            p["video_silent_idle"] = 0
+
         if (
             self._persistent_idle > self.idle_threshold
             and not p.get("idle_corrected", False)
         ):
-            correction = min(
-                self.idle_threshold,
+            remaining_correction = self.idle_threshold
+            pending_correction = min(
+                remaining_correction,
                 p["engaged_during_grace"],
             )
-            p["engaged_during_grace"] -= correction
-            p[f"{bucket}_during_grace"] += correction
+            p["engaged_during_grace"] -= pending_correction
+            p[f"{bucket}_during_grace"] += pending_correction
+            remaining_correction -= pending_correction
+
+            if remaining_correction and self._current is not None:
+                current_correction = min(
+                    remaining_correction,
+                    self._current.engaged_seconds,
+                )
+                self._current.engaged_seconds -= current_correction
+                self._current.idle_seconds += current_correction
+                self._sync_effective(self._current)
             p["idle_corrected"] = True
             self._idle_corrected = True
 

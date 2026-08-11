@@ -761,6 +761,73 @@ def test_social_passive_grace_uses_normal_threshold_and_stays_non_passive():
     _assert_attention_conserved(tracker.current_session)
 
 
+def test_idle_back_correction_spans_current_and_pending_ledgers():
+    tracker = _tracker(idle_threshold=3, passive_threshold=99)
+    coding = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 71,
+    }
+    social = {
+        "process_name": "Chat.exe",
+        "window_title": "Friends",
+        "exe_path": "",
+        "pid": 72,
+    }
+    tracker.tick(0, coding)
+    tracker.tick(0, coding)
+    tracker.tick(0, social)
+    tracker.tick(0, social)
+
+    session = tracker.current_session
+    pending = tracker._pending_switch
+    assert session.duration_seconds == 2
+    assert session.engaged_seconds == 0
+    assert session.passive_seconds == 0
+    assert session.idle_seconds == 2
+    _assert_attention_conserved(session)
+    assert pending["engaged_during_grace"] == 0
+    assert pending["passive_during_grace"] == 0
+    assert pending["idle_during_grace"] == 2
+    assert sum(
+        pending[key]
+        for key in (
+            "engaged_during_grace",
+            "passive_during_grace",
+            "idle_during_grace",
+        )
+    ) == 2
+
+
+def test_pending_started_after_idle_correction_does_not_reclassify_active_time():
+    tracker = _tracker(idle_threshold=1, passive_threshold=99)
+    coding = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 77,
+    }
+    social = {
+        "process_name": "Chat.exe",
+        "window_title": "Friends",
+        "exe_path": "",
+        "pid": 78,
+    }
+    tracker.mark_user_active()
+    tracker.tick(0, coding)
+    tracker.tick(0, coding)
+    tracker.tick(0, coding)
+    assert tracker._idle_corrected is True
+    assert tracker.current_session.engaged_seconds == 1
+
+    tracker.tick(0, social)
+
+    assert tracker.current_session.engaged_seconds == 1
+    assert tracker.current_session.idle_seconds == 2
+    _assert_attention_conserved(tracker.current_session)
+
+
 def test_social_interactive_grace_uses_normal_threshold_and_matches_snapshot():
     tracker = _tracker(idle_threshold=2, passive_threshold=10)
     coding = {
@@ -982,6 +1049,105 @@ def test_session_boundary_exception_accounts_failed_tick_once(boundary):
     _assert_attention_conserved(tracker.current_session)
 
 
+@pytest.mark.parametrize("boundary", ["app_change", "title_change", "classifier"])
+def test_ordinary_boundary_inherits_physical_idle_without_gifting_engaged(boundary):
+    classifier = (
+        ConfigurableVersionClassifier("rules-old")
+        if boundary == "classifier"
+        else MappingClassifier()
+    )
+    tracker = SessionTracker(
+        config={
+            "tracker": {
+                "sample_interval_seconds": 1,
+                "idle_threshold_seconds": 1,
+                "entertainment_idle_threshold_seconds": 99,
+            }
+        },
+        classifier=classifier,
+        on_session_end=lambda _session: True,
+    )
+    if boundary == "title_change":
+        initial = {
+            "process_name": "VLC.exe",
+            "window_title": "Episode 1",
+            "exe_path": "",
+            "pid": 55,
+        }
+        target = {**initial, "window_title": "Episode 2"}
+    else:
+        initial = {
+            "process_name": "Code.exe",
+            "window_title": "main.py",
+            "exe_path": "",
+            "pid": 56,
+        }
+        target = (
+            {
+                "process_name": "Notes.exe",
+                "window_title": "notes.md",
+                "exe_path": "",
+                "pid": 57,
+            }
+            if boundary == "app_change"
+            else initial
+        )
+
+    tracker.tick(0, initial)
+    tracker.tick(0, initial)
+    assert tracker._persistent_idle == 2
+    if boundary == "classifier":
+        assert tracker.replace_classifier(
+            ConfigurableVersionClassifier("rules-new")
+        ) is True
+
+    snapshot = tracker.tick(0, target)
+    session = tracker.current_session
+
+    assert tracker._persistent_idle == 3
+    assert session.engaged_seconds == 0
+    assert session.passive_seconds == 0
+    assert session.idle_seconds == 1
+    assert snapshot["attention_state"] == "idle"
+    assert snapshot["is_effective"] is False
+    _assert_attention_conserved(session)
+
+
+def test_video_title_change_after_sixty_idle_seconds_starts_idle():
+    ended = []
+    tracker = SessionTracker(
+        config={
+            "tracker": {
+                "sample_interval_seconds": 1,
+                "idle_threshold_seconds": 60,
+                "entertainment_idle_threshold_seconds": 999,
+            }
+        },
+        classifier=MappingClassifier(),
+        on_session_end=lambda session: ended.append(session) or True,
+    )
+    first_episode = {
+        "process_name": "VLC.exe",
+        "window_title": "Episode 1",
+        "exe_path": "",
+        "pid": 58,
+    }
+    second_episode = {**first_episode, "window_title": "Episode 2"}
+    for _ in range(61):
+        tracker.tick(0, first_episode)
+
+    snapshot = tracker.tick(0, second_episode)
+
+    assert ended[0].engaged_seconds == 0
+    assert ended[0].idle_seconds == 61
+    assert tracker._persistent_idle == 62
+    assert tracker.current_session.engaged_seconds == 0
+    assert tracker.current_session.idle_seconds == 1
+    assert snapshot["attention_state"] == "idle"
+    _assert_attention_conserved(ended[0])
+    _assert_attention_conserved(tracker.current_session)
+
+
 def test_pending_video_with_audio_stays_passive_past_auto_close_threshold():
     persist_attempts = []
 
@@ -1042,6 +1208,77 @@ def test_pending_video_with_audio_stays_passive_past_auto_close_threshold():
     assert success_snapshot["audio_playing"] is True
     assert success_snapshot["is_effective"] is True
     assert set(audio.seen_pids) == {51}
+
+
+def test_pending_silent_video_streak_is_inherited_and_trimmed_after_retries():
+    outcomes = iter([False, "raise", False, False, True, True])
+    attempts = []
+
+    def persist(session):
+        attempts.append(
+            (
+                session.session_id,
+                session.process_name,
+                session.duration_seconds,
+                session.engaged_seconds,
+                session.passive_seconds,
+                session.idle_seconds,
+                session.switch_reason,
+            )
+        )
+        outcome = next(outcomes)
+        if outcome == "raise":
+            raise OSError("database busy")
+        return outcome
+
+    tracker = SessionTracker(
+        config={
+            "tracker": {
+                "sample_interval_seconds": 1,
+                "idle_threshold_seconds": 1,
+                "entertainment_idle_threshold_seconds": 3,
+                "cross_group_grace_seconds": 30,
+            }
+        },
+        classifier=MappingClassifier(),
+        on_session_end=persist,
+    )
+    coding = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 75,
+    }
+    video = {
+        "process_name": "VLC.exe",
+        "window_title": "Movie",
+        "exe_path": "",
+        "pid": 76,
+    }
+    tracker.tick(0, coding)
+
+    tracker.tick(0, video)
+    with pytest.raises(OSError, match="database busy"):
+        tracker.tick(0, video)
+    tracker.tick(0, video)
+    tracker.tick(0, video)
+
+    pending = tracker._pending_switch
+    assert pending["video_silent_idle"] == 4
+    assert pending["engaged_during_grace"] == 0
+    assert pending["passive_during_grace"] == 0
+    assert pending["idle_during_grace"] == 4
+
+    tracker.tick(0, video)
+
+    assert tracker.current_session is None
+    assert tracker._pending_switch is None
+    assert tracker._awaiting_activity is True
+    assert len(attempts) == 6
+    video_attempt = attempts[-1]
+    assert video_attempt[1] == "VLC.exe"
+    assert video_attempt[2:6] == (0, 0, 0, 0)
+    assert video_attempt[6] == "entertainment_idle"
 
 
 def test_immediate_entertainment_switch_conserves_abandoned_grace_counters():
@@ -1276,6 +1513,109 @@ def test_hard_boundary_preserves_pending_attention_counters(boundary):
     assert ended and ended[0].switch_reason == boundary
     assert ended[0].duration_seconds == expected_duration
     _assert_attention_conserved(ended[0])
+
+
+@pytest.mark.parametrize("failure_mode", ["return_false", "exception"])
+def test_system_gap_failure_rolls_back_pending_fold_and_retries_once(failure_mode):
+    attempts = []
+    successful_ids = []
+
+    def persist(session):
+        attempts.append(
+            (
+                session.duration_seconds,
+                session.engaged_seconds,
+                session.passive_seconds,
+                session.idle_seconds,
+                session.switch_reason,
+            )
+        )
+        if len(attempts) == 1:
+            if failure_mode == "exception":
+                raise OSError("database busy")
+            return False
+        successful_ids.append(session.session_id)
+        return True
+
+    tracker = SessionTracker(
+        config={
+            "tracker": {
+                "sample_interval_seconds": 1,
+                "idle_threshold_seconds": 1,
+                "entertainment_idle_threshold_seconds": 99,
+            }
+        },
+        classifier=MappingClassifier(),
+        on_session_end=persist,
+    )
+    coding = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 73,
+    }
+    social = {
+        "process_name": "Chat.exe",
+        "window_title": "Friends",
+        "exe_path": "",
+        "pid": 74,
+    }
+    tracker.tick(0, coding)
+    tracker.tick(0, social)
+    session = tracker.current_session
+    pending = tracker._pending_switch
+    original_session_state = (
+        session.end_time,
+        session.switch_reason,
+        session.duration_seconds,
+        session.engaged_seconds,
+        session.passive_seconds,
+        session.effective_seconds,
+        session.idle_seconds,
+    )
+    original_idle_state = (
+        tracker._persistent_idle,
+        tracker._idle_corrected,
+        tracker._video_silent_idle,
+        tracker._awaiting_activity,
+    )
+    tracker._last_tick_wall_time -= timedelta(seconds=600)
+    retry_wall_time = tracker._last_tick_wall_time
+
+    if failure_mode == "exception":
+        with pytest.raises(OSError, match="database busy"):
+            tracker.tick(0, social)
+    else:
+        tracker.tick(0, social)
+
+    assert tracker.current_session is session
+    assert tracker._pending_switch is pending
+    assert (
+        session.end_time,
+        session.switch_reason,
+        session.duration_seconds,
+        session.engaged_seconds,
+        session.passive_seconds,
+        session.effective_seconds,
+        session.idle_seconds,
+    ) == original_session_state
+    assert (
+        tracker._persistent_idle,
+        tracker._idle_corrected,
+        tracker._video_silent_idle,
+        tracker._awaiting_activity,
+    ) == original_idle_state
+    assert tracker._last_tick_wall_time == retry_wall_time
+
+    tracker.tick(0, social)
+
+    assert tracker.current_session is None
+    assert tracker._pending_switch is None
+    assert attempts[0] == attempts[1]
+    assert attempts[1][-1] == "system_gap"
+    assert successful_ids == [session.session_id]
+    assert session.duration_seconds == 2
+    _assert_attention_conserved(session)
 
 
 def test_audible_video_is_not_auto_closed_and_silent_tail_does_not_erase_passive_time():
