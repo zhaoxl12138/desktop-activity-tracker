@@ -26,6 +26,35 @@ def _session(session_id="session"):
     )
 
 
+def test_activity_session_preserves_existing_positional_constructor_order():
+    now = datetime.now()
+    session = ActivitySession(
+        "positional",
+        now,
+        now,
+        now.strftime("%Y-%m-%d"),
+        "Code.exe",
+        "",
+        "main.py",
+        "main.py",
+        "coding",
+        "Coding",
+        "interactive_required",
+        5,
+        4,
+        1,
+        "shutdown",
+        "initial.py",
+        99,
+    )
+
+    assert session._db_row_id == 99
+    assert session.engaged_seconds == 0
+    assert session.passive_seconds == 0
+    assert session.metric_version == "attention-v1"
+    assert session.classification_version == "legacy"
+
+
 def test_persist_session_replay_uses_session_id_as_idempotency_key(tmp_path):
     store = SessionRuntimeStore(str(tmp_path / "usage.db"))
     session = _session("stable-id")
@@ -43,6 +72,45 @@ def test_persist_session_replay_uses_session_id_as_idempotency_key(tmp_path):
     store.close()
     assert replay_row_id == first_row_id
     assert rows == [(first_row_id, 2)]
+
+
+def test_persist_session_round_trips_trusted_metrics_on_insert_and_update(tmp_path):
+    store = SessionRuntimeStore(str(tmp_path / "usage.db"))
+    session = _session("trusted-metrics")
+
+    assert session.engaged_seconds == 0
+    assert session.passive_seconds == 0
+    assert session.metric_version == "attention-v1"
+    assert session.classification_version == "legacy"
+
+    session.engaged_seconds = 7
+    session.passive_seconds = 3
+    session.metric_version = "attention-v1"
+    session.classification_version = "rules-a"
+    store.persist_session(session)
+    inserted = store._conn.execute(
+        "SELECT effective_seconds, engaged_seconds, passive_seconds, "
+        "metric_version, classification_version FROM activity_sessions "
+        "WHERE session_id = ?",
+        (session.session_id,),
+    ).fetchone()
+
+    session.effective_seconds = 11
+    session.engaged_seconds = 8
+    session.passive_seconds = 4
+    session.metric_version = "attention-v2"
+    session.classification_version = "rules-b"
+    store.persist_session(session)
+    updated = store._conn.execute(
+        "SELECT effective_seconds, engaged_seconds, passive_seconds, "
+        "metric_version, classification_version FROM activity_sessions "
+        "WHERE session_id = ?",
+        (session.session_id,),
+    ).fetchone()
+    store.close()
+
+    assert inserted == (1, 7, 3, "attention-v1", "rules-a")
+    assert updated == (11, 8, 4, "attention-v2", "rules-b")
 
 
 def test_persist_session_recovers_when_cached_row_was_removed(tmp_path):

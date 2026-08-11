@@ -13,8 +13,8 @@ from typing import Iterable
 from ..session_tracker import ActivitySession
 
 
-_SCHEMA_VERSION = 1
-_SESSION_FIELDS = (
+_SCHEMA_VERSION = 2
+_LEGACY_SESSION_FIELDS = (
     "session_id",
     "start_time",
     "end_time",
@@ -32,6 +32,13 @@ _SESSION_FIELDS = (
     "switch_reason",
     "initial_title",
 )
+_TRUSTED_METRIC_FIELDS = (
+    "engaged_seconds",
+    "passive_seconds",
+    "metric_version",
+    "classification_version",
+)
+_SESSION_FIELDS = _LEGACY_SESSION_FIELDS + _TRUSTED_METRIC_FIELDS
 
 
 def default_recovery_path(db_path: str | os.PathLike[str]) -> Path:
@@ -62,12 +69,13 @@ class SessionRecoverySpool:
             payload = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as error:
             raise RuntimeError("Session recovery spool could not be read") from error
-        if not isinstance(payload, dict) or payload.get("version") != _SCHEMA_VERSION:
+        if not isinstance(payload, dict) or payload.get("version") not in (1, 2):
             raise RuntimeError("Unsupported session recovery spool format")
+        version = payload["version"]
         records = payload.get("sessions")
         if not isinstance(records, list):
             raise RuntimeError("Invalid session recovery spool records")
-        return [self._deserialize_session(record) for record in records]
+        return [self._deserialize_session(record, version) for record in records]
 
     def store_sessions(self, sessions: Iterable[ActivitySession]) -> int:
         """Merge sessions by ID and atomically replace the recovery sidecar."""
@@ -138,14 +146,28 @@ class SessionRecoverySpool:
         return record
 
     @staticmethod
-    def _deserialize_session(record: object) -> ActivitySession:
+    def _deserialize_session(record: object, version: int) -> ActivitySession:
         if not isinstance(record, dict):
             raise RuntimeError("Invalid session recovery record")
-        missing = [name for name in _SESSION_FIELDS if name not in record]
+        required_fields = (
+            _LEGACY_SESSION_FIELDS if version == 1 else _SESSION_FIELDS
+        )
+        missing = [name for name in required_fields if name not in record]
         if missing:
             raise RuntimeError("Incomplete session recovery record")
         try:
-            values = {name: record[name] for name in _SESSION_FIELDS}
+            values = {name: record[name] for name in _LEGACY_SESSION_FIELDS}
+            if version == 1:
+                values.update(
+                    engaged_seconds=0,
+                    passive_seconds=0,
+                    metric_version="legacy",
+                    classification_version="legacy",
+                )
+            else:
+                values.update(
+                    {name: record[name] for name in _TRUSTED_METRIC_FIELDS}
+                )
             session_id = values["session_id"]
             if not isinstance(session_id, str) or not session_id:
                 raise ValueError("missing session id")
@@ -155,6 +177,8 @@ class SessionRecoverySpool:
                 "duration_seconds",
                 "effective_seconds",
                 "idle_seconds",
+                "engaged_seconds",
+                "passive_seconds",
             ):
                 values[name] = int(values[name])
             return ActivitySession(**values, _db_row_id=-1)

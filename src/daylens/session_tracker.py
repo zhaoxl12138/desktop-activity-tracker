@@ -171,6 +171,10 @@ class ActivitySession:
     switch_reason: str = ""
     initial_title: str = ""
     _db_row_id: int = field(default=-1, repr=False)
+    engaged_seconds: int = 0
+    passive_seconds: int = 0
+    metric_version: str = "attention-v1"
+    classification_version: str = "legacy"
 
 
 # ── Session tracker state machine ──

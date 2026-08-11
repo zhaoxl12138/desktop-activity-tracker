@@ -37,8 +37,9 @@ def insert_session(conn, session, maybe_checkpoint=lambda conn: None) -> int:
         (session_id, start_time, end_time, date, process_name, exe_path,
          window_title, normalized_title, category_key, category_name,
          active_rule, duration_seconds, effective_seconds, idle_seconds,
-         switch_reason)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         switch_reason, engaged_seconds, passive_seconds, metric_version,
+         classification_version)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
     cur = conn.execute(
         sql,
@@ -58,6 +59,10 @@ def insert_session(conn, session, maybe_checkpoint=lambda conn: None) -> int:
             session.effective_seconds,
             session.idle_seconds,
             session.switch_reason,
+            session.engaged_seconds,
+            session.passive_seconds,
+            session.metric_version,
+            session.classification_version,
         ),
     )
     conn.commit()
@@ -72,7 +77,11 @@ def update_session(conn, session, maybe_checkpoint=lambda conn: None) -> None:
         duration_seconds = ?,
         effective_seconds = ?,
         idle_seconds = ?,
-        switch_reason = ?
+        switch_reason = ?,
+        engaged_seconds = ?,
+        passive_seconds = ?,
+        metric_version = ?,
+        classification_version = ?
     WHERE session_id = ?
     """
     conn.execute(
@@ -83,6 +92,10 @@ def update_session(conn, session, maybe_checkpoint=lambda conn: None) -> None:
             session.effective_seconds,
             session.idle_seconds,
             session.switch_reason or "",
+            session.engaged_seconds,
+            session.passive_seconds,
+            session.metric_version,
+            session.classification_version,
             session.session_id,
         ),
     )

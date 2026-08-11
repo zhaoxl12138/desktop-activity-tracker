@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -34,6 +35,10 @@ def _session(session_id: str, *, title: str = "编辑器") -> ActivitySession:
         duration_seconds=7,
         effective_seconds=6,
         idle_seconds=1,
+        engaged_seconds=4,
+        passive_seconds=2,
+        metric_version="attention-v1",
+        classification_version="rules-a",
         switch_reason="shutdown",
         initial_title="初始标题",
         _db_row_id=99,
@@ -46,6 +51,11 @@ def test_recovery_spool_round_trips_and_replays_all_before_delete(tmp_path):
     original = _session("session-1")
 
     assert spool.store_sessions([original]) == 1
+    payload = json.loads(recovery_path.read_text(encoding="utf-8"))
+    assert payload["version"] == 2
+    payload["sessions"][0]["engaged_seconds"] = "4"
+    payload["sessions"][0]["passive_seconds"] = "2"
+    recovery_path.write_text(json.dumps(payload), encoding="utf-8")
 
     loaded = spool.load_sessions()
     assert loaded == [
@@ -67,6 +77,46 @@ def test_recovery_spool_round_trips_and_replays_all_before_delete(tmp_path):
     assert spool.replay(Store()) == 1
     assert [session.session_id for session in replayed] == ["session-1"]
     assert recovery_path.exists() is False
+
+
+def test_recovery_spool_loads_version_1_with_legacy_metric_defaults(tmp_path):
+    recovery_path = tmp_path / "legacy-recovery.json"
+    original = _session("legacy-session")
+    legacy_fields = (
+        "session_id",
+        "start_time",
+        "end_time",
+        "date",
+        "process_name",
+        "exe_path",
+        "window_title",
+        "normalized_title",
+        "category_key",
+        "category_name",
+        "active_rule",
+        "duration_seconds",
+        "effective_seconds",
+        "idle_seconds",
+        "switch_reason",
+        "initial_title",
+    )
+    record = {name: getattr(original, name) for name in legacy_fields}
+    record["start_time"] = original.start_time.isoformat()
+    record["end_time"] = original.end_time.isoformat()
+    recovery_path.write_text(
+        json.dumps({"version": 1, "sessions": [record]}),
+        encoding="utf-8",
+    )
+
+    loaded = SessionRecoverySpool(
+        "usage.db", recovery_path=recovery_path
+    ).load_sessions()
+
+    assert len(loaded) == 1
+    assert loaded[0].engaged_seconds == 0
+    assert loaded[0].passive_seconds == 0
+    assert loaded[0].metric_version == "legacy"
+    assert loaded[0].classification_version == "legacy"
 
 
 def test_recovery_spool_keeps_file_until_every_replay_succeeds(tmp_path):

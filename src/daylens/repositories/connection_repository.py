@@ -49,6 +49,10 @@ CREATE TABLE IF NOT EXISTS activity_sessions (
     active_rule TEXT,
     duration_seconds INTEGER DEFAULT 0,
     effective_seconds INTEGER DEFAULT 0,
+    engaged_seconds INTEGER DEFAULT 0,
+    passive_seconds INTEGER DEFAULT 0,
+    metric_version TEXT DEFAULT 'legacy',
+    classification_version TEXT DEFAULT 'legacy',
     idle_seconds INTEGER DEFAULT 0,
     switch_reason TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -263,6 +267,30 @@ def _run_migrations(conn) -> None:
         )
         conn.execute(
             "INSERT INTO schema_meta(key, value) VALUES('schema_version', '3') "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        )
+        version = 3
+    if version < 4:
+        columns = {
+            row[1]
+            for row in conn.execute(
+                "PRAGMA table_info(activity_sessions)"
+            ).fetchall()
+        }
+        column_definitions = {
+            "engaged_seconds": "INTEGER DEFAULT 0",
+            "passive_seconds": "INTEGER DEFAULT 0",
+            "metric_version": "TEXT DEFAULT 'legacy'",
+            "classification_version": "TEXT DEFAULT 'legacy'",
+        }
+        for column, definition in column_definitions.items():
+            if column not in columns:
+                conn.execute(
+                    f"ALTER TABLE activity_sessions "
+                    f"ADD COLUMN {column} {definition}"
+                )
+        conn.execute(
+            "INSERT INTO schema_meta(key, value) VALUES('schema_version', '4') "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
         )
     conn.commit()
