@@ -836,6 +836,61 @@ def test_idle_back_correction_preserves_each_sessions_audio_evidence():
     assert pending["idle_during_grace"] == 2
 
 
+def test_immediate_video_reset_starts_a_bounded_new_idle_epoch():
+    persisted = {}
+
+    def persist(session):
+        persisted[session.session_id] = (
+            session.engaged_seconds,
+            session.passive_seconds,
+            session.idle_seconds,
+        )
+        return True
+
+    tracker = SessionTracker(
+        config={
+            "tracker": {
+                "sample_interval_seconds": 1,
+                "idle_threshold_seconds": 3,
+                "entertainment_idle_threshold_seconds": 99,
+            }
+        },
+        classifier=MappingClassifier(),
+        on_session_end=persist,
+        audio_detector=AudioForPid(playing_pid=90),
+    )
+    coding = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 89,
+    }
+    video = {
+        "process_name": "VLC.exe",
+        "window_title": "Movie",
+        "exe_path": "",
+        "pid": 90,
+    }
+    tracker.tick(0, coding)
+    tracker.tick(0, coding)
+    old_session = tracker.current_session
+
+    ledger_sizes = []
+    for _ in range(4):
+        tracker.tick(0, video)
+        ledger_sizes.append(len(tracker._provisional_attention))
+
+    assert persisted[old_session.session_id] == (2, 0, 0)
+    assert old_session.engaged_seconds == 2
+    assert old_session.passive_seconds == 0
+    assert old_session.idle_seconds == 0
+    assert max(ledger_sizes) <= tracker.idle_threshold
+    assert tracker.current_session.engaged_seconds == 0
+    assert tracker.current_session.passive_seconds == 4
+    assert tracker.current_session.idle_seconds == 0
+    _assert_attention_conserved(tracker.current_session)
+
+
 def test_pending_started_after_idle_correction_does_not_reclassify_active_time():
     tracker = _tracker(idle_threshold=1, passive_threshold=99)
     coding = {
@@ -1178,6 +1233,7 @@ def test_provisional_idle_window_is_rewritten_across_ordinary_boundary(boundary)
         },
         classifier=classifier,
         on_session_end=persist,
+        on_session_rewrite=persist,
     )
     if boundary == "title_change":
         initial = {
@@ -1254,6 +1310,7 @@ def test_failed_provisional_boundary_rewrite_retries_without_double_counting(
         },
         classifier=MappingClassifier(),
         on_session_end=persist,
+        on_session_rewrite=persist,
     )
     coding = {
         "process_name": "Code.exe",
@@ -1285,6 +1342,121 @@ def test_failed_provisional_boundary_rewrite_retries_without_double_counting(
     assert tracker.current_session.passive_seconds == 0
     assert tracker.current_session.idle_seconds == 3
     _assert_attention_conserved(tracker.current_session)
+
+
+def test_permanent_rewrite_failure_is_bounded_and_backpressures_sampling():
+    rewrite_attempts = []
+
+    def rewrite(session):
+        rewrite_attempts.append(session.session_id)
+        return False
+
+    tracker = SessionTracker(
+        config={
+            "tracker": {
+                "sample_interval_seconds": 1,
+                "idle_threshold_seconds": 1,
+                "entertainment_idle_threshold_seconds": 99,
+                "attention_rewrite_queue_size": 2,
+            }
+        },
+        classifier=MappingClassifier(),
+        on_session_end=lambda _session: True,
+        on_session_rewrite=rewrite,
+    )
+    coding = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 91,
+    }
+    notes = {
+        "process_name": "Notes.exe",
+        "window_title": "notes.md",
+        "exe_path": "",
+        "pid": 92,
+    }
+
+    tracker.tick(0, coding)
+    tracker.tick(0, notes)
+    tracker.mark_user_active()
+    tracker.tick(0, notes)
+    tracker.tick(0, coding)
+    tracker.tick(0, notes)
+
+    pending = tracker.pending_rewrite_sessions()
+    assert len(pending) == 2
+    assert len({session.session_id for session in pending}) == 2
+    before = (
+        tracker.current_session.session_id,
+        tracker.current_session.duration_seconds,
+        tracker.current_session.engaged_seconds,
+        tracker.current_session.passive_seconds,
+        tracker.current_session.idle_seconds,
+    )
+    tracker.mark_user_active()
+
+    with pytest.raises(RuntimeError, match="rewrite capacity"):
+        tracker.tick(0, notes)
+
+    assert len(tracker.pending_rewrite_sessions()) == 2
+    assert len(tracker._provisional_attention) <= tracker.idle_threshold
+    assert (
+        tracker.current_session.session_id,
+        tracker.current_session.duration_seconds,
+        tracker.current_session.engaged_seconds,
+        tracker.current_session.passive_seconds,
+        tracker.current_session.idle_seconds,
+    ) == before
+    assert rewrite_attempts
+
+
+def test_provisional_boundaries_stop_before_exceeding_rewrite_capacity():
+    ended = []
+    tracker = SessionTracker(
+        config={
+            "tracker": {
+                "sample_interval_seconds": 1,
+                "idle_threshold_seconds": 10,
+                "entertainment_idle_threshold_seconds": 99,
+                "attention_rewrite_queue_size": 2,
+            }
+        },
+        classifier=MappingClassifier(),
+        on_session_end=lambda session: ended.append(session.session_id) or True,
+        on_session_rewrite=lambda _session: False,
+    )
+    coding = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 93,
+    }
+    notes = {
+        "process_name": "Notes.exe",
+        "window_title": "notes.md",
+        "exe_path": "",
+        "pid": 94,
+    }
+
+    tracker.tick(0, coding)
+    tracker.tick(0, notes)
+    tracker.tick(0, coding)
+    blocked_session = tracker.current_session
+
+    with pytest.raises(RuntimeError, match="rewrite capacity"):
+        tracker.tick(0, notes)
+
+    assert len(ended) == 2
+    assert tracker.current_session is blocked_session
+    assert tracker.current_session.process_name == "Code.exe"
+    assert len(
+        {
+            entry["owner"].session_id
+            for entry in tracker._provisional_attention
+            if entry["persisted"]
+        }
+    ) == 2
 
 
 def test_video_title_change_after_sixty_idle_seconds_starts_idle():

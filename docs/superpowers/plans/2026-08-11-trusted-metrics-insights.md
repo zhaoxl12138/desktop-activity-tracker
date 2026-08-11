@@ -280,6 +280,86 @@ git add src/daylens/session_tracker.py tests/test_session_tracker_policies.py te
 git commit -m "feat: separate engaged and passive time"
 ```
 
+### Task 3A: Bounded attention rewrites and shutdown recovery
+
+**Files:**
+- Modify: `src/daylens/session_tracker.py`
+- Modify: `src/daylens/services/session_runtime_service.py`
+- Modify: `src/daylens/gui/worker.py`
+- Modify: `src/daylens/services/command_handlers.py`
+- Modify: `tests/test_session_tracker_policies.py`
+- Modify: `tests/test_session_runtime_service.py`
+- Modify: `tests/test_recording_worker.py`
+- Modify: `tests/test_command_handlers_recording.py`
+
+- [ ] **Step 1: Add reset-epoch and bounded rewrite red tests**
+
+Add a tracker test where two provisional Code samples are followed by an
+immediate audible-video switch. Advance the new idle epoch past its threshold
+and assert the old Code session remains engaged and the provisional ledger
+never contains more than one threshold window. Add a permanent-False rewrite
+test with `attention_rewrite_queue_size=2`; assert `pending_rewrite_sessions()`
+contains two unique IDs and the next tick raises backpressure before changing
+the current session.
+
+- [ ] **Step 2: Run the tracker red tests**
+
+```powershell
+$env:QT_QPA_PLATFORM='offscreen'
+python -m pytest -q tests/test_session_tracker_policies.py -k "idle_epoch or rewrite_backpressure"
+```
+
+Expected: the old Code session is rewritten by the new video epoch and the
+explicit rewrite callback/snapshot API is absent.
+
+- [ ] **Step 3: Centralize idle-epoch resets and add an explicit callback**
+
+Add `_reset_idle_epoch()` that resets `_persistent_idle`, `_idle_corrected`, and
+`_provisional_attention`, while leaving `_pending_attention_rewrites` intact.
+Use it at every real idle-epoch reset site. Add the constructor callback
+`on_session_rewrite`, document that it must perform an idempotent upsert by
+`session_id`, and remove the fallback to `on_session_end`.
+
+- [ ] **Step 4: Add bounded ownership and drain APIs**
+
+Configure `attention_rewrite_queue_size` with a finite default. Before moving a
+provisional ledger, reserve capacity for every unique persisted owner. If the
+reservation cannot fit, raise `AttentionRewriteBackpressure` without moving the
+ledger; while saturated, retry before sampling and refuse to advance until
+capacity is available. Expose immutable `pending_rewrite_sessions()`, explicit
+`drain_pending_rewrites()`, and acknowledgement by session ID after recovery
+spooling.
+
+- [ ] **Step 5: Add runtime and worker recovery red tests**
+
+Add a `SessionRuntimeStore.rewrite_session()` test showing that the same
+`session_id` updates the existing row. Add worker tests proving its normal
+rewrite adapter hands failures to `_pending_persists`, and cleanup spools both
+tracker-held rewrites and the current tail. Replay that spool into a succeeding
+store and assert every ID is restored exactly once.
+
+- [ ] **Step 6: Implement explicit adapters and shutdown aggregation**
+
+Make `SessionRuntimeStore.rewrite_session()` delegate to its existing
+idempotent upsert. Pass a dedicated worker rewrite adapter into SessionTracker.
+During cleanup, drain tracker rewrites around the existing worker queue drains;
+if any remain, merge them with `_pending_persists` and `_retained_tail` by
+`session_id` before `SessionRecoverySpool.store_sessions()`, then acknowledge
+tracker ownership only after the atomic spool succeeds. Apply the same snapshot
+merge in CLI shutdown recovery.
+
+- [ ] **Step 7: Verify and commit**
+
+```powershell
+$env:QT_QPA_PLATFORM='offscreen'
+python -m pytest -q tests/test_session_tracker_policies.py tests/test_session_runtime_service.py tests/test_recording_worker.py tests/test_command_handlers_recording.py tests/test_session_recovery_service.py
+python -m pytest -q
+python -m compileall -q src tests
+git diff --check
+git add docs/superpowers/plans/2026-08-11-trusted-metrics-insights.md src/daylens/session_tracker.py src/daylens/services/session_runtime_service.py src/daylens/gui/worker.py src/daylens/services/command_handlers.py tests/test_session_tracker_policies.py tests/test_session_runtime_service.py tests/test_recording_worker.py tests/test_command_handlers_recording.py
+git commit -m "fix: bound and recover attention rewrites"
+```
+
 ### Task 4: Aggregation and trust assessment
 
 **Files:**

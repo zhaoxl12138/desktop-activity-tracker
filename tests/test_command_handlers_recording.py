@@ -25,6 +25,7 @@ def isolate_recording_lock(monkeypatch):
 def test_cli_shutdown_persists_short_tail_via_tracker_protocol(monkeypatch):
     tail = SimpleNamespace(duration_seconds=1, switch_reason="")
     persisted = []
+    rewritten = []
     finish_reasons = []
     signal_handlers = {}
     startup_order = []
@@ -37,16 +38,28 @@ def test_cli_shutdown_persists_short_tail_via_tracker_protocol(monkeypatch):
             persisted.append(session)
             return 1
 
+        def rewrite_session(self, session):
+            rewritten.append(session)
+            return 1
+
         def close(self):
             self.closed = True
 
     class FakeTracker:
-        def __init__(self, *, on_session_end, **_kwargs):
+        def __init__(
+            self,
+            *,
+            on_session_end,
+            on_session_rewrite,
+            **_kwargs,
+        ):
             startup_order.append("tracker")
             self.on_session_end = on_session_end
+            self.on_session_rewrite = on_session_rewrite
             self.current_session = tail
 
         def tick(self, _idle_seconds, _window):
+            self.on_session_rewrite(self.current_session)
             return None
 
         def finish_current(self, reason):
@@ -125,11 +138,17 @@ def test_cli_shutdown_persists_short_tail_via_tracker_protocol(monkeypatch):
     assert finish_reasons == ["shutdown"]
     assert startup_order[:3] == ["replay", "tracker", "sample"]
     assert persisted == [tail]
+    assert rewritten == [tail]
     assert tail.switch_reason == "shutdown"
     assert store_holder["store"].closed is True
 
 
-def _run_cli_with_finish_results(monkeypatch, finish_results):
+def _run_cli_with_finish_results(
+    monkeypatch,
+    finish_results,
+    *,
+    pending_rewrites=(),
+):
     signal_handlers = {}
     finish_reasons = []
     results = iter(finish_results)
@@ -141,11 +160,15 @@ def _run_cli_with_finish_results(monkeypatch, finish_results):
         def persist_session(self, _session):
             return 1
 
+        def rewrite_session(self, session):
+            return self.persist_session(session)
+
         def close(self):
             self.closed = True
 
     class FakeTracker:
         def __init__(self, **_kwargs):
+            self._pending_rewrites = list(pending_rewrites)
             self.current_session = SimpleNamespace(
                 session_id="cli-tail",
                 duration_seconds=1,
@@ -162,6 +185,20 @@ def _run_cli_with_finish_results(monkeypatch, finish_results):
             if result:
                 self.current_session = None
             return result
+
+        def pending_rewrite_sessions(self):
+            return tuple(self._pending_rewrites)
+
+        def drain_pending_rewrites(self):
+            return not self._pending_rewrites
+
+        def acknowledge_pending_rewrites(self, session_ids):
+            acknowledged = {str(session_id) for session_id in session_ids}
+            self._pending_rewrites = [
+                session
+                for session in self._pending_rewrites
+                if session.session_id not in acknowledged
+            ]
 
     store_holder = {}
 
@@ -225,9 +262,11 @@ def test_cli_shutdown_retries_false_finish_until_success(monkeypatch, capsys):
 
 
 def test_cli_shutdown_persistent_failure_spools_then_closes(monkeypatch, capsys):
+    rewrite = SimpleNamespace(session_id="cli-rewrite")
     run, finish_reasons, store_holder = _run_cli_with_finish_results(
         monkeypatch,
         [OSError("database busy"), False, False],
+        pending_rewrites=[rewrite],
     )
     spooled = []
 
@@ -250,7 +289,10 @@ def test_cli_shutdown_persistent_failure_spools_then_closes(monkeypatch, capsys)
         run()
 
     assert finish_reasons == ["shutdown", "shutdown", "shutdown"]
-    assert [session.session_id for session in spooled] == ["cli-tail"]
+    assert [session.session_id for session in spooled] == [
+        "cli-rewrite",
+        "cli-tail",
+    ]
     assert store_holder["store"].closed is True
     output = capsys.readouterr()
     assert "session-recovery.json" in output.err
@@ -268,6 +310,9 @@ def test_cli_sampling_sleeps_after_errors_instead_of_hot_loop(monkeypatch):
 
         def persist_session(self, _session):
             return 1
+
+        def rewrite_session(self, session):
+            return self.persist_session(session)
 
         def close(self):
             pass

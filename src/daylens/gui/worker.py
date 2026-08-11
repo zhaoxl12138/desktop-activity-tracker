@@ -44,6 +44,7 @@ class _PendingPersist:
     session: object
     attempts: int = 0
     error: str = ""
+    rewrite: bool = False
 
 
 class _PersistenceQueueFull(RuntimeError):
@@ -183,9 +184,21 @@ class RecordingWorker(QThread):
         }
 
     def _pending_persist_count(self) -> int:
-        return len(self._pending_persists) + (
-            1 if self._retained_tail is not None else 0
+        session_ids = set(self._pending_persists)
+        session_ids.update(
+            session.session_id for session in self._tracker_pending_rewrites()
         )
+        if self._retained_tail is not None:
+            session_ids.add(self._persistence_key(self._retained_tail))
+        return len(session_ids)
+
+    def _tracker_pending_rewrites(self) -> tuple:
+        snapshot = getattr(self._tracker, "pending_rewrite_sessions", None)
+        return tuple(snapshot()) if callable(snapshot) else ()
+
+    def _drain_tracker_rewrites(self) -> bool:
+        drain = getattr(self._tracker, "drain_pending_rewrites", None)
+        return bool(drain()) if callable(drain) else True
 
     def _set_health(
         self,
@@ -252,6 +265,10 @@ class RecordingWorker(QThread):
                 "cross_group_grace_seconds": tracker.get(
                     "cross_group_grace_seconds", 30
                 ),
+                "attention_rewrite_queue_size": tracker.get(
+                    "attention_rewrite_queue_size",
+                    self._max_pending_persists,
+                ),
             }
         }
 
@@ -280,6 +297,7 @@ class RecordingWorker(QThread):
                 classifier=clf,
                 on_session_end=self._persist_or_queue,
                 on_flush=self._persist_or_queue,
+                on_session_rewrite=self._rewrite_or_queue,
                 audio_detector=(
                     AudioDetector(
                         check_interval=self.config.get("tracker", {}).get(
@@ -351,6 +369,13 @@ class RecordingWorker(QThread):
             # Make room before handing off the tail session. Otherwise a full
             # queue can retain the tail in SessionTracker with no later retry.
             self._drain_pending_persists()
+            had_tracker_rewrites = bool(self._tracker_pending_rewrites())
+            try:
+                self._drain_tracker_rewrites()
+            except Exception as error:
+                self._report_error(error, "degraded")
+            if had_tracker_rewrites:
+                self._drain_pending_persists()
 
         if self._tracker is not None and self._tracker.current_session is not None:
             tail = self._tracker.current_session
@@ -368,6 +393,13 @@ class RecordingWorker(QThread):
 
         if self._store is not None:
             self._drain_pending_persists()
+            had_tracker_rewrites = bool(self._tracker_pending_rewrites())
+            try:
+                self._drain_tracker_rewrites()
+            except Exception as error:
+                self._report_error(error, "degraded")
+            if had_tracker_rewrites:
+                self._drain_pending_persists()
 
             # A queue-full tail stays owned by SessionTracker. If draining made
             # room, hand it off now and give it the same bounded retry budget.
@@ -435,11 +467,21 @@ class RecordingWorker(QThread):
         self._report_error(error, status)
 
     def _spool_unresolved(self) -> None:
-        sessions = [item.session for item in self._pending_persists.values()]
+        rewrites = self._tracker_pending_rewrites()
+        sessions_by_id = OrderedDict(
+            (self._persistence_key(item.session), item.session)
+            for item in self._pending_persists.values()
+        )
+        for session in rewrites:
+            sessions_by_id[self._persistence_key(session)] = session
         if self._retained_tail is not None:
-            sessions.append(self._retained_tail)
+            sessions_by_id[self._persistence_key(self._retained_tail)] = (
+                self._retained_tail
+            )
         try:
-            stored_count = self._recovery_spool.store_sessions(sessions)
+            stored_count = self._recovery_spool.store_sessions(
+                sessions_by_id.values()
+            )
         except Exception as error:
             self._set_health(recovery_status="failed", shutdown_safe=False)
             self._mark_fatal(error)
@@ -447,6 +489,13 @@ class RecordingWorker(QThread):
 
         self._pending_persists.clear()
         self._retained_tail = None
+        acknowledge = getattr(
+            self._tracker,
+            "acknowledge_pending_rewrites",
+            None,
+        )
+        if callable(acknowledge):
+            acknowledge(session.session_id for session in rewrites)
         if self._recoverable_fatal:
             self._fatal = False
             self._recoverable_fatal = False
@@ -474,6 +523,7 @@ class RecordingWorker(QThread):
         session,
         *,
         busy_timeout_ms: int | None = None,
+        rewrite: bool = False,
     ) -> bool:
         if self._store is None:
             raise RuntimeError("session store is not initialized")
@@ -487,6 +537,7 @@ class RecordingWorker(QThread):
             result = self._call_persist(
                 session,
                 busy_timeout_ms=busy_timeout_ms,
+                rewrite=rewrite,
             )
             self._validate_persist_result(result)
         except Exception as error:
@@ -498,10 +549,11 @@ class RecordingWorker(QThread):
                     )
                     self._mark_fatal(queue_error, recoverable=True)
                     raise queue_error from error
-                pending = _PendingPersist(session=session)
+                pending = _PendingPersist(session=session, rewrite=rewrite)
                 self._pending_persists[key] = pending
             else:
                 pending.session = session
+                pending.rewrite = pending.rewrite or rewrite
             pending.attempts += 1
             pending.error = str(error)
             status = (
@@ -539,24 +591,42 @@ class RecordingWorker(QThread):
         )
         return True
 
+    def _rewrite_or_queue(self, session) -> bool:
+        """Hand an idempotent session_id rewrite to the bounded worker queue."""
+        return self._persist_or_queue(session, rewrite=True)
+
     def _retry_pending_once(self) -> None:
         if not self._pending_persists:
             return
         pending = next(iter(self._pending_persists.values()))
-        self._persist_or_queue(pending.session)
+        self._persist_or_queue(
+            pending.session,
+            rewrite=pending.rewrite,
+        )
 
-    def _call_persist(self, session, *, busy_timeout_ms: int | None):
+    def _call_persist(
+        self,
+        session,
+        *,
+        busy_timeout_ms: int | None,
+        rewrite: bool = False,
+    ):
+        persist = (
+            self._store.rewrite_session
+            if rewrite
+            else self._store.persist_session
+        )
         if busy_timeout_ms is None:
-            return self._store.persist_session(session)
+            return persist(session)
         try:
-            return self._store.persist_session(
+            return persist(
                 session,
                 busy_timeout_ms=busy_timeout_ms,
             )
         except TypeError as error:
             if "busy_timeout_ms" not in str(error):
                 raise
-            return self._store.persist_session(session)
+            return persist(session)
 
     def _remaining_shutdown_ms(self, deadline=None) -> int:
         effective_deadline = (
@@ -595,6 +665,7 @@ class RecordingWorker(QThread):
                     self._PERSISTENCE_BUSY_TIMEOUT_MS,
                     remaining_ms,
                 ),
+                rewrite=pending.rewrite,
             )
             total_attempts += 1
             attempts_by_key[key] += 1
@@ -683,6 +754,15 @@ class RecordingWorker(QThread):
         self._tracker.cross_group_grace = cross_group_grace
         self._tracker.sample_interval = self.sample_interval
         self._tracker.flush_interval = self.flush_interval
+        self._tracker._max_pending_attention_rewrites = max(
+            1,
+            int(
+                tracker_cfg.get(
+                    "attention_rewrite_queue_size",
+                    self._max_pending_persists,
+                )
+            ),
+        )
         self._sampling_cadence.reset()
 
     def _sleep_check(self, ms):

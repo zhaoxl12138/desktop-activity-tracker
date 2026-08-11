@@ -177,6 +177,10 @@ class ActivitySession:
     classification_version: str = "legacy"
 
 
+class AttentionRewriteBackpressure(RuntimeError):
+    """Raised before sampling when corrected sessions have no durable owner."""
+
+
 # ── Session tracker state machine ──
 
 
@@ -189,7 +193,8 @@ class SessionTracker:
 
     def __init__(self, config, classifier,
                  on_session_end=None, on_flush=None,
-                 audio_detector=None, monotonic_clock=None):
+                 audio_detector=None, monotonic_clock=None,
+                 on_session_rewrite=None):
         tracker = config.get("tracker", {})
         self.sample_interval = tracker.get("sample_interval_seconds",
             config.get("sample_interval_seconds", 1))
@@ -211,6 +216,9 @@ class SessionTracker:
         )
         self._on_session_end = on_session_end
         self._on_flush = on_flush
+        # Rewrites are idempotent upserts of an already-ended session_id.
+        # They intentionally use a distinct callback from lifecycle events.
+        self._on_session_rewrite = on_session_rewrite
         self._audio_detector = audio_detector
         self._monotonic_clock = monotonic_clock or time.monotonic
         self._last_flush_at = self._monotonic_clock()
@@ -236,12 +244,32 @@ class SessionTracker:
         self._video_silent_idle: float = 0.0
         self._provisional_attention: list[dict] = []
         self._pending_attention_rewrites: dict[str, ActivitySession] = {}
+        self._max_pending_attention_rewrites = max(
+            1,
+            int(tracker.get("attention_rewrite_queue_size", 100)),
+        )
+        self._rewrite_backpressured = False
 
     # ── Public API ──────────────────────────────────────────────────
 
     @property
     def current_session(self) -> ActivitySession | None:
         return self._current
+
+    def pending_rewrite_sessions(self) -> tuple[ActivitySession, ...]:
+        """Return tracker-owned idempotent rewrites for drain or recovery."""
+        return tuple(self._pending_attention_rewrites.values())
+
+    def drain_pending_rewrites(self) -> bool:
+        """Offer every tracker-owned rewrite to the explicit rewrite callback."""
+        return self._retry_attention_rewrites()
+
+    def acknowledge_pending_rewrites(self, session_ids) -> None:
+        """Release rewrites only after another owner durably stores them."""
+        for session_id in session_ids:
+            self._pending_attention_rewrites.pop(str(session_id), None)
+        if len(self._pending_attention_rewrites) < self._max_pending_attention_rewrites:
+            self._rewrite_backpressured = False
 
     def finish_current(self, reason="manual"):
         """End the current session without starting a replacement session."""
@@ -331,13 +359,17 @@ class SessionTracker:
         Resets the persistent idle timer instantly so typing always
         interrupts idle without waiting for the next polling tick.
         """
-        self._persistent_idle = 0.0
-        self._idle_corrected = False
+        self._reset_idle_epoch()
         self._last_cursor_pos = None
         self._last_kb_state = None
         self._activity_from_hook = True
         self._awaiting_activity = False
         self._video_silent_idle = 0.0
+
+    def _reset_idle_epoch(self) -> None:
+        """Start a new physical-idle epoch without dropping rewrite ownership."""
+        self._persistent_idle = 0.0
+        self._idle_corrected = False
         self._provisional_attention.clear()
 
     def _attention_bucket(self, category_key: str, audio_playing: bool) -> str:
@@ -405,10 +437,9 @@ class SessionTracker:
         cls._sync_effective(owner)
 
     def _retry_attention_rewrites(self) -> bool:
-        callback = self._on_flush or self._on_session_end
+        callback = self._on_session_rewrite
         if callback is None:
-            self._pending_attention_rewrites.clear()
-            return True
+            return not self._pending_attention_rewrites
         for session_id, session in list(self._pending_attention_rewrites.items()):
             persisted = callback(session)
             if persisted is False:
@@ -416,8 +447,58 @@ class SessionTracker:
             self._pending_attention_rewrites.pop(session_id, None)
         return True
 
+    def _rewrite_owner_ids(self, entries: list[dict]) -> set[str]:
+        return {
+            entry["owner"].session_id
+            for entry in entries
+            if entry.get("persisted") and not isinstance(entry["owner"], dict)
+        }
+
+    def _can_reserve_rewrites(self, entries: list[dict]) -> bool:
+        owner_ids = self._rewrite_owner_ids(entries)
+        new_ids = owner_ids.difference(self._pending_attention_rewrites)
+        return (
+            len(self._pending_attention_rewrites) + len(new_ids)
+            <= self._max_pending_attention_rewrites
+        )
+
+    def _can_persist_provisional_owner(self, session: ActivitySession) -> bool:
+        owns_unconfirmed_attention = any(
+            entry["owner"] is session and not entry.get("persisted")
+            for entry in self._provisional_attention
+        )
+        if not owns_unconfirmed_attention:
+            return True
+        reserved_ids = set(self._pending_attention_rewrites)
+        reserved_ids.update(self._rewrite_owner_ids(self._provisional_attention))
+        reserved_ids.add(session.session_id)
+        return len(reserved_ids) <= self._max_pending_attention_rewrites
+
+    def _enforce_rewrite_backpressure(self) -> None:
+        if not self._pending_attention_rewrites and not self._rewrite_backpressured:
+            return
+        self._retry_attention_rewrites()
+        saturated = (
+            len(self._pending_attention_rewrites)
+            >= self._max_pending_attention_rewrites
+        )
+        if self._rewrite_backpressured:
+            if self._can_reserve_rewrites(self._provisional_attention):
+                self._rewrite_backpressured = False
+            else:
+                saturated = True
+        if saturated:
+            raise AttentionRewriteBackpressure(
+                "attention rewrite capacity exhausted before sampling"
+            )
+
     def _correct_provisional_attention(self) -> bool:
         entries = self._provisional_attention
+        if not self._can_reserve_rewrites(entries):
+            self._rewrite_backpressured = True
+            raise AttentionRewriteBackpressure(
+                "attention rewrite capacity exhausted during correction"
+            )
         self._provisional_attention = []
         for entry in entries:
             self._move_provisional_entry(entry)
@@ -453,6 +534,7 @@ class SessionTracker:
           - Cross-domain (e.g. coding → video) → 30s grace period, then split
         """
 
+        self._enforce_rewrite_backpressure()
         now = datetime.now()
         date_str = now.strftime("%Y-%m-%d")
 
@@ -541,11 +623,9 @@ class SessionTracker:
                     )
                     self._mark_provisional_persisted(gap_session)
             self._pending_switch = None
-            self._persistent_idle = 0.0
-            self._idle_corrected = False
+            self._reset_idle_epoch()
             self._video_silent_idle = 0.0
             self._awaiting_activity = True
-            self._provisional_attention.clear()
         self._last_tick_wall_time = now
 
         # Resolve window info
@@ -695,8 +775,7 @@ class SessionTracker:
             if not (self._activity_from_hook or cursor_moved or kb_changed):
                 return self._make_snapshot(idle_seconds)
             self._awaiting_activity = False
-            self._persistent_idle = 0.0
-            self._idle_corrected = False
+            self._reset_idle_epoch()
             self._video_silent_idle = 0.0
 
         # Start new session if needed
@@ -763,8 +842,7 @@ class SessionTracker:
                     "idle_corrected": False,
                 }
                 self._pending_switch = p
-                self._persistent_idle = 0.0
-                self._idle_corrected = False
+                self._reset_idle_epoch()
                 self._last_cursor_pos = None
                 self._last_kb_state = None
             else:
@@ -795,8 +873,7 @@ class SessionTracker:
             engaged, passive, idle = self._pending_components(p)
             pending_duration = engaged + passive + idle
             if pending_duration == 0:
-                self._persistent_idle = 0.0
-                self._idle_corrected = False
+                self._reset_idle_epoch()
                 self._last_cursor_pos = None
                 self._last_kb_state = None
             self._video_silent_idle = p.get("video_silent_idle", 0)
@@ -928,10 +1005,8 @@ class SessionTracker:
             p.get("pid", self._last_pid),
         )
         if active:
-            self._persistent_idle = 0.0
-            self._idle_corrected = False
+            self._reset_idle_epoch()
             p["idle_corrected"] = False
-            self._provisional_attention.clear()
         else:
             self._persistent_idle += self.sample_interval
 
@@ -959,7 +1034,11 @@ class SessionTracker:
         ):
             p["idle_corrected"] = True
             correction_attempted = True
-            self._correct_provisional_attention()
+            try:
+                self._correct_provisional_attention()
+            except AttentionRewriteBackpressure:
+                p["idle_corrected"] = False
+                raise
         if not correction_attempted:
             self._retry_attention_rewrites()
 
@@ -997,10 +1076,8 @@ class SessionTracker:
 
         active = self._activity_from_hook or cursor_moved or kb_changed
         if active:
-            self._persistent_idle = 0.0
-            self._idle_corrected = False
+            self._reset_idle_epoch()
             self._activity_from_hook = False
-            self._provisional_attention.clear()
         else:
             self._persistent_idle += self.sample_interval
 
@@ -1108,6 +1185,11 @@ class SessionTracker:
         if self._current is None:
             return True
         session = self._current
+        if not self._can_persist_provisional_owner(session):
+            self._rewrite_backpressured = True
+            raise AttentionRewriteBackpressure(
+                "attention rewrite capacity exhausted before session boundary"
+            )
         if self._on_session_end:
             persisted = self._on_session_end(session)
             if persisted is False:

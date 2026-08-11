@@ -43,5 +43,17 @@ class SessionRuntimeStore:
             if previous_timeout is not None:
                 self._conn.execute(f"PRAGMA busy_timeout={previous_timeout}")
 
+    def rewrite_session(
+        self,
+        session,
+        *,
+        busy_timeout_ms: int | None = None,
+    ) -> int:
+        """Idempotently upsert corrected counters for an ended session_id."""
+        return self.persist_session(
+            session,
+            busy_timeout_ms=busy_timeout_ms,
+        )
+
     def close(self) -> None:
         database.close_db(self._conn)

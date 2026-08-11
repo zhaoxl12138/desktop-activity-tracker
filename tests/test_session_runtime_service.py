@@ -74,6 +74,29 @@ def test_persist_session_replay_uses_session_id_as_idempotency_key(tmp_path):
     assert rows == [(first_row_id, 2)]
 
 
+def test_rewrite_session_explicitly_upserts_the_existing_session_id(tmp_path):
+    store = SessionRuntimeStore(str(tmp_path / "usage.db"))
+    session = _session("attention-rewrite")
+    session.engaged_seconds = 2
+    session.effective_seconds = 2
+    first_row_id = store.persist_session(session)
+
+    session.engaged_seconds = 0
+    session.effective_seconds = 0
+    session.idle_seconds = 2
+    rewrite_row_id = store.rewrite_session(session)
+
+    rows = store._conn.execute(
+        "SELECT id,engaged_seconds,idle_seconds FROM activity_sessions "
+        "WHERE session_id = ?",
+        (session.session_id,),
+    ).fetchall()
+    store.close()
+
+    assert rewrite_row_id == first_row_id
+    assert rows == [(first_row_id, 0, 2)]
+
+
 def test_persist_session_round_trips_trusted_metrics_on_insert_and_update(tmp_path):
     store = SessionRuntimeStore(str(tmp_path / "usage.db"))
     session = _session("trusted-metrics")

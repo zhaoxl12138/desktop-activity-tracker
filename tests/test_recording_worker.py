@@ -17,6 +17,7 @@ class TrackerStub:
         self.sample_interval = 1
         self.flush_interval = 5
         self.cross_group_grace = 30
+        self._max_pending_attention_rewrites = 100
         self.classifier = object()
         self.replacement_calls = []
         self.replace_result = True
@@ -346,6 +347,7 @@ def test_settings_update_is_applied_only_when_worker_consumes_command(monkeypatc
             "entertainment_idle_threshold_seconds": 600,
             "min_session_seconds": 4,
             "cross_group_grace_seconds": 45,
+            "persistence_retry_queue_size": 12,
         }
     }
 
@@ -362,6 +364,7 @@ def test_settings_update_is_applied_only_when_worker_consumes_command(monkeypatc
     assert tracker.entertainment_idle_threshold == 600
     assert tracker.min_session == 4
     assert tracker.cross_group_grace == 45
+    assert tracker._max_pending_attention_rewrites == 12
     assert tracker.classifier is replacement_classifier
     assert tracker.replacement_calls == [replacement_classifier]
     assert worker.sample_interval == 3
@@ -820,6 +823,132 @@ def test_cleanup_spools_retained_tail_when_full_queue_never_recovers(tmp_path):
     assert worker.health.recovery_pending == 2
     assert worker.health.shutdown_safe is True
     assert store.closed is True
+
+
+def test_worker_rewrite_adapter_hands_failure_to_bounded_persist_queue(
+    monkeypatch,
+):
+    class RewriteOfflineStore(FakeStore):
+        def __init__(self):
+            super().__init__()
+            self.rewrite_attempts = []
+
+        def rewrite_session(self, session, *, busy_timeout_ms=None):
+            self.rewrite_attempts.append((session, busy_timeout_ms))
+            raise OSError("offline")
+
+    monkeypatch.setattr("daylens.session_tracker._get_cursor_pos", lambda: (0, 0))
+    monkeypatch.setattr(
+        "daylens.session_tracker._get_keyboard_snapshot",
+        lambda: bytes(256),
+    )
+    worker = worker_module.RecordingWorker(
+        "config.yaml",
+        "usage.db",
+        {"tracker": {"persistence_retry_queue_size": 2}},
+    )
+    store = RewriteOfflineStore()
+    worker._store = store
+    assert worker._tracker_config()["tracker"][
+        "attention_rewrite_queue_size"
+    ] == 2
+    tracker = SessionTracker(
+        config={
+            "tracker": {
+                "sample_interval_seconds": 1,
+                "idle_threshold_seconds": 1,
+            }
+        },
+        classifier=StaticClassifier(),
+        on_session_end=lambda _session: True,
+        on_session_rewrite=worker._rewrite_or_queue,
+    )
+    coding = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 201,
+    }
+    notes = {
+        "process_name": "Notes.exe",
+        "window_title": "notes.md",
+        "exe_path": "",
+        "pid": 202,
+    }
+
+    tracker.tick(0, coding)
+    old_session = tracker.current_session
+    tracker.tick(0, notes)
+
+    assert tracker.pending_rewrite_sessions() == ()
+    assert list(worker._pending_persists) == [old_session.session_id]
+    assert worker._pending_persists[old_session.session_id].rewrite is True
+    assert [item[0] for item in store.rewrite_attempts] == [old_session]
+
+
+def test_cleanup_spools_tracker_rewrites_and_tail_then_replays_all(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr("daylens.session_tracker._get_cursor_pos", lambda: (0, 0))
+    monkeypatch.setattr(
+        "daylens.session_tracker._get_keyboard_snapshot",
+        lambda: bytes(256),
+    )
+    recovery_path = tmp_path / "attention-rewrites.json"
+    tracker = SessionTracker(
+        config={
+            "tracker": {
+                "sample_interval_seconds": 1,
+                "idle_threshold_seconds": 1,
+            }
+        },
+        classifier=StaticClassifier(),
+        on_session_end=lambda _session: True,
+        on_session_rewrite=lambda _session: False,
+    )
+    coding = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 203,
+    }
+    notes = {
+        "process_name": "Notes.exe",
+        "window_title": "notes.md",
+        "exe_path": "",
+        "pid": 204,
+    }
+    tracker.tick(0, coding)
+    rewritten_session = tracker.current_session
+    tracker.tick(0, notes)
+    tail = tracker.current_session
+    assert tracker.pending_rewrite_sessions() == (rewritten_session,)
+
+    worker = worker_module.RecordingWorker(
+        "config.yaml",
+        "usage.db",
+        {"tracker": {"persistence_shutdown_retry_attempts": 1}},
+        recovery_path=recovery_path,
+    )
+    worker._tracker = tracker
+    worker._store = FakeStore([OSError("offline")] * 10)
+
+    worker._cleanup()
+
+    recovered = worker._recovery_spool.load_sessions()
+    assert [session.session_id for session in recovered] == [
+        rewritten_session.session_id,
+        tail.session_id,
+    ]
+    assert tracker.pending_rewrite_sessions() == ()
+    replay_store = FakeStore()
+    assert worker._recovery_spool.replay(replay_store) == 2
+    assert [session.session_id for session in replay_store.attempts] == [
+        rewritten_session.session_id,
+        tail.session_id,
+    ]
+    assert worker._recovery_spool.load_sessions() == []
 
 
 def test_invalid_settings_command_keeps_previous_tracker_state(monkeypatch):

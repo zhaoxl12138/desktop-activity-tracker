@@ -53,11 +53,16 @@ def handle_start(config: dict, config_path: str) -> None:
                 "flush_interval_seconds": flush_interval,
                 "idle_threshold_seconds": idle_threshold,
                 "min_session_seconds": min_session,
+                "attention_rewrite_queue_size": tracker_cfg.get(
+                    "attention_rewrite_queue_size",
+                    tracker_cfg.get("persistence_retry_queue_size", 100),
+                ),
             }
         },
         classifier=classifier,
         on_session_end=store.persist_session,
         on_flush=store.persist_session,
+        on_session_rewrite=store.rewrite_session,
     )
 
     print("DayLens v1.5.3")
@@ -104,8 +109,18 @@ def handle_start(config: dict, config_path: str) -> None:
         if current_tail is not None:
             unresolved_tail = current_tail
         try:
-            if tracker.finish_current("shutdown"):
+            drain_rewrites = getattr(tracker, "drain_pending_rewrites", None)
+            rewrites_drained = (
+                bool(drain_rewrites()) if callable(drain_rewrites) else True
+            )
+            tail_finished = (
+                bool(tracker.finish_current("shutdown"))
+                if current_tail is not None
+                else True
+            )
+            if tail_finished:
                 unresolved_tail = None
+            if rewrites_drained and tail_finished:
                 break
         except Exception as exc:
             shutdown_error = exc
@@ -113,19 +128,35 @@ def handle_start(config: dict, config_path: str) -> None:
         current_tail = getattr(tracker, "current_session", None)
         if current_tail is not None:
             unresolved_tail = current_tail
-        if unresolved_tail is None:
+        pending_snapshot = getattr(tracker, "pending_rewrite_sessions", None)
+        pending_rewrites = (
+            tuple(pending_snapshot()) if callable(pending_snapshot) else ()
+        )
+        unresolved = {
+            session.session_id: session for session in pending_rewrites
+        }
+        if unresolved_tail is not None:
+            unresolved[unresolved_tail.session_id] = unresolved_tail
+        if not unresolved:
             _recording_lock.close()
             raise RuntimeError(
                 "shutdown session persistence failed and no recoverable "
                 "session remained in memory"
             ) from shutdown_error
         try:
-            recovery_spool.store_sessions([unresolved_tail])
+            recovery_spool.store_sessions(unresolved.values())
         except Exception as exc:
             _recording_lock.close()
             raise RuntimeError(
                 "shutdown session persistence and recovery spool both failed"
             ) from exc
+        acknowledge = getattr(
+            tracker,
+            "acknowledge_pending_rewrites",
+            None,
+        )
+        if callable(acknowledge):
+            acknowledge(session.session_id for session in pending_rewrites)
         recovery_message = (
             "shutdown session persistence failed; recovery saved at "
             f"{recovery_spool.path}"
