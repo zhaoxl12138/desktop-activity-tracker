@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import yaml
@@ -79,8 +80,9 @@ def _write_config(path: Path):
 
 
 def _dashboard_snapshot(**overrides):
+    today = datetime.now().date()
     payload = {
-        "today": "2026-08-11",
+        "today": today.strftime("%Y-%m-%d"),
         "stats": {"totals": {}, "by_category": [], "by_app": [], "by_app_detail": []},
         "totals": {
             "effective_seconds": 0,
@@ -106,7 +108,8 @@ def _dashboard_snapshot(**overrides):
             "yesterday_entertainment": [0] * 24,
             "seven_days": [[0] * 24 for _ in range(7)],
             "seven_day_labels": [
-                f"2026-08-{day:02d}" for day in range(5, 12)
+                (today - timedelta(days=offset)).strftime("%Y-%m-%d")
+                for offset in reversed(range(7))
             ],
             "thirty_days": [0] * 30,
         },

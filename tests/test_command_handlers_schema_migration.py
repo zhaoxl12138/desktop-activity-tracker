@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -11,6 +12,7 @@ import pytest
 
 from daylens import database
 from daylens.services import command_handlers
+from daylens.services import bootstrap_runtime_service
 
 
 V3_SCHEMA = """
@@ -143,8 +145,8 @@ def test_cli_read_handlers_migrate_real_v3_database_before_querying(
     real_init_db = database.init_db
     migration_connections = []
 
-    def tracked_init_db(path: str):
-        conn = real_init_db(path)
+    def tracked_init_db(path: str, **kwargs):
+        conn = real_init_db(path, **kwargs)
         migration_connections.append(conn)
         return conn
 
@@ -253,3 +255,63 @@ def test_cli_read_handlers_keep_missing_database_behavior(
 
     assert not db_path.exists()
     assert "数据库不存在" in capsys.readouterr().out
+
+
+def test_schema_upgrade_has_explicit_short_lock_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requested_timeouts = []
+
+    def locked_init(_path: str, *, busy_timeout_ms: int):
+        requested_timeouts.append(busy_timeout_ms)
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(
+        bootstrap_runtime_service.database,
+        "init_db",
+        locked_init,
+    )
+    started = time.monotonic()
+
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        bootstrap_runtime_service.ensure_readable_schema(
+            "locked.db",
+            timeout_seconds=0.2,
+        )
+
+    elapsed = time.monotonic() - started
+    assert elapsed < 0.7
+    assert requested_timeouts
+    assert max(requested_timeouts) <= 100
+
+
+def test_schema_upgrade_fails_within_deadline_under_persistent_real_lock(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "persistently-locked.db"
+    _create_v3_database(db_path, datetime.now().strftime("%Y-%m-%d"))
+    lock_connection = sqlite3.connect(db_path)
+    lock_connection.execute("BEGIN EXCLUSIVE")
+    started = time.monotonic()
+
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            bootstrap_runtime_service.ensure_readable_schema(
+                str(db_path),
+                timeout_seconds=0.25,
+            )
+    finally:
+        lock_connection.rollback()
+        lock_connection.close()
+
+    assert time.monotonic() - started < 0.9
+
+    bootstrap_runtime_service.ensure_readable_schema(
+        str(db_path),
+        timeout_seconds=0.5,
+    )
+    conn = sqlite3.connect(db_path)
+    assert conn.execute(
+        "SELECT value FROM schema_meta WHERE key='schema_version'"
+    ).fetchone()[0] == "4"
+    conn.close()

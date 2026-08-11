@@ -172,13 +172,22 @@ def maybe_checkpoint(conn) -> None:
         wal_checkpoint(conn)
 
 
-def recover_stale_wal(db_path: str) -> None:
+def recover_stale_wal(
+    db_path: str,
+    *,
+    busy_timeout_ms: int = 5000,
+) -> None:
     wal_path = db_path + "-wal"
     if not os.path.exists(wal_path):
         return
     conn = None
     try:
-        conn = sqlite3.connect(db_path)
+        bounded_timeout = max(0, int(busy_timeout_ms))
+        conn = sqlite3.connect(
+            db_path,
+            timeout=bounded_timeout / 1000.0,
+        )
+        conn.execute(f"PRAGMA busy_timeout={bounded_timeout}")
         conn.execute("PRAGMA journal_mode=WAL")
         rows = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
         if rows:
@@ -195,16 +204,22 @@ def recover_stale_wal(db_path: str) -> None:
             pass
 
 
-def init_db(db_path: str):
+def init_db(db_path: str, *, busy_timeout_ms: int = 5000):
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    recover_stale_wal(db_path)
-    conn = sqlite3.connect(db_path, factory=TrackedConnection)
+    bounded_timeout = max(0, int(busy_timeout_ms))
+    recover_stale_wal(db_path, busy_timeout_ms=bounded_timeout)
+    conn = sqlite3.connect(
+        db_path,
+        factory=TrackedConnection,
+        timeout=bounded_timeout / 1000.0,
+    )
     try:
-        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute(f"PRAGMA busy_timeout={bounded_timeout}")
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.executescript(SCHEMA)
         _run_migrations(conn)
+        _ensure_runtime_indexes(conn)
         conn.commit()
         conn._commit_count = 0
         return conn
@@ -298,6 +313,16 @@ def _run_migrations(conn) -> None:
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
         )
     conn.commit()
+
+
+def _ensure_runtime_indexes(conn) -> None:
+    """Create indexes that depend on columns added by migrations."""
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_engaged_work_date "
+        "ON activity_sessions(date DESC) "
+        "WHERE engaged_seconds > 0 AND category_key IN "
+        "('ai_tools','coding','creative','office','reading')"
+    )
 
 
 def close_db(conn) -> None:

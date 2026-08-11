@@ -1,5 +1,8 @@
 import sqlite3
 
+import pytest
+
+from daylens.repositories import connection_repository
 from daylens.repositories.connection_repository import init_db
 from daylens.repositories.settings_repository import merge_custom_rules
 
@@ -17,6 +20,11 @@ def test_init_db_records_schema_version(tmp_path):
     assert columns["passive_seconds"] == ("INTEGER", "0")
     assert columns["metric_version"] == ("TEXT", "'legacy'")
     assert columns["classification_version"] == ("TEXT", "'legacy'")
+    indexes = {
+        row[1]
+        for row in conn.execute("PRAGMA index_list(activity_sessions)")
+    }
+    assert "idx_sessions_engaged_work_date" in indexes
     conn.close()
 
 
@@ -77,6 +85,11 @@ def test_v3_activity_sessions_migration_preserves_rows_and_is_idempotent(tmp_pat
     assert migrated.execute(
         "SELECT value FROM schema_meta WHERE key='schema_version'"
     ).fetchone()[0] == "4"
+    indexes = {
+        row[1]
+        for row in migrated.execute("PRAGMA index_list(activity_sessions)")
+    }
+    assert "idx_sessions_engaged_work_date" in indexes
     migrated.close()
 
     reopened = init_db(str(db))
@@ -87,6 +100,39 @@ def test_v3_activity_sessions_migration_preserves_rows_and_is_idempotent(tmp_pat
         "SELECT value FROM schema_meta WHERE key='schema_version'"
     ).fetchone()[0] == "4"
     reopened.close()
+
+
+def test_init_db_closes_connection_when_setup_fails(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class FailingConnection:
+        closed = False
+
+        def execute(self, sql):
+            if "journal_mode" in sql:
+                raise sqlite3.OperationalError("database is locked")
+            return self
+
+        def close(self):
+            self.closed = True
+
+    connection = FailingConnection()
+    monkeypatch.setattr(
+        connection_repository,
+        "recover_stale_wal",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        connection_repository.sqlite3,
+        "connect",
+        lambda *_args, **_kwargs: connection,
+    )
+
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        init_db(str(tmp_path / "locked.db"))
+
+    assert connection.closed is True
 
 
 def test_v1_custom_rules_migration_adds_title_patterns_without_losing_rows(tmp_path):

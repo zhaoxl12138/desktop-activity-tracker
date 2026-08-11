@@ -57,6 +57,7 @@ def test_focus_axis_includes_the_last_minute_of_the_day():
                 "start_time": "2026-07-26 23:59:00",
                 "end_time": "2026-07-26 23:59:59",
                 "effective_seconds": 59,
+                "engaged_seconds": 59,
                 "idle_seconds": 0,
                 "category_key": "coding",
             }
@@ -65,6 +66,79 @@ def test_focus_axis_includes_the_last_minute_of_the_day():
 
     assert len(colors) == 1440
     assert colors[1439] == "active"
+
+
+def test_focus_axis_never_promotes_legacy_passive_or_nonwork_time():
+    class AxisContext:
+        @staticmethod
+        def _to_minute(timestamp):
+            return TodayOverviewPage._to_minute(None, timestamp)
+
+        @staticmethod
+        def _color_for_category(_key, _name=""):
+            return "active"
+
+    colors = TodayOverviewPage._build_focus_axis(
+        AxisContext(),
+        [
+            {
+                "start_time": "2026-08-11 09:00:00",
+                "end_time": "2026-08-11 10:00:00",
+                "effective_seconds": 3_600,
+                "engaged_seconds": 0,
+                "category_key": "coding",
+            },
+            {
+                "start_time": "2026-08-11 10:00:00",
+                "end_time": "2026-08-11 11:00:00",
+                "effective_seconds": 3_600,
+                "passive_seconds": 3_600,
+                "category_key": "video",
+            },
+            {
+                "start_time": "2026-08-11 11:00:00",
+                "end_time": "2026-08-11 12:00:00",
+                "effective_seconds": 3_600,
+                "engaged_seconds": 3_600,
+                "category_key": "social",
+            },
+        ],
+    )
+
+    assert colors.count("active") == 0
+
+
+def test_focus_axis_distributes_engaged_minutes_across_hour_boundary():
+    class AxisContext:
+        @staticmethod
+        def _to_minute(timestamp):
+            return TodayOverviewPage._to_minute(None, timestamp)
+
+        @staticmethod
+        def _color_for_category(_key, _name=""):
+            return "active"
+
+    colors = TodayOverviewPage._build_focus_axis(
+        AxisContext(),
+        [
+            {
+                "start_time": "2026-08-11 09:30:00",
+                "end_time": "2026-08-11 10:30:00",
+                "effective_seconds": 1_001,
+                "engaged_seconds": 1_001,
+                "idle_seconds": 2_599,
+                "category_key": "coding",
+                "category_name": "工作学习",
+            }
+        ],
+    )
+
+    active_minutes = [
+        minute for minute, color in enumerate(colors) if color == "active"
+    ]
+    assert len(active_minutes) == round(1_001 / 60)
+    assert any(minute < 600 for minute in active_minutes)
+    assert any(minute >= 600 for minute in active_minutes)
 
 
 def test_today_sessions_include_idle_only_sessions(tmp_path):

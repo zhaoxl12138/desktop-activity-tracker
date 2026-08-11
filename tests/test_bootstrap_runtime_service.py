@@ -14,7 +14,7 @@ def test_prepare_runtime_closes_schema_connection_then_only_inspects_quality(
     monkeypatch.setattr(
         bootstrap_runtime_service.database,
         "init_db",
-        lambda _path: calls.append("init") or connection,
+        lambda _path, **_kwargs: calls.append("init") or connection,
     )
     monkeypatch.setattr(
         bootstrap_runtime_service.database,
@@ -76,7 +76,7 @@ def test_prepare_runtime_reports_quality_issues_without_repairing(
     monkeypatch.setattr(
         bootstrap_runtime_service.database,
         "init_db",
-        lambda _path: connection,
+        lambda _path, **_kwargs: connection,
     )
     monkeypatch.setattr(
         bootstrap_runtime_service.database,
@@ -136,7 +136,7 @@ def test_prepare_runtime_passes_tracker_sample_interval_to_quality_inspection(
     monkeypatch.setattr(
         bootstrap_runtime_service.database,
         "init_db",
-        lambda _path: connection,
+        lambda _path, **_kwargs: connection,
     )
     monkeypatch.setattr(
         bootstrap_runtime_service.database,

@@ -282,20 +282,135 @@ def _init_blocks():
     return blocks
 
 
-def _allocate_by_overlap(total: int, overlaps: list[float]) -> list[int]:
+def allocate_integer_by_weights(
+    total: int,
+    weights: list[float],
+) -> list[int]:
     """Allocate an integer counter proportionally without losing seconds."""
-    wall_seconds = sum(overlaps)
-    if total <= 0 or wall_seconds <= 0:
-        return [0] * len(overlaps)
+    weight_total = sum(weights)
+    if total <= 0 or weight_total <= 0:
+        return [0] * len(weights)
     allocated: list[int] = []
-    cumulative_overlap = 0.0
+    cumulative_weight = 0.0
     previous_total = 0
-    for overlap in overlaps:
-        cumulative_overlap += overlap
-        cumulative_total = round(total * cumulative_overlap / wall_seconds)
+    for weight in weights:
+        cumulative_weight += weight
+        cumulative_total = round(total * cumulative_weight / weight_total)
         allocated.append(cumulative_total - previous_total)
         previous_total = cumulative_total
     return allocated
+
+
+def allocate_seconds_to_hour_buckets(
+    start: datetime,
+    end: datetime,
+    total_seconds: int,
+) -> list[int]:
+    """Distribute a session counter into 24 hour buckets exactly."""
+    buckets = [0] * 24
+    if total_seconds <= 0:
+        return buckets
+    if end <= start:
+        buckets[start.hour] = total_seconds
+        return buckets
+
+    segments: list[tuple[int, float]] = []
+    current = start
+    while current < end:
+        next_hour = (
+            current.replace(minute=0, second=0, microsecond=0)
+            + timedelta(hours=1)
+        )
+        segment_end = min(end, next_hour)
+        overlap = (segment_end - current).total_seconds()
+        if overlap > 0:
+            segments.append((current.hour, overlap))
+        current = segment_end
+
+    parts = allocate_integer_by_weights(
+        total_seconds,
+        [overlap for _, overlap in segments],
+    )
+    for (hour, _overlap), part in zip(segments, parts):
+        buckets[hour] += part
+    return buckets
+
+
+def seconds_buckets_to_minutes(seconds: list[int]) -> list[int]:
+    """Round buckets while preserving the rounded all-bucket total."""
+    minutes: list[int] = []
+    cumulative_seconds = 0
+    previous_minutes = 0
+    for value in seconds:
+        cumulative_seconds += max(0, int(value))
+        cumulative_minutes = round(cumulative_seconds / 60)
+        minutes.append(cumulative_minutes - previous_minutes)
+        previous_minutes = cumulative_minutes
+    return minutes
+
+
+def build_engaged_work_minute_categories(
+    sessions: list[dict],
+) -> list[tuple[str, str] | None]:
+    """Return a 1440-minute engaged-work axis without legacy fallback."""
+    minute_categories: list[tuple[str, str] | None] = [None] * 1440
+    for session in sessions:
+        category_key = str(session.get("category_key", "") or "")
+        if category_key not in WORK_CATS:
+            continue
+        engaged = parse_nonnegative_int(session.get("engaged_seconds"))
+        if engaged is None or engaged <= 0:
+            continue
+        try:
+            start = datetime.strptime(
+                str(session.get("start_time", "") or ""),
+                "%Y-%m-%d %H:%M:%S",
+            )
+            end = datetime.strptime(
+                str(session.get("end_time", "") or ""),
+                "%Y-%m-%d %H:%M:%S",
+            )
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if end <= start:
+            continue
+
+        day_end = start.replace(
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
+        ) + timedelta(days=1)
+        clipped_end = min(end, day_end)
+        minute_indices: list[int] = []
+        current = start
+        while current < clipped_end:
+            minute_index = current.hour * 60 + current.minute
+            if 0 <= minute_index < 1440:
+                minute_indices.append(minute_index)
+            current = (
+                current.replace(second=0, microsecond=0)
+                + timedelta(minutes=1)
+            )
+        if not minute_indices:
+            continue
+
+        engaged_minutes = min(
+            len(minute_indices),
+            max(1, round(engaged / 60)),
+        )
+        minute_parts = allocate_integer_by_weights(
+            engaged_minutes,
+            [1.0] * len(minute_indices),
+        )
+        category_name = str(session.get("category_name", "") or "")
+        for minute_index, part in zip(minute_indices, minute_parts):
+            if part > 0:
+                minute_categories[minute_index] = (
+                    category_key,
+                    category_name,
+                )
+    return minute_categories
 
 
 def _distribute_session(blocks, start, end, dur, eff, engaged, idle,
@@ -340,9 +455,9 @@ def _distribute_session(blocks, start, end, dur, eff, engaged, idle,
         current = slot_end
 
     overlaps = [overlap for _, overlap in segments]
-    effective_parts = _allocate_by_overlap(eff, overlaps)
-    engaged_parts = _allocate_by_overlap(engaged, overlaps)
-    idle_parts = _allocate_by_overlap(idle, overlaps)
+    effective_parts = allocate_integer_by_weights(eff, overlaps)
+    engaged_parts = allocate_integer_by_weights(engaged, overlaps)
+    idle_parts = allocate_integer_by_weights(idle, overlaps)
 
     for index, (block_idx, _overlap) in enumerate(segments):
         b = blocks[block_idx]

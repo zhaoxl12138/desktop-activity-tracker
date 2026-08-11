@@ -130,6 +130,39 @@ def test_work_hourly_series_uses_engaged_while_total_keeps_effective():
     assert split["work"][10] == 30
 
 
+def test_work_hourly_series_preserves_rounded_engaged_minutes_across_hours():
+    split = build_hourly_series_split(
+        [
+            {
+                "start_time": "2026-06-02 09:30:00",
+                "end_time": "2026-06-02 10:30:00",
+                "category_key": "coding",
+                "effective_seconds": 1_001,
+                "engaged_seconds": 1_001,
+            },
+            {
+                "start_time": "bad-time",
+                "end_time": "2026-06-02 12:00:00",
+                "category_key": "coding",
+                "effective_seconds": 600,
+                "engaged_seconds": 600,
+            },
+            {
+                "start_time": "2026-06-02 13:00:00",
+                "end_time": "2026-06-02 12:00:00",
+                "category_key": "coding",
+                "effective_seconds": 600,
+                "engaged_seconds": 600,
+            },
+        ]
+    )
+
+    assert sum(split["work"]) == round(1_001 / 60)
+    assert split["work"][9] + split["work"][10] == 17
+    assert split["total"][9:11] == [8, 8]
+    assert sum(split["entertainment"]) == 0
+
+
 def test_empty_today_snapshot_exposes_trusted_attention_health(tmp_path: Path):
     db_path = tmp_path / "usage.db"
     database.init_db(str(db_path)).close()

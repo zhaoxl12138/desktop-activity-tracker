@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ... import get_app_root
+from ... import get_app_root, timeline
 from ...services.dashboard_service import resolve_display_name
 from ...utils import normalize_category_display_name, parse_nonnegative_int
 from .. import style as ui_style
@@ -731,24 +731,17 @@ class TodayOverviewPage(QWidget):
 
     def _build_focus_axis(self, sessions: list[dict]) -> list[str]:
         colors = [ui_style.COLORS["timeline_idle"]] * 1440
-        for session in sessions:
-            start = self._to_minute(session.get("start_time", ""))
-            end = max(start, self._to_minute(session.get("end_time", "")))
-            total_min = end - start + 1
-            if total_min <= 0:
+        minute_categories = timeline.build_engaged_work_minute_categories(
+            sessions
+        )
+        for minute, category in enumerate(minute_categories):
+            if category is None:
                 continue
-            effective_sec = int(session.get("effective_seconds", 0) or 0)
-            idle_sec = int(session.get("idle_seconds", 0) or 0)
-            total_sec = effective_sec + idle_sec
-            # Show effective portion in category color, leave idle as grey.
-            # Idle is assumed at the tail end of the session (user walks away).
-            if total_sec > 0 and idle_sec > 0:
-                effective_min = min(total_min, int(round(effective_sec / total_sec * total_min)))
-            else:
-                effective_min = total_min
-            color = self._color_for_category(session.get("category_key") or "other", str(session.get("category_name", "") or ""))
-            for minute in range(max(0, start), min(1440, start + effective_min)):
-                colors[minute] = color
+            category_key, category_name = category
+            colors[minute] = self._color_for_category(
+                category_key,
+                category_name,
+            )
         return colors
 
     def _to_minute(self, timestamp: str) -> int:

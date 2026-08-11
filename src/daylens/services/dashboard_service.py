@@ -496,7 +496,7 @@ def build_hourly_series(sessions: list[dict]) -> list[int]:
 
 def build_hourly_series_split(sessions: list[dict]) -> dict[str, list[int]]:
     """Return hourly minutes split by work and entertainment categories."""
-    work = [0.0] * 24
+    work_seconds = [0] * 24
     entertainment = [0.0] * 24
     total = [0.0] * 24
 
@@ -520,13 +520,23 @@ def build_hourly_series_split(sessions: list[dict]) -> dict[str, list[int]]:
             continue
 
         total_span = (end_dt - start_dt).total_seconds()
+        if total_span < 0:
+            continue
+        if is_work:
+            engaged_by_hour = timeline.allocate_seconds_to_hour_buckets(
+                start_dt,
+                end_dt,
+                engaged_seconds,
+            )
+            work_seconds = [
+                current + added
+                for current, added in zip(work_seconds, engaged_by_hour)
+            ]
         if total_span <= 0:
             contrib = effective_seconds / 60.0
             h = start_dt.hour
             total[h] += contrib
-            if is_work:
-                work[h] += engaged_seconds / 60.0
-            elif is_entertainment:
+            if is_entertainment:
                 entertainment[h] += contrib
             continue
 
@@ -539,16 +549,12 @@ def build_hourly_series_split(sessions: list[dict]) -> dict[str, list[int]]:
             ratio = seg_sec / total_span
             contrib = (effective_seconds * ratio) / 60.0
             total[hour] += contrib
-            if is_work:
-                work[hour] += (
-                    engaged_seconds * ratio
-                ) / 60.0
-            elif is_entertainment:
+            if is_entertainment:
                 entertainment[hour] += contrib
             current = segment_end
 
     return {
-        "work": [round(v) for v in work],
+        "work": timeline.seconds_buckets_to_minutes(work_seconds),
         "entertainment": [round(v) for v in entertainment],
         "total": [round(v) for v in total],
     }
@@ -561,7 +567,12 @@ def build_focus_summary(db_path: str, date_str: str) -> tuple[str, int]:
         summary = f"最长专注：{best.start_slot}-{best.end_slot}，{best.duration_minutes}分钟，{best.main_category}"
     else:
         summary = "今日暂未识别到连续专注时段。"
-    return summary, database.count_consecutive_days(db_path)
+    try:
+        consecutive_days = database.count_consecutive_days(db_path)
+    except Exception:
+        LOGGER.exception("Failed to count consecutive focus days")
+        consecutive_days = 0
+    return summary, consecutive_days
 
 
 def build_today_insights(

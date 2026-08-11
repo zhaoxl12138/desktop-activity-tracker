@@ -12,6 +12,14 @@ from decimal import Decimal, InvalidOperation
 WORK_CATEGORY_KEYS = frozenset(
     {"ai_tools", "coding", "office", "reading", "creative"}
 )
+_WORK_CATEGORY_SQL = "'ai_tools','coding','creative','office','reading'"
+_CONSECUTIVE_DAYS_QUERY = (
+    "SELECT DISTINCT date FROM activity_sessions "
+    "INDEXED BY idx_sessions_engaged_work_date "
+    "WHERE engaged_seconds > 0 "
+    f"AND category_key IN ({_WORK_CATEGORY_SQL}) "
+    "AND date <= ? ORDER BY date DESC"
+)
 # attention-v1 counters are incremented and rewritten as mutually exclusive
 # buckets, so persisted integer identities are exact and use a fixed tolerance.
 ATTENTION_V1_COMPOSITION_TOLERANCE_SECONDS = 0
@@ -815,33 +823,25 @@ def query_timeline_sessions(read_conn, db_path: str, date_str: str) -> list[dict
 
 
 def count_consecutive_days(read_conn, db_path: str) -> int:
-    work_categories = sorted(WORK_CATEGORY_KEYS)
-    placeholders = ",".join("?" for _ in work_categories)
+    today = datetime.now().date()
+    expected_date = today
+    count = 0
     with read_conn(db_path) as conn:
-        rows = conn.execute(
-            "SELECT DISTINCT date FROM activity_sessions "
-            "WHERE engaged_seconds > 0 "
-            f"AND category_key IN ({placeholders}) "
-            "ORDER BY date DESC",
-            work_categories,
-        ).fetchall()
-
-    if not rows:
-        return 0
-
-    dates = [row["date"] for row in rows]
-    today = datetime.now().strftime("%Y-%m-%d")
-    if dates[0] != today:
-        return 0
-
-    count = 1
-    for index in range(1, len(dates)):
-        date1 = datetime.strptime(dates[index - 1], "%Y-%m-%d")
-        date2 = datetime.strptime(dates[index], "%Y-%m-%d")
-        if (date1 - date2).days == 1:
-            count += 1
-        else:
-            break
+        rows = conn.execute(_CONSECUTIVE_DAYS_QUERY, (today.isoformat(),))
+        for row in rows:
+            raw_date = str(row["date"] or "")
+            try:
+                parsed = datetime.strptime(raw_date, "%Y-%m-%d").date()
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if parsed.isoformat() != raw_date:
+                continue
+            if parsed == expected_date:
+                count += 1
+                expected_date -= timedelta(days=1)
+                continue
+            if parsed < expected_date:
+                break
     return count
 
 

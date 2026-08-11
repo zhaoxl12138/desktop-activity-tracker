@@ -10,15 +10,30 @@ from .. import database
 from .data_quality_service import inspect_data_quality
 
 
-def ensure_readable_schema(db_path: str) -> None:
+def ensure_readable_schema(
+    db_path: str,
+    *,
+    timeout_seconds: float = 1.0,
+) -> None:
     """Idempotently upgrade a database before a read-only workflow."""
-    for attempt in range(20):
+    deadline = time.monotonic() + max(0.0, float(timeout_seconds))
+    last_error: sqlite3.OperationalError | None = None
+    while True:
+        remaining = max(0.0, deadline - time.monotonic())
+        busy_timeout_ms = max(1, min(100, int(remaining * 1000)))
         try:
-            connection = database.init_db(db_path)
+            connection = database.init_db(
+                db_path,
+                busy_timeout_ms=busy_timeout_ms,
+            )
         except sqlite3.OperationalError as exc:
-            if "locked" not in str(exc).lower() or attempt == 19:
+            if "locked" not in str(exc).lower():
                 raise
-            time.sleep(0.05)
+            last_error = exc
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise last_error
+            time.sleep(min(0.05, remaining))
             continue
         database.close_db(connection)
         return
@@ -26,7 +41,7 @@ def ensure_readable_schema(db_path: str) -> None:
 
 def prepare_runtime_config(config: dict) -> tuple[dict, str]:
     db_path = database.get_db_path(config)
-    ensure_readable_schema(db_path)
+    ensure_readable_schema(db_path, timeout_seconds=5.0)
     database.merge_db_settings(config, db_path)
     try:
         tracker_config = config.get("tracker", {})
