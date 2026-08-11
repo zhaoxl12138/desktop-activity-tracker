@@ -2,10 +2,23 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 
 _DEFAULT_HEALTH_REASON = "新口径数据仍在积累"
+_TRUSTED_HEALTH_REASONS = frozenset(
+    (
+        "统计数据格式异常",
+        "范围内没有可评估记录",
+        "旧日志缺少会话粒度",
+        "旧日志存在异常记录",
+        "记录日期覆盖不足80%",
+        "旧计量口径占比超过20%",
+        "计时组成异常率超过0.5%",
+        "范围内存在多个计量版本",
+        "范围内缺少计量版本",
+    )
+)
 _INSIGHT_FIELDS = frozenset(("kind", "title", "evidence", "action"))
 
 
@@ -38,6 +51,35 @@ def _parse_date_range(value) -> list[str] | None:
     return list(value)
 
 
+def _parse_period_range(value, inclusive_days: int) -> list[str] | None:
+    parsed_range = _parse_date_range(value)
+    if parsed_range is None:
+        return None
+    start = date.fromisoformat(parsed_range[0])
+    end = date.fromisoformat(parsed_range[1])
+    if (end - start).days != inclusive_days - 1:
+        return None
+    return parsed_range
+
+
+def _matching_period(
+    payload: dict,
+    section: dict,
+    inclusive_days: int,
+    *,
+    require_full_range: bool,
+) -> list[str] | None:
+    main_range = _parse_date_range(payload.get("date_range"))
+    period = _parse_period_range(section.get("date_range"), inclusive_days)
+    if main_range is None or period is None:
+        return None
+    if require_full_range:
+        return period if period == main_range else None
+    if period[1] != main_range[1] or period[0] < main_range[0]:
+        return None
+    return period
+
+
 def _rounded_percent(numerator: int, denominator: int) -> int:
     return (numerator * 100 + denominator // 2) // denominator
 
@@ -56,6 +98,16 @@ def build_best_window_candidate(payload: dict) -> dict | None:
     """Build the two-hour concentration-window candidate."""
     section = payload.get("best_window")
     if not isinstance(section, dict):
+        return None
+    if (
+        _matching_period(
+            payload,
+            section,
+            14,
+            require_full_range=True,
+        )
+        is None
+    ):
         return None
 
     workdays = _nonnegative_int(section.get("workday_count"))
@@ -94,6 +146,16 @@ def build_interruption_candidate(payload: dict) -> dict | None:
     section = payload.get("interruptions")
     if not isinstance(section, dict):
         return None
+    if (
+        _matching_period(
+            payload,
+            section,
+            7,
+            require_full_range=False,
+        )
+        is None
+    ):
+        return None
 
     count = _nonnegative_int(section.get("count"))
     window_minutes = _nonnegative_int(section.get("window_minutes"))
@@ -117,6 +179,18 @@ def build_trend_candidate(payload: dict) -> dict | None:
     """Build a candidate for a safely comparable work-engagement trend."""
     section = payload.get("trend")
     if not isinstance(section, dict):
+        return None
+
+    main_range = _parse_date_range(payload.get("date_range"))
+    prior_range = _parse_period_range(section.get("prior_range"), 7)
+    recent_range = _parse_period_range(section.get("recent_range"), 7)
+    if main_range is None or prior_range is None or recent_range is None:
+        return None
+    prior_end = date.fromisoformat(prior_range[1])
+    recent_start = date.fromisoformat(recent_range[0])
+    if prior_end + timedelta(days=1) != recent_start:
+        return None
+    if main_range != [prior_range[0], recent_range[1]]:
         return None
 
     recent = _nonnegative_int(section.get("recent_work_engaged_seconds"))
@@ -161,6 +235,16 @@ def build_workflow_candidate(payload: dict) -> dict | None:
     section = payload.get("workflow")
     if not isinstance(section, dict):
         return None
+    if (
+        _matching_period(
+            payload,
+            section,
+            7,
+            require_full_range=False,
+        )
+        is None
+    ):
+        return None
 
     tool_count = _nonnegative_int(section.get("tool_count"))
     switch_count = _nonnegative_int(section.get("switch_count"))
@@ -199,8 +283,7 @@ def _data_health_candidate(trust: dict) -> dict:
         first_reason = reasons[0]
         if (
             type(first_reason) is str
-            and first_reason
-            and first_reason.strip() == first_reason
+            and first_reason in _TRUSTED_HEALTH_REASONS
         ):
             reason = first_reason
     return {
@@ -216,8 +299,12 @@ def select_primary_insight(payload: dict) -> dict | None:
 
     ``payload`` contains an ISO ``date_range`` pair, a trust assessment, and
     optional pre-aggregated ``best_window``, ``interruptions``, ``trend``, and
-    ``workflow`` sections.  This function never queries or mutates external
-    state; malformed or incomplete candidate sections are simply ineligible.
+    ``workflow`` sections.  The best-window section covers the full 14-day
+    range; interruption and workflow sections cover its latest seven days;
+    trend supplies adjacent ``prior_range`` and ``recent_range`` seven-day
+    pairs spanning the full range.  This function never queries or mutates
+    external state; malformed or incomplete candidate sections are simply
+    ineligible.
     """
     if not isinstance(payload, dict):
         return None

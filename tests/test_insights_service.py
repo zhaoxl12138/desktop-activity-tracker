@@ -17,6 +17,27 @@ def _payload(**overrides):
         },
     }
     payload.update(overrides)
+    if isinstance(payload.get("best_window"), dict):
+        payload["best_window"] = {
+            "date_range": ["2026-07-28", "2026-08-10"],
+            **payload["best_window"],
+        }
+    if isinstance(payload.get("interruptions"), dict):
+        payload["interruptions"] = {
+            "date_range": ["2026-08-04", "2026-08-10"],
+            **payload["interruptions"],
+        }
+    if isinstance(payload.get("trend"), dict):
+        payload["trend"] = {
+            "prior_range": ["2026-07-28", "2026-08-03"],
+            "recent_range": ["2026-08-04", "2026-08-10"],
+            **payload["trend"],
+        }
+    if isinstance(payload.get("workflow"), dict):
+        payload["workflow"] = {
+            "date_range": ["2026-08-04", "2026-08-10"],
+            **payload["workflow"],
+        }
     return payload
 
 
@@ -96,7 +117,7 @@ def test_low_trust_always_returns_data_health_before_behavior_candidates():
     payload = _payload(
         trust={
             "level": "low",
-            "reasons": ["分类规则发生变化"],
+            "reasons": ["范围内存在多个计量版本"],
             "category_comparable": False,
         },
         best_window={
@@ -116,7 +137,7 @@ def test_low_trust_always_returns_data_health_before_behavior_candidates():
     assert select_primary_insight(payload) == {
         "kind": "data_health",
         "title": "先让数据口径稳定",
-        "evidence": "分类规则发生变化",
+        "evidence": "范围内存在多个计量版本",
         "action": "继续记录，新旧口径不会被直接混合比较。",
         "confidence": "low",
         "date_range": ["2026-07-28", "2026-08-10"],
@@ -137,6 +158,139 @@ def test_low_trust_uses_stable_default_reason_without_efficiency_judgment():
     assert insight is not None
     assert insight["evidence"] == "新口径数据仍在积累"
     assert "效率" not in "".join(str(value) for value in insight.values())
+
+
+@pytest.mark.parametrize(
+    "untrusted_reason",
+    [
+        "分类规则发生变化",
+        "你的效率下降了50%",
+        "生产力需要提升",
+        [],
+        {},
+    ],
+)
+def test_low_trust_never_echoes_unknown_or_behavioral_reasons(untrusted_reason):
+    insight = select_primary_insight(
+        _payload(
+            trust={
+                "level": "low",
+                "reasons": [untrusted_reason],
+                "category_comparable": False,
+            }
+        )
+    )
+
+    assert insight is not None
+    assert insight["evidence"] == "新口径数据仍在积累"
+    rendered = "".join(str(value) for value in insight.values())
+    assert str(untrusted_reason) not in rendered
+    assert "效率" not in rendered
+    assert "生产力" not in rendered
+
+
+def test_best_window_requires_a_matching_continuous_fourteen_day_period():
+    common = {
+        "workday_count": 6,
+        "start_hour": 9,
+        "end_hour": 11,
+        "window_work_engaged_seconds": 3_200,
+        "total_work_engaged_seconds": 10_000,
+    }
+
+    for section_range in (
+        None,
+        ["2026-08-10", "2026-08-10"],
+        ["2026-07-27", "2026-08-09"],
+    ):
+        assert (
+            select_primary_insight(
+                _payload(
+                    best_window={
+                        **common,
+                        "date_range": section_range,
+                    }
+                )
+            )
+            is None
+        )
+
+
+@pytest.mark.parametrize(
+    "section_range",
+    [
+        None,
+        ["2026-08-05", "2026-08-10"],  # six days
+        ["2026-08-03", "2026-08-10"],  # eight days
+        ["2026-07-28", "2026-08-03"],  # seven days, but not the latest seven
+    ],
+)
+def test_interruptions_require_the_latest_continuous_seven_day_period(
+    section_range,
+):
+    insight = select_primary_insight(
+        _payload(
+            interruptions={
+                "date_range": section_range,
+                "count": 8,
+                "window_minutes": 15,
+                "classification_comparable": True,
+            }
+        )
+    )
+
+    assert insight is None
+
+
+@pytest.mark.parametrize(
+    ("prior_range", "recent_range"),
+    [
+        (None, ["2026-08-04", "2026-08-10"]),
+        (["2026-07-28", "2026-08-03"], None),
+        # Both periods have seven days, but leave a one-day gap.
+        (["2026-07-27", "2026-08-02"], ["2026-08-04", "2026-08-10"]),
+        # Both periods have seven days, but overlap on 2026-08-04.
+        (["2026-07-29", "2026-08-04"], ["2026-08-04", "2026-08-10"]),
+    ],
+)
+def test_trend_requires_adjacent_non_overlapping_seven_day_periods(
+    prior_range,
+    recent_range,
+):
+    insight = select_primary_insight(
+        _payload(
+            trend={
+                "prior_range": prior_range,
+                "recent_range": recent_range,
+                "recent_work_engaged_seconds": 15_000,
+                "prior_work_engaged_seconds": 10_000,
+                "comparison_comparable": True,
+                "category_comparable": True,
+            }
+        )
+    )
+
+    assert insight is None
+
+
+@pytest.mark.parametrize(
+    "section_range",
+    [None, ["2026-08-03", "2026-08-10"]],
+)
+def test_workflow_requires_the_latest_continuous_seven_day_period(section_range):
+    insight = select_primary_insight(
+        _payload(
+            workflow={
+                "date_range": section_range,
+                "tool_count": 2,
+                "switch_count": 8,
+                "non_work_interruptions": 0,
+                "tools": ["ChatGPT", "Codex"],
+            }
+        )
+    )
+
+    assert insight is None
 
 
 def test_selects_qualified_external_interruptions():
