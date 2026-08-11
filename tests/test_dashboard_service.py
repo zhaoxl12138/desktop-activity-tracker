@@ -12,6 +12,7 @@ sys.path.insert(0, str(SRC))
 
 from daylens import database  # noqa: E402
 from daylens.services import dashboard_service  # noqa: E402
+from daylens.services.insights_service import select_primary_insight  # noqa: E402
 from daylens.services.dashboard_service import (  # noqa: E402
     _build_interruptions_section,
     _build_workflow_section,
@@ -209,7 +210,11 @@ def test_snapshot_builds_exact_trusted_insight_payload_without_daily_session_que
         return {
             "totals": trusted_totals(dates, work_engaged),
             "daily": [
-                {"date": value, "effective_seconds": 0}
+                {
+                    "date": value,
+                    "effective_seconds": 0,
+                    **trusted_totals([value], 1_000),
+                }
                 for value in dates
             ],
         }
@@ -289,7 +294,7 @@ def test_snapshot_builds_exact_trusted_insight_payload_without_daily_session_que
     assert FrozenDateTime.calls == 1
     assert calls["today_sessions"] == 0
     assert calls["range_sessions"] == 1
-    assert sorted(map(len, calls["range_stats"])) == [7, 7, 14, 30]
+    assert [len(dates) for dates in calls["range_stats"]] == [30]
     assert snapshot["totals"] == {
         "effective_seconds": 80,
         "engaged_seconds": 60,
@@ -371,7 +376,7 @@ def test_interruption_events_are_distinct_when_one_event_touches_two_work_sessio
     assert section["classification_comparable"] is False
 
 
-def test_workflow_payload_excludes_markup_disguised_as_a_tool_name():
+def test_workflow_ignores_title_markup_and_uses_process_identity():
     sessions = [
         {
             "date": "2026-08-11",
@@ -396,9 +401,9 @@ def test_workflow_payload_excludes_markup_disguised_as_a_tool_name():
         ["2026-08-05", "2026-08-11"],
     )
 
-    assert section["tools"] == ["Codex"]
-    assert section["tool_count"] == 1
-    assert section["switch_count"] == 0
+    assert section["tools"] == ["chrome", "Codex"]
+    assert section["tool_count"] == 2
+    assert section["switch_count"] == 1
 
 
 def test_workflow_uses_stable_process_identity_instead_of_document_titles():
@@ -429,6 +434,146 @@ def test_workflow_uses_stable_process_identity_instead_of_document_titles():
     assert section["tools"] == ["Code"]
     assert section["tool_count"] == 1
     assert section["switch_count"] == 0
+
+
+def test_workflow_does_not_turn_browser_titles_into_distinct_tools():
+    sessions = [
+        {
+            "date": "2026-08-11",
+            "start_time": f"2026-08-11 09:{index:02d}:00",
+            "end_time": f"2026-08-11 09:{index + 1:02d}:00",
+            "normalized_title": f"GitHub issue {index}",
+            "process_name": "chrome.exe",
+            "category_key": "coding",
+        }
+        for index in range(10)
+    ]
+
+    section = _build_workflow_section(
+        sessions,
+        ["2026-08-05", "2026-08-11"],
+        lambda process_name, _details: {"chrome.exe": "Chrome"}[process_name],
+    )
+
+    assert section["tools"] == ["Chrome"]
+    assert section["tool_count"] == 1
+    assert section["switch_count"] == 0
+
+
+def test_workflow_counts_browser_to_codex_as_two_stable_tools():
+    sessions = [
+        {
+            "date": "2026-08-11",
+            "start_time": "2026-08-11 09:00:00",
+            "end_time": "2026-08-11 09:10:00",
+            "normalized_title": "GitHub",
+            "process_name": "chrome.exe",
+            "category_key": "coding",
+        },
+        {
+            "date": "2026-08-11",
+            "start_time": "2026-08-11 09:10:00",
+            "end_time": "2026-08-11 09:20:00",
+            "normalized_title": "project-a",
+            "process_name": "Codex.exe",
+            "category_key": "coding",
+        },
+    ]
+    labels = {"chrome.exe": "Chrome", "Codex.exe": "Codex"}
+
+    section = _build_workflow_section(
+        sessions,
+        ["2026-08-05", "2026-08-11"],
+        lambda process_name, _details: labels[process_name],
+    )
+
+    assert section["tools"] == ["Chrome", "Codex"]
+    assert section["tool_count"] == 2
+    assert section["switch_count"] == 1
+
+
+def test_interruption_rows_deduplicate_by_session_id_and_fallback_identity():
+    work = {
+        "session_id": "work",
+        "date": "2026-08-11",
+        "start_time": "2026-08-11 09:00:00",
+        "end_time": "2026-08-11 09:20:00",
+        "process_name": "Code.exe",
+        "normalized_title": "Code",
+        "category_key": "coding",
+    }
+    social = {
+        "session_id": "social-a",
+        "date": "2026-08-11",
+        "start_time": "2026-08-11 09:25:00",
+        "end_time": "2026-08-11 09:30:00",
+        "process_name": "WeChat.exe",
+        "normalized_title": "微信",
+        "category_key": "social",
+    }
+    date_range = ["2026-08-05", "2026-08-11"]
+
+    duplicate_id = _build_interruptions_section(
+        [work, social, {**social, "normalized_title": "恢复副本"}],
+        date_range,
+        True,
+    )
+    distinct_ids = _build_interruptions_section(
+        [work, social, {**social, "session_id": "social-b"}],
+        date_range,
+        True,
+    )
+    without_id = {**social, "session_id": ""}
+    duplicate_fallback = _build_interruptions_section(
+        [work, without_id, dict(without_id)],
+        date_range,
+        True,
+    )
+
+    assert duplicate_id["count"] == 1
+    assert distinct_ids["count"] == 2
+    assert duplicate_fallback["count"] == 1
+
+
+def test_recovered_interruption_duplicates_do_not_reach_insight_threshold():
+    work = {
+        "session_id": "work",
+        "date": "2026-08-11",
+        "start_time": "2026-08-11 09:00:00",
+        "end_time": "2026-08-11 09:20:00",
+        "process_name": "Code.exe",
+        "normalized_title": "Code",
+        "category_key": "coding",
+    }
+    recovered = {
+        "session_id": "social-recovered",
+        "date": "2026-08-11",
+        "start_time": "2026-08-11 09:25:00",
+        "end_time": "2026-08-11 09:30:00",
+        "process_name": "WeChat.exe",
+        "normalized_title": "微信",
+        "category_key": "social",
+    }
+    interruptions = _build_interruptions_section(
+        [work, *[dict(recovered) for _ in range(8)]],
+        ["2026-08-05", "2026-08-11"],
+        True,
+    )
+
+    insight = select_primary_insight(
+        {
+            "date_range": ["2026-07-29", "2026-08-11"],
+            "trust": {
+                "level": "high",
+                "reasons": [],
+                "category_comparable": True,
+            },
+            "interruptions": interruptions,
+        }
+    )
+
+    assert interruptions["count"] == 1
+    assert insight is None
 
 
 def test_insight_failure_hides_only_the_card_and_preserves_trust(
@@ -531,6 +676,35 @@ def test_range_query_failure_preserves_old_snapshot_and_never_selects_insight(
     assert snapshot["trend"]["thirty_days"] == []
     assert len(snapshot["trend"]["today"]) == 24
     assert "range query unavailable" in caplog.text
+
+
+def test_thirty_day_trend_render_failure_keeps_trusted_insight(
+    tmp_path: Path,
+    monkeypatch,
+    caplog,
+):
+    db_path = tmp_path / "usage.db"
+    database.init_db(str(db_path)).close()
+
+    def fail_trend(_daily):
+        raise RuntimeError("trend rendering unavailable")
+
+    monkeypatch.setattr(
+        dashboard_service,
+        "_build_thirty_day_trend",
+        fail_trend,
+        raising=False,
+    )
+
+    snapshot = load_today_snapshot(
+        str(db_path),
+        lambda process_name, _details: process_name,
+    )
+
+    assert snapshot["trend"]["thirty_days"] == []
+    assert snapshot["trust"]["level"] == "low"
+    assert snapshot["insight"]["kind"] == "data_health"
+    assert "trend rendering unavailable" in caplog.text
 
 
 def test_dashboard_trend_ranges_are_rolling_windows():

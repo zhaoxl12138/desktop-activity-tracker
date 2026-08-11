@@ -53,6 +53,7 @@ def _window(tmp_path):
     )
     window.show()
     app.processEvents()
+    assert window.dashboard_refresh.shutdown(timeout_ms=1_000) is True
     return app, window
 
 

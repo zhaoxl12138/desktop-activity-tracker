@@ -51,6 +51,129 @@ def _insert_trusted_session(
     )
 
 
+def test_daily_trusted_summaries_preserve_exact_subwindow_health_fields():
+    prior_dates = [
+        "2026-07-29", "2026-07-30", "2026-07-31", "2026-08-01",
+        "2026-08-02", "2026-08-03", "2026-08-04",
+    ]
+    recent_dates = [
+        "2026-08-05", "2026-08-06", "2026-08-07", "2026-08-08",
+        "2026-08-09", "2026-08-10", "2026-08-11",
+    ]
+    daily = [
+        {
+            "date": "2026-07-20",
+            "engaged_seconds": 999,
+            "passive_seconds": 0,
+            "work_engaged_seconds": 999,
+            "session_count": 1,
+            "legacy_session_count": 0,
+            "legacy_log_sample_count": 0,
+            "legacy_granularity_unknown": False,
+            "session_anomaly_count": 0,
+            "legacy_log_anomaly_count": 0,
+            "anomaly_count": 0,
+            "dates_with_data": ["2026-07-20"],
+            "metric_versions": ["attention-v2"],
+            "classification_versions": ["rules-outside"],
+        },
+        {
+            "date": "2026-08-04",
+            "engaged_seconds": 100,
+            "passive_seconds": 20,
+            "work_engaged_seconds": 80,
+            "session_count": 2,
+            "legacy_session_count": 0,
+            "legacy_log_sample_count": 0,
+            "legacy_granularity_unknown": False,
+            "session_anomaly_count": 1,
+            "legacy_log_anomaly_count": 0,
+            "anomaly_count": 1,
+            "dates_with_data": ["2026-08-04"],
+            "metric_versions": ["attention-v1"],
+            "classification_versions": ["rules-a"],
+        },
+        {
+            "date": "2026-08-05",
+            "engaged_seconds": 0,
+            "passive_seconds": 0,
+            "work_engaged_seconds": 0,
+            "session_count": 1,
+            "legacy_session_count": 1,
+            "legacy_log_sample_count": 0,
+            "legacy_granularity_unknown": False,
+            "session_anomaly_count": 0,
+            "legacy_log_anomaly_count": 0,
+            "anomaly_count": 0,
+            "dates_with_data": ["2026-08-05"],
+            "metric_versions": ["legacy"],
+            "classification_versions": ["legacy"],
+        },
+        {
+            "date": "2026-08-06",
+            "engaged_seconds": 0,
+            "passive_seconds": 0,
+            "work_engaged_seconds": 0,
+            "session_count": 0,
+            "legacy_session_count": 0,
+            "legacy_log_sample_count": 2,
+            "legacy_granularity_unknown": True,
+            "session_anomaly_count": 0,
+            "legacy_log_anomaly_count": 1,
+            "anomaly_count": 1,
+            "dates_with_data": ["2026-08-06"],
+            "metric_versions": ["legacy"],
+            "classification_versions": ["legacy"],
+        },
+        {
+            "date": "2026-08-11",
+            "engaged_seconds": 200,
+            "passive_seconds": 40,
+            "work_engaged_seconds": 150,
+            "session_count": 1,
+            "legacy_session_count": 0,
+            "legacy_log_sample_count": 0,
+            "legacy_granularity_unknown": False,
+            "session_anomaly_count": 0,
+            "legacy_log_anomaly_count": 0,
+            "anomaly_count": 0,
+            "dates_with_data": ["2026-08-11"],
+            "metric_versions": ["attention-v1"],
+            "classification_versions": ["rules-b"],
+        },
+    ]
+
+    prior = database.summarize_daily_trusted_metrics(daily, prior_dates)
+    recent = database.summarize_daily_trusted_metrics(daily, recent_dates)
+    combined = database.summarize_daily_trusted_metrics(
+        daily,
+        [*prior_dates, *recent_dates],
+    )
+
+    assert prior["engaged_seconds"] == 100
+    assert prior["session_count"] == 2
+    assert prior["session_anomaly_count"] == 1
+    assert prior["anomaly_count"] == 1
+    assert prior["metric_versions"] == ["attention-v1"]
+    assert prior["classification_versions"] == ["rules-a"]
+    assert recent["engaged_seconds"] == 200
+    assert recent["work_engaged_seconds"] == 150
+    assert recent["session_count"] == 2
+    assert recent["legacy_session_count"] == 1
+    assert recent["legacy_log_sample_count"] == 2
+    assert recent["legacy_granularity_unknown"] is True
+    assert recent["legacy_log_anomaly_count"] == 1
+    assert recent["anomaly_count"] == 1
+    assert recent["metric_versions"] == ["attention-v1", "legacy"]
+    assert recent["classification_versions"] == ["legacy", "rules-b"]
+    assert combined["engaged_seconds"] == 300
+    assert combined["passive_seconds"] == 60
+    assert combined["work_engaged_seconds"] == 230
+    assert combined["session_count"] == 4
+    assert combined["anomaly_count"] == 2
+    assert "attention-v2" not in combined["metric_versions"]
+
+
 def test_date_and_range_summaries_include_trusted_attention_fields(tmp_path):
     db_path = tmp_path / "usage.db"
     database.init_db(str(db_path)).close()

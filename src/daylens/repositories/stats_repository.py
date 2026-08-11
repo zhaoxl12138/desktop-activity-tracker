@@ -202,6 +202,21 @@ def _merge_trusted_summaries(summaries: list[dict]) -> dict:
     return totals
 
 
+def summarize_daily_trusted_metrics(
+    daily_rows: list[dict],
+    dates: list[str],
+) -> dict:
+    """Merge trusted fields for a sub-window of an already loaded range."""
+    selected_dates = set(dates)
+    return _merge_trusted_summaries(
+        [
+            row
+            for row in daily_rows
+            if str(row.get("date", "") or "") in selected_dates
+        ]
+    )
+
+
 def query_date_stats_from_logs(read_conn, db_path: str, date_str: str) -> dict:
     with read_conn(db_path) as conn:
         totals = conn.execute(

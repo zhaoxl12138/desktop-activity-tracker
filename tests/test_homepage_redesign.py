@@ -225,6 +225,7 @@ def test_today_overview_applies_old_and_trusted_snapshots_safely():
         window.resize(1280, 720)
         window.show()
         app.processEvents()
+        assert window.dashboard_refresh.shutdown(timeout_ms=1_000) is True
         page = window.pages["today"]
 
         page.apply_snapshot(_dashboard_snapshot())

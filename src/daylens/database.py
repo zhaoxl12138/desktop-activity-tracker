@@ -44,6 +44,7 @@ from .repositories.stats_repository import (
     query_session_count as _query_session_count,
     query_sessions_for_dates as _query_sessions_for_dates,
     query_session_entertainment_trend as _query_session_entertainment_trend,
+    summarize_daily_trusted_metrics,
     query_timeline_sessions as _query_timeline_sessions,
     query_top_titles_by_category as _query_top_titles_by_category,
     query_today_sessions as _query_today_sessions,

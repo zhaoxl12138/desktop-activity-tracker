@@ -18,15 +18,6 @@ from .trusted_metrics_service import (
 
 WORK_KEYS = {"ai_tools", "coding", "office", "reading", "creative"}
 ENTERTAINMENT_KEYS = {"video", "gaming"}
-WRAPPER_TOOL_PROCESSES = {
-    "chrome.exe",
-    "msedge.exe",
-    "firefox.exe",
-    "windowsterminal.exe",
-    "cmd.exe",
-    "powershell.exe",
-    "pwsh.exe",
-}
 LOGGER = logging.getLogger(__name__)
 
 
@@ -134,10 +125,15 @@ def _build_interruptions_section(
         if (interval := _session_interval(session)) is not None
     ]
     count = 0
+    seen_events: set[tuple[str, ...]] = set()
     for session in sessions:
         category_key = str(session.get("category_key", "") or "")
         if category_key != "social" and category_key not in ENTERTAINMENT_KEYS:
             continue
+        event_identity = _session_event_identity(session)
+        if event_identity in seen_events:
+            continue
+        seen_events.add(event_identity)
         interval = _session_interval(session)
         if interval is None:
             continue
@@ -155,16 +151,29 @@ def _build_interruptions_section(
     }
 
 
-def _safe_tool_label(session: dict) -> str | None:
-    process_name = str(session.get("process_name", "") or "").strip()
-    normalized_title = str(session.get("normalized_title", "") or "").strip()
-    source = (
-        normalized_title
-        if process_name.casefold() in WRAPPER_TOOL_PROCESSES and normalized_title
-        else process_name or normalized_title
+def _session_event_identity(session: dict) -> tuple[str, ...]:
+    session_id = str(session.get("session_id", "") or "").strip()
+    if session_id:
+        return ("session_id", session_id)
+    return (
+        "fallback",
+        str(session.get("date", "") or ""),
+        str(session.get("start_time", "") or ""),
+        str(session.get("end_time", "") or ""),
+        str(session.get("process_name", "") or ""),
+        str(session.get("category_key", "") or ""),
+        str(session.get("normalized_title", "") or ""),
+        str(session.get("window_title", "") or ""),
     )
-    source = source.removesuffix(".exe").removesuffix(".EXE")
-    label = unicodedata.normalize("NFKC", source)
+
+
+def _strip_executable_suffix(value: str) -> str:
+    return value[:-4] if value.casefold().endswith(".exe") else value
+
+
+def _safe_tool_text(source: str) -> str | None:
+    label = unicodedata.normalize("NFKC", str(source or "")).strip()
+    label = _strip_executable_suffix(label)
     if not label or len(label) > 64 or label.strip() != label:
         return None
     if any(unicodedata.category(char).startswith("C") for char in label):
@@ -180,9 +189,33 @@ def _safe_tool_label(session: dict) -> str | None:
     return label
 
 
+def _stable_tool_identity(
+    session: dict,
+    resolve_display=None,
+) -> tuple[str, str] | None:
+    process_name = unicodedata.normalize(
+        "NFKC",
+        str(session.get("process_name", "") or "").strip(),
+    )
+    process_label = _safe_tool_text(process_name)
+    if process_label is None:
+        return None
+    identity = process_label.casefold()
+    display_label = None
+    if resolve_display is not None:
+        try:
+            display_label = _safe_tool_text(
+                str(resolve_display(process_name, []) or "")
+            )
+        except Exception:
+            display_label = None
+    return identity, display_label or process_label
+
+
 def _build_workflow_section(
     sessions: list[dict],
     date_range: list[str],
+    resolve_display=None,
 ) -> dict[str, object]:
     by_date: dict[str, list[dict]] = {}
     for session in sessions:
@@ -203,25 +236,31 @@ def _build_workflow_section(
         for session in ordered:
             if str(session.get("category_key", "") or "") not in WORK_KEYS:
                 continue
-            tool = _safe_tool_label(session)
+            tool = _stable_tool_identity(session, resolve_display)
             if tool is None:
                 continue
-            key = tool.casefold()
-            if key not in seen_tools:
-                seen_tools.add(key)
-                tools.append(tool)
+            identity, display_label = tool
+            if identity not in seen_tools:
+                seen_tools.add(identity)
+                tools.append(display_label)
 
         for previous, current in zip(ordered, ordered[1:]):
             if (
                 str(previous.get("category_key", "") or "") in WORK_KEYS
                 and str(current.get("category_key", "") or "") in WORK_KEYS
             ):
-                previous_tool = _safe_tool_label(previous)
-                current_tool = _safe_tool_label(current)
+                previous_tool = _stable_tool_identity(
+                    previous,
+                    resolve_display,
+                )
+                current_tool = _stable_tool_identity(
+                    current,
+                    resolve_display,
+                )
                 if (
                     previous_tool
                     and current_tool
-                    and previous_tool.casefold() != current_tool.casefold()
+                    and previous_tool[0] != current_tool[0]
                 ):
                     switch_count += 1
 
@@ -626,6 +665,13 @@ def _session_time_range(session: dict) -> str:
     return f"{start_short} - {end_short}".strip()
 
 
+def _build_thirty_day_trend(daily_rows: list[dict]) -> list[float]:
+    return [
+        round((item.get("effective_seconds", 0) or 0) / 3600.0, 1)
+        for item in daily_rows
+    ]
+
+
 def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
     captured_now = datetime.now()
     today_date = captured_now.date()
@@ -663,10 +709,17 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
             db_path,
             thirty_day_dates,
         )
+        thirty_day_daily = thirty_day_stats.get("daily", [])
     except Exception:
         LOGGER.exception("Failed to read dashboard thirty-day range")
         thirty_day_stats = {"daily": []}
+        thirty_day_daily = []
         trusted_calculation_failed = True
+    try:
+        thirty_day_trend = _build_thirty_day_trend(thirty_day_daily)
+    except Exception:
+        LOGGER.exception("Failed to build dashboard thirty-day trend")
+        thirty_day_trend = []
     try:
         fourteen_day_sessions = database.query_sessions_for_dates(
             db_path,
@@ -707,28 +760,28 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
     insight_payload: dict[str, object] | None = None
     if not trusted_calculation_failed:
         try:
-            fourteen_day_stats = database.query_date_range_stats(
-                db_path,
+            fourteen_day_summary = database.summarize_daily_trusted_metrics(
+                thirty_day_daily,
                 fourteen_day_dates,
             )
-            recent_stats = database.query_date_range_stats(
-                db_path,
+            recent_summary = database.summarize_daily_trusted_metrics(
+                thirty_day_daily,
                 seven_day_dates,
             )
-            prior_stats = database.query_date_range_stats(
-                db_path,
+            prior_summary = database.summarize_daily_trusted_metrics(
+                thirty_day_daily,
                 prior_seven_day_dates,
             )
             trust = assess_range(
-                fourteen_day_stats.get("totals", {}),
+                fourteen_day_summary,
                 fourteen_day_dates,
             )
             recent_trust = assess_range(
-                recent_stats.get("totals", {}),
+                recent_summary,
                 seven_day_dates,
             )
             prior_trust = assess_range(
-                prior_stats.get("totals", {}),
+                prior_summary,
                 prior_seven_day_dates,
             )
             comparison = compare_ranges(prior_trust, recent_trust)
@@ -761,15 +814,11 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
                     ],
                     "recent_range": [seven_day_dates[0], seven_day_dates[-1]],
                     "recent_work_engaged_seconds": int(
-                        recent_stats.get("totals", {}).get(
-                            "work_engaged_seconds", 0
-                        )
+                        recent_summary.get("work_engaged_seconds", 0)
                         or 0
                     ),
                     "prior_work_engaged_seconds": int(
-                        prior_stats.get("totals", {}).get(
-                            "work_engaged_seconds", 0
-                        )
+                        prior_summary.get("work_engaged_seconds", 0)
                         or 0
                     ),
                     "comparison_comparable": bool(
@@ -780,6 +829,7 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
                 "workflow": _build_workflow_section(
                     recent_sessions,
                     [seven_day_dates[0], seven_day_dates[-1]],
+                    resolve_display,
                 ),
             }
         except Exception:
@@ -831,10 +881,7 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
                 for day_sessions in seven_day_sessions
             ],
             "seven_day_labels": seven_day_dates,
-            "thirty_days": [
-                round((item.get("effective_seconds", 0) or 0) / 3600.0, 1)
-                for item in thirty_day_stats.get("daily", [])
-            ],
+            "thirty_days": thirty_day_trend,
         },
     }
 
