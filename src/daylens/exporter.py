@@ -2,12 +2,22 @@
 
 import os
 import csv
+import io
 import shutil
 import tempfile
 from datetime import datetime, timedelta
 from . import database
 from . import timeline
+from .services.trusted_metrics_service import assess_range
 from .utils import fmt_seconds, normalize_category_display_name
+
+
+_TRUST_LEVEL_LABELS = {
+    "high": "高",
+    "medium": "中",
+    "low": "低",
+}
+_TRUST_ASSESSMENT_ERROR = "可信度计算异常"
 
 
 def _atomic_write_text(filepath: str, content: str) -> None:
@@ -41,6 +51,44 @@ def daily_report_path(output_dir: str, date_str: str) -> str:
 def _top_titles_by_category(db_path, date_str, limit=3):
     """Return {category_key: [title1, title2, title3]} of top window titles."""
     return database.query_top_titles_by_category(db_path, date_str, limit)
+
+
+def _safe_attention_counter(value) -> int:
+    """Return a display-safe persisted attention counter without deriving it."""
+    return value if type(value) is int and value >= 0 else 0
+
+
+def _daily_attention_fields(totals: dict, date_str: str) -> dict[str, object]:
+    """Build local-only attention and trust fields for one daily export."""
+    engaged_seconds = _safe_attention_counter(totals.get("engaged_seconds"))
+    passive_seconds = _safe_attention_counter(totals.get("passive_seconds"))
+    try:
+        assessment = assess_range(totals, [date_str])
+        if not isinstance(assessment, dict):
+            raise TypeError("invalid trust assessment")
+        level = str(assessment.get("level", ""))
+        if level not in _TRUST_LEVEL_LABELS:
+            raise ValueError("invalid trust level")
+        raw_reasons = assessment.get("reasons", [])
+        if not isinstance(raw_reasons, (list, tuple)):
+            raise TypeError("invalid trust reasons")
+        reason = next(
+            (
+                value
+                for value in raw_reasons
+                if type(value) is str and value.strip()
+            ),
+            "",
+        )
+    except Exception:
+        level = "low"
+        reason = _TRUST_ASSESSMENT_ERROR
+    return {
+        "engaged_seconds": engaged_seconds,
+        "passive_seconds": passive_seconds,
+        "trust_level": _TRUST_LEVEL_LABELS[level],
+        "trust_reason": reason,
+    }
 
 
 def _calculate_efficiency_score(work_sec, video_sec, total_effective_sec):
@@ -104,41 +152,55 @@ def _generate_suggestions(db_path, today_date, stats):
 def export_csv(db_path, date_str, output_dir):
     stats = database.query_date_stats(db_path, date_str)
     filepath = daily_report_path(output_dir, date_str).replace(".md", ".csv")
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    totals = stats["totals"]
+    attention = _daily_attention_fields(totals, date_str)
+    buffer = io.StringIO(newline="")
+    writer = csv.writer(buffer)
 
-    with open(filepath, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.writer(f)
+    writer.writerow([
+        "日期",
+        "总有效时长(秒)",
+        "总空闲时长(秒)",
+        "总采样数",
+        "参与时长(秒)",
+        "被动媒体时长(秒)",
+        "数据可信度",
+        "可信度原因",
+    ])
+    writer.writerow([
+        date_str,
+        totals.get("effective_seconds", 0),
+        totals.get("idle_seconds", 0),
+        totals.get("total_samples", 0),
+        attention["engaged_seconds"],
+        attention["passive_seconds"],
+        attention["trust_level"],
+        attention["trust_reason"],
+    ])
+    writer.writerow([])
 
-        totals = stats["totals"]
-        writer.writerow(["日期", "总有效时长(秒)", "总空闲时长(秒)", "总采样数"])
+    writer.writerow(["分类统计"])
+    writer.writerow(["分类Key", "分类名称", "有效时长(秒)", "空闲时长(秒)", "总时长(秒)"])
+    for cat in stats["by_category"]:
         writer.writerow([
-            date_str,
-            totals.get("effective_seconds", 0),
-            totals.get("idle_seconds", 0),
-            totals.get("total_samples", 0),
+            cat["category_key"],
+            cat["category_name"],
+            cat["effective_seconds"],
+            cat["idle_seconds"],
+            cat["total_seconds"],
         ])
-        writer.writerow([])
+    writer.writerow([])
 
-        writer.writerow(["分类统计"])
-        writer.writerow(["分类Key", "分类名称", "有效时长(秒)", "空闲时长(秒)", "总时长(秒)"])
-        for cat in stats["by_category"]:
-            writer.writerow([
-                cat["category_key"],
-                cat["category_name"],
-                cat["effective_seconds"],
-                cat["idle_seconds"],
-                cat["total_seconds"],
-            ])
-        writer.writerow([])
+    writer.writerow(["软件详情"])
+    writer.writerow(["进程名", "窗口标题", "有效时长(秒)"])
+    for app in stats["by_app_detail"]:
+        writer.writerow([
+            app["process_name"],
+            app["window_title"],
+            app["effective_seconds"],
+        ])
 
-        writer.writerow(["软件详情"])
-        writer.writerow(["进程名", "窗口标题", "有效时长(秒)"])
-        for app in stats["by_app_detail"]:
-            writer.writerow([
-                app["process_name"],
-                app["window_title"],
-                app["effective_seconds"],
-            ])
+    _atomic_write_text(filepath, "\ufeff" + buffer.getvalue())
 
     return filepath
 
@@ -152,6 +214,7 @@ def export_markdown(db_path, date_str, output_dir):
     effective_sec = totals.get("effective_seconds", 0) or 0
     idle_sec = totals.get("idle_seconds", 0) or 0
     total_sec = effective_sec + idle_sec
+    attention = _daily_attention_fields(totals, date_str)
 
     suggestions, work_sec, video_sec = _generate_suggestions(db_path, date_str, stats)
 
@@ -177,6 +240,12 @@ def export_markdown(db_path, date_str, output_dir):
     lines.append(f"- 最长使用软件：{top_app_title or top_app}")
     lines.append(f"- 工作学习占比：{work_pct}%")
     lines.append(f"- 娱乐休闲占比：{entertain_pct}%")
+    lines.append(f"- 参与时间：{fmt_seconds(attention['engaged_seconds'])}")
+    lines.append(f"- 被动媒体：{fmt_seconds(attention['passive_seconds'])}")
+    trust_line = f"- 数据可信度：{attention['trust_level']}"
+    if attention["trust_reason"]:
+        trust_line += f"（{attention['trust_reason']}）"
+    lines.append(trust_line)
     lines.append("")
 
     # ── 效率评分 ──
