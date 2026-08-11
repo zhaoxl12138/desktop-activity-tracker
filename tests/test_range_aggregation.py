@@ -134,14 +134,40 @@ def test_range_summary_sorts_and_deduplicates_version_sets(tmp_path):
     ]
 
 
-def test_session_anomalies_use_sampling_and_wall_clock_tolerances(tmp_path):
+def test_range_dates_preserve_first_seen_order_without_double_counting(tmp_path):
+    db_path = tmp_path / "usage.db"
+    database.init_db(str(db_path)).close()
+    conn = sqlite3.connect(db_path)
+    _insert_trusted_session(conn, session_id="first-date")
+    _insert_trusted_session(
+        conn,
+        session_id="second-date",
+        date="2026-07-21",
+        start_time="2026-07-21 10:00:00",
+        end_time="2026-07-21 10:01:40",
+    )
+    conn.commit()
+    conn.close()
+
+    result = database.query_date_range_stats(
+        str(db_path),
+        ["2026-07-21", "2026-07-20", "2026-07-21"],
+    )
+
+    assert result["dates"] == ["2026-07-21", "2026-07-20"]
+    assert [row["date"] for row in result["daily"]] == result["dates"]
+    assert result["totals"]["effective_seconds"] == 180
+    assert result["totals"]["session_count"] == 2
+
+
+def test_session_anomalies_use_strict_composition_and_wall_clock_tolerance(tmp_path):
     db_path = tmp_path / "usage.db"
     database.init_db(str(db_path)).close()
     conn = sqlite3.connect(db_path)
     _insert_trusted_session(conn, session_id="clean")
     _insert_trusted_session(
         conn,
-        session_id="one-second-tolerance",
+        session_id="one-second-composition-error",
         start_time="2026-07-20 11:00:00",
         end_time="2026-07-20 11:00:10",
         duration_seconds=10,
@@ -196,33 +222,63 @@ def test_session_anomalies_use_sampling_and_wall_clock_tolerances(tmp_path):
     result = database.query_date_range_stats(str(db_path), ["2026-07-20"])
 
     assert result["totals"]["session_count"] == 7
-    assert result["totals"]["anomaly_count"] == 4
+    assert result["totals"]["anomaly_count"] == 5
 
 
-def test_composition_tolerance_uses_recording_sample_interval(tmp_path):
+def test_malformed_session_values_are_anomalies_without_breaking_query(tmp_path):
     db_path = tmp_path / "usage.db"
     database.init_db(str(db_path)).close()
-    database.save_settings(str(db_path), {"sample_interval_seconds": 5})
+    conn = sqlite3.connect(db_path)
+    malformed_rows = [
+        ("invalid-string", "2026-07-20 10:00:00", "2026-07-20 10:00:00", "oops"),
+        ("missing-number", "2026-07-20 11:00:00", "2026-07-20 11:00:00", None),
+        ("non-finite", "2026-07-20 12:00:00", "2026-07-20 12:00:00", float("inf")),
+        ("bad-iso", "not-a-time", "2026-07-20 13:00:00", 0),
+        (
+            "mixed-timezones",
+            "2026-07-20 14:00:00+00:00",
+            "2026-07-20 14:00:00",
+            0,
+        ),
+        ("backwards", "2026-07-20 16:00:00", "2026-07-20 15:00:00", 0),
+    ]
+    for session_id, start_time, end_time, duration in malformed_rows:
+        _insert_trusted_session(
+            conn,
+            session_id=session_id,
+            start_time=start_time,
+            end_time=end_time,
+            duration_seconds=duration,
+            effective_seconds=0,
+            engaged_seconds=0,
+            passive_seconds=0,
+            idle_seconds=0,
+        )
+    conn.commit()
+    conn.close()
+
+    result = database.query_date_range_stats(str(db_path), ["2026-07-20"])
+
+    assert result["totals"]["session_count"] == 6
+    assert result["totals"]["anomaly_count"] == 6
+
+
+def test_legacy_session_still_checks_basic_wall_clock_damage(tmp_path):
+    db_path = tmp_path / "usage.db"
+    database.init_db(str(db_path)).close()
     conn = sqlite3.connect(db_path)
     _insert_trusted_session(
         conn,
-        session_id="within-one-sample",
-        start_time="2026-07-20 10:00:00",
-        end_time="2026-07-20 10:00:30",
-        duration_seconds=30,
-        effective_seconds=35,
-        engaged_seconds=35,
+        session_id="legacy-bad-wall-clock",
+        start_time="broken",
+        end_time="2026-07-20 10:00:00",
+        duration_seconds=600,
+        effective_seconds=600,
+        engaged_seconds=0,
+        passive_seconds=0,
         idle_seconds=0,
-    )
-    _insert_trusted_session(
-        conn,
-        session_id="beyond-one-sample",
-        start_time="2026-07-20 11:00:00",
-        end_time="2026-07-20 11:00:30",
-        duration_seconds=30,
-        effective_seconds=36,
-        engaged_seconds=36,
-        idle_seconds=0,
+        metric_version="legacy",
+        classification_version="legacy",
     )
     conn.commit()
     conn.close()
@@ -232,31 +288,44 @@ def test_composition_tolerance_uses_recording_sample_interval(tmp_path):
     assert result["totals"]["anomaly_count"] == 1
 
 
-def test_effective_compatibility_tolerance_uses_recording_sample_interval(
+def test_composition_tolerance_is_fixed_when_sampling_setting_changes(tmp_path):
+    db_path = tmp_path / "usage.db"
+    database.init_db(str(db_path)).close()
+    conn = sqlite3.connect(db_path)
+    _insert_trusted_session(
+        conn,
+        session_id="one-second-composition-error",
+        start_time="2026-07-20 10:00:00",
+        end_time="2026-07-20 10:00:30",
+        duration_seconds=30,
+        effective_seconds=31,
+        engaged_seconds=31,
+        idle_seconds=0,
+    )
+    conn.commit()
+    conn.close()
+
+    before = database.query_date_range_stats(str(db_path), ["2026-07-20"])
+    database.save_settings(str(db_path), {"sample_interval_seconds": 60})
+    after = database.query_date_range_stats(str(db_path), ["2026-07-20"])
+
+    assert before["totals"]["anomaly_count"] == 1
+    assert after["totals"]["anomaly_count"] == 1
+
+
+def test_effective_compatibility_tolerance_is_fixed_when_setting_changes(
     tmp_path,
 ):
     db_path = tmp_path / "usage.db"
     database.init_db(str(db_path)).close()
-    database.save_settings(str(db_path), {"sample_interval_seconds": 5})
     conn = sqlite3.connect(db_path)
     _insert_trusted_session(
         conn,
-        session_id="effective-within-one-sample",
+        session_id="one-second-effective-error",
         start_time="2026-07-20 10:00:00",
         end_time="2026-07-20 10:00:30",
         duration_seconds=30,
-        effective_seconds=35,
-        engaged_seconds=20,
-        passive_seconds=10,
-        idle_seconds=0,
-    )
-    _insert_trusted_session(
-        conn,
-        session_id="effective-beyond-one-sample",
-        start_time="2026-07-20 11:00:00",
-        end_time="2026-07-20 11:00:30",
-        duration_seconds=30,
-        effective_seconds=36,
+        effective_seconds=31,
         engaged_seconds=20,
         passive_seconds=10,
         idle_seconds=0,
@@ -264,9 +333,12 @@ def test_effective_compatibility_tolerance_uses_recording_sample_interval(
     conn.commit()
     conn.close()
 
-    result = database.query_date_range_stats(str(db_path), ["2026-07-20"])
+    before = database.query_date_range_stats(str(db_path), ["2026-07-20"])
+    database.save_settings(str(db_path), {"sample_interval_seconds": 60})
+    after = database.query_date_range_stats(str(db_path), ["2026-07-20"])
 
-    assert result["totals"]["anomaly_count"] == 1
+    assert before["totals"]["anomaly_count"] == 1
+    assert after["totals"]["anomaly_count"] == 1
 
 
 def test_legacy_sessions_are_not_anomalous_only_for_missing_new_counters(

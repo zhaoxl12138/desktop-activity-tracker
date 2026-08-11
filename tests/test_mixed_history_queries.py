@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from daylens import database
+from daylens.services.trusted_metrics_service import assess_range
 from daylens.session_tracker import ActivitySession
 
 
@@ -68,12 +69,54 @@ def test_date_range_preserves_legacy_dates_when_sessions_exist(tmp_path):
     assert result["totals"]["engaged_seconds"] == 120
     assert result["totals"]["passive_seconds"] == 60
     assert result["totals"]["work_engaged_seconds"] == 0
-    assert result["totals"]["session_count"] == 2
-    assert result["totals"]["legacy_session_count"] == 1
+    assert result["totals"]["session_count"] == 1
+    assert result["totals"]["legacy_session_count"] == 0
+    assert result["totals"]["legacy_log_sample_count"] == 1
+    assert result["totals"]["legacy_granularity_unknown"] is True
     assert result["totals"]["anomaly_count"] == 0
     assert result["totals"]["dates_with_data"] == [yesterday, today]
     assert result["totals"]["metric_versions"] == ["attention-v1", "legacy"]
     assert result["totals"]["classification_versions"] == ["legacy", "rules-a"]
+
+    legacy_day = database.query_date_stats(str(db_path), yesterday)
+    assert legacy_day["totals"]["session_count"] == 0
+    assert legacy_day["totals"]["legacy_session_count"] == 0
+    assert legacy_day["totals"]["legacy_log_sample_count"] == 1
+    assert legacy_day["totals"]["legacy_granularity_unknown"] is True
+
+
+def test_raw_log_samples_never_impersonate_legacy_sessions(tmp_path):
+    db_path = tmp_path / "usage.db"
+    yesterday, today = _build_mixed_history(db_path)
+    conn = database.init_db(str(db_path))
+    for index in range(99):
+        database.insert_activity_log(
+            conn,
+            {
+                "timestamp": f"{yesterday} 13:{index // 60:02d}:{index % 60:02d}",
+                "date": yesterday,
+                "process_name": "legacy.exe",
+                "window_title": "Legacy sample",
+                "category_key": "coding",
+                "category_name": "Coding",
+                "active_rule": "interactive_required",
+                "is_user_active": True,
+                "is_effective": True,
+                "idle_seconds": 0,
+                "duration_seconds": 1,
+            },
+        )
+    database.close_db(conn)
+
+    result = database.query_date_range_stats(str(db_path), [yesterday, today])
+    trust = assess_range(result["totals"], [yesterday, today])
+
+    assert result["totals"]["session_count"] == 1
+    assert result["totals"]["legacy_session_count"] == 0
+    assert result["totals"]["legacy_log_sample_count"] == 100
+    assert result["totals"]["legacy_granularity_unknown"] is True
+    assert trust["level"] == "low"
+    assert trust["reasons"] == ["旧日志缺少会话粒度"]
 
 
 def test_entertainment_trend_preserves_legacy_dates_when_sessions_exist(tmp_path):

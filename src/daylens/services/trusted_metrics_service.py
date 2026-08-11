@@ -22,6 +22,12 @@ def assess_range(summary: dict, expected_dates: list[str]) -> dict[str, object]:
     )
     session_count = int(summary.get("session_count", 0) or 0)
     legacy_count = int(summary.get("legacy_session_count", 0) or 0)
+    legacy_log_sample_count = int(
+        summary.get("legacy_log_sample_count", 0) or 0
+    )
+    legacy_granularity_unknown = bool(
+        summary.get("legacy_granularity_unknown", False)
+    ) or legacy_log_sample_count > 0
     anomaly_count = int(summary.get("anomaly_count", 0) or 0)
     metric_versions = _sorted_versions(summary, "metric_versions")
     classification_versions = _sorted_versions(
@@ -38,8 +44,10 @@ def assess_range(summary: dict, expected_dates: list[str]) -> dict[str, object]:
     anomaly_ratio = anomaly_count / session_count if session_count else 0.0
 
     low_reasons: list[str] = []
-    if session_count <= 0:
+    if session_count <= 0 and not legacy_granularity_unknown:
         low_reasons.append("范围内没有可评估记录")
+    if legacy_granularity_unknown:
+        low_reasons.append("旧日志缺少会话粒度")
     if coverage_ratio < 0.8:
         low_reasons.append("记录日期覆盖不足80%")
     if session_count > 0 and legacy_ratio > 0.2:
@@ -85,19 +93,23 @@ def assess_range(summary: dict, expected_dates: list[str]) -> dict[str, object]:
 
 def compare_ranges(left: dict, right: dict) -> dict[str, object]:
     """Report whether total and category trends can be compared safely."""
-    both_healthy = left.get("level") != "low" and right.get("level") != "low"
+    trusted_levels = {"high", "medium"}
+    both_healthy = (
+        left.get("level") in trusted_levels
+        and right.get("level") in trusted_levels
+    )
     left_metrics = sorted(
         {
             str(version)
             for version in left.get("metric_versions", []) or []
-            if version and str(version) != "legacy"
+            if version
         }
     )
     right_metrics = sorted(
         {
             str(version)
             for version in right.get("metric_versions", []) or []
-            if version and str(version) != "legacy"
+            if version
         }
     )
     same_metric = bool(left_metrics) and left_metrics == right_metrics

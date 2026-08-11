@@ -225,7 +225,7 @@ def test_compare_ranges_rejects_low_quality_or_different_metric_versions():
     }
 
 
-def test_compare_ranges_normalizes_tolerated_legacy_metric_version():
+def test_compare_ranges_keeps_legacy_as_a_metric_compatibility_boundary():
     mixed = assess_range(
         _summary(
             session_count=100,
@@ -244,7 +244,24 @@ def test_compare_ranges_normalizes_tolerated_legacy_metric_version():
     )
 
     assert compare_ranges(mixed, current) == {
-        "comparable": True,
+        "comparable": False,
         "category_comparable": False,
-        "reason": "分类规则不一致，仅总参与时间可比",
+        "reason": "计量版本不一致，无法比较",
     }
+
+
+def test_compare_ranges_fails_closed_when_trust_level_is_missing_or_unknown():
+    complete = {
+        "level": "high",
+        "metric_versions": ["attention-v1"],
+        "classification_versions": ["rules-a"],
+        "category_comparable": True,
+    }
+
+    for level in (None, "unknown"):
+        incomplete = {**complete, "level": level}
+        assert compare_ranges(incomplete, complete) == {
+            "comparable": False,
+            "category_comparable": False,
+            "reason": "数据质量不足，无法比较",
+        }

@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
 
 
 WORK_CATEGORY_KEYS = frozenset(
     {"ai_tools", "coding", "office", "reading", "creative"}
 )
-DEFAULT_SAMPLE_INTERVAL_SECONDS = 1
+# attention-v1 counters are incremented and rewritten as mutually exclusive
+# buckets, so persisted integer identities are exact and use a fixed tolerance.
+ATTENTION_V1_COMPOSITION_TOLERANCE_SECONDS = 0
 DEFAULT_WALL_CLOCK_TOLERANCE_SECONDS = 300
 
 
@@ -19,6 +22,8 @@ def _empty_trusted_summary() -> dict:
         "work_engaged_seconds": 0,
         "session_count": 0,
         "legacy_session_count": 0,
+        "legacy_log_sample_count": 0,
+        "legacy_granularity_unknown": False,
         "anomaly_count": 0,
         "dates_with_data": [],
         "metric_versions": [],
@@ -26,55 +31,72 @@ def _empty_trusted_summary() -> dict:
     }
 
 
-def _sample_interval_from_connection(conn) -> int:
-    row = conn.execute(
-        "SELECT value FROM settings WHERE key = 'sample_interval_seconds'"
-    ).fetchone()
-    if not row:
-        return DEFAULT_SAMPLE_INTERVAL_SECONDS
+def _strict_integer(value) -> tuple[int, bool]:
+    if value is None:
+        return 0, False
     try:
-        return max(DEFAULT_SAMPLE_INTERVAL_SECONDS, int(row[0]))
-    except (TypeError, ValueError):
-        return DEFAULT_SAMPLE_INTERVAL_SECONDS
+        number = Decimal(str(value).strip())
+    except (InvalidOperation, ValueError):
+        return 0, False
+    if not number.is_finite() or number != number.to_integral_value():
+        return 0, False
+    return int(number), True
 
 
 def _integer(value) -> int:
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError):
-        return 0
+    number, valid = _strict_integer(value)
+    return number if valid else 0
 
 
-def _session_row_is_anomalous(row, sample_interval: int) -> bool:
-    duration = _integer(row["duration_seconds"])
-    effective = _integer(row["effective_seconds"])
-    engaged = _integer(row["engaged_seconds"])
-    passive = _integer(row["passive_seconds"])
-    idle = _integer(row["idle_seconds"])
+def _session_row_is_anomalous(row) -> bool:
+    parsed = [
+        _strict_integer(row[field])
+        for field in (
+            "duration_seconds",
+            "effective_seconds",
+            "engaged_seconds",
+            "passive_seconds",
+            "idle_seconds",
+        )
+    ]
+    if not all(valid for _, valid in parsed):
+        return True
+    duration, effective, engaged, passive, idle = (
+        number for number, _ in parsed
+    )
     if any(value < 0 for value in (duration, effective, engaged, passive, idle)):
         return True
 
     metric_version = str(row["metric_version"] or "legacy")
     if metric_version != "legacy":
         components = engaged + passive + idle
-        if abs(duration - components) > sample_interval:
+        if (
+            abs(duration - components)
+            > ATTENTION_V1_COMPOSITION_TOLERANCE_SECONDS
+        ):
             return True
-        if abs(effective - (engaged + passive)) > sample_interval:
+        if (
+            abs(effective - (engaged + passive))
+            > ATTENTION_V1_COMPOSITION_TOLERANCE_SECONDS
+        ):
             return True
 
     try:
         start_time = datetime.fromisoformat(str(row["start_time"]))
         end_time = datetime.fromisoformat(str(row["end_time"]))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return True
-    wall_seconds = (end_time - start_time).total_seconds()
+    try:
+        wall_seconds = (end_time - start_time).total_seconds()
+    except (TypeError, OverflowError):
+        return True
     return (
         wall_seconds < 0
         or abs(wall_seconds - duration) > DEFAULT_WALL_CLOCK_TOLERANCE_SECONDS
     )
 
 
-def _summarize_session_rows(rows, sample_interval: int) -> tuple[dict, dict[str, dict]]:
+def _summarize_session_rows(rows) -> tuple[dict, dict[str, dict]]:
     totals = _empty_trusted_summary()
     by_date: dict[str, dict] = {}
     seen_session_ids: set[str] = set()
@@ -85,7 +107,7 @@ def _summarize_session_rows(rows, sample_interval: int) -> tuple[dict, dict[str,
         session_id = str(row["session_id"] or "")
         duplicate = session_id in seen_session_ids
         seen_session_ids.add(session_id)
-        anomalous = duplicate or _session_row_is_anomalous(row, sample_interval)
+        anomalous = duplicate or _session_row_is_anomalous(row)
         metric_version = str(row["metric_version"] or "legacy")
         classification_version = str(row["classification_version"] or "legacy")
         engaged = _integer(row["engaged_seconds"])
@@ -122,10 +144,11 @@ def _summarize_legacy_log_rows(rows) -> tuple[dict, dict[str, dict]]:
     for row in rows:
         date_str = str(row["date"] or "")
         daily = by_date.setdefault(date_str, _empty_trusted_summary())
-        anomalous = _integer(row["duration_seconds"]) < 0
+        duration, valid_duration = _strict_integer(row["duration_seconds"])
+        anomalous = not valid_duration or duration < 0
         for summary in (totals, daily):
-            summary["session_count"] += 1
-            summary["legacy_session_count"] += 1
+            summary["legacy_log_sample_count"] += 1
+            summary["legacy_granularity_unknown"] = True
             summary["anomaly_count"] += int(anomalous)
             summary["dates_with_data"].append(date_str)
             summary["metric_versions"].append("legacy")
@@ -142,18 +165,23 @@ def _summarize_legacy_log_rows(rows) -> tuple[dict, dict[str, dict]]:
     return totals, by_date
 
 
-def _trusted_summary_from_daily(daily: list[dict]) -> dict:
+def _merge_trusted_summaries(summaries: list[dict]) -> dict:
     totals = _empty_trusted_summary()
-    for row in daily:
+    for row in summaries:
         for field in (
             "engaged_seconds",
             "passive_seconds",
             "work_engaged_seconds",
             "session_count",
             "legacy_session_count",
+            "legacy_log_sample_count",
             "anomaly_count",
         ):
             totals[field] += _integer(row.get(field, 0))
+        totals["legacy_granularity_unknown"] = (
+            totals["legacy_granularity_unknown"]
+            or bool(row.get("legacy_granularity_unknown", False))
+        )
         totals["dates_with_data"].extend(row.get("dates_with_data", []))
         totals["metric_versions"].extend(row.get("metric_versions", []))
         totals["classification_versions"].extend(
@@ -329,9 +357,8 @@ def query_date_stats_from_sessions(read_conn, db_path: str, date_str: str) -> di
             """,
             (date_str,),
         ).fetchall()
-        sample_interval = _sample_interval_from_connection(conn)
 
-    trusted_totals, _ = _summarize_session_rows(trust_rows, sample_interval)
+    trusted_totals, _ = _summarize_session_rows(trust_rows)
     totals_payload = dict(totals)
     totals_payload.update(trusted_totals)
 
@@ -430,9 +457,8 @@ def query_date_range_from_sessions(read_conn, db_path: str, dates: list[str]) ->
             """,
             dates,
         ).fetchall()
-        sample_interval = _sample_interval_from_connection(conn)
 
-    _, trusted_by_date = _summarize_session_rows(trust_rows, sample_interval)
+    trusted_totals, trusted_by_date = _summarize_session_rows(trust_rows)
     return _build_range_payload(
         dates,
         daily_rows,
@@ -440,6 +466,7 @@ def query_date_range_from_sessions(read_conn, db_path: str, dates: list[str]) ->
         category_rows,
         app_rows,
         trusted_by_date,
+        trusted_totals,
     )
 
 
@@ -514,7 +541,7 @@ def query_date_range_from_logs(read_conn, db_path: str, dates: list[str]) -> dic
             dates,
         ).fetchall()
 
-    _, trusted_by_date = _summarize_legacy_log_rows(trust_rows)
+    trusted_totals, trusted_by_date = _summarize_legacy_log_rows(trust_rows)
     return _build_range_payload(
         dates,
         daily_rows,
@@ -522,6 +549,7 @@ def query_date_range_from_logs(read_conn, db_path: str, dates: list[str]) -> dic
         category_rows,
         app_rows,
         trusted_by_date,
+        trusted_totals,
     )
 
 
@@ -711,6 +739,7 @@ def count_consecutive_days(read_conn, db_path: str) -> int:
 
 
 def query_date_range_stats(read_conn, db_path: str, dates: list[str]) -> dict:
+    dates = list(dict.fromkeys(dates))
     if not dates:
         return _merge_range_payloads([], [])
 
@@ -797,6 +826,8 @@ def _merge_range_payloads(dates: list[str], payloads: list[dict]) -> dict:
                 "work_engaged_seconds": 0,
                 "session_count": 0,
                 "legacy_session_count": 0,
+                "legacy_log_sample_count": 0,
+                "legacy_granularity_unknown": False,
                 "anomaly_count": 0,
                 "dates_with_data": [],
                 "metric_versions": [],
@@ -809,7 +840,9 @@ def _merge_range_payloads(dates: list[str], payloads: list[dict]) -> dict:
     totals_idle = sum(row.get("idle_seconds", 0) or 0 for row in daily)
     totals_work = sum(row.get("work_seconds", 0) or 0 for row in daily)
     totals_video = sum(row.get("video_seconds", 0) or 0 for row in daily)
-    trusted_totals = _trusted_summary_from_daily(daily)
+    trusted_totals = _merge_trusted_summaries(
+        [payload.get("totals", {}) for payload in payloads]
+    )
 
     return {
         "dates": dates,
@@ -838,6 +871,7 @@ def _build_range_payload(
     category_rows,
     app_rows,
     trusted_by_date: dict[str, dict],
+    trusted_totals: dict,
 ) -> dict:
     daily_map = {row["date"]: dict(row) for row in daily_rows}
     work_video_map = {row["date"]: dict(row) for row in work_video_rows}
@@ -863,8 +897,6 @@ def _build_range_payload(
     totals_idle = sum(item["idle_seconds"] for item in daily)
     totals_work = sum(item["work_seconds"] for item in daily)
     totals_video = sum(item["video_seconds"] for item in daily)
-    trusted_totals = _trusted_summary_from_daily(daily)
-
     return {
         "dates": dates,
         "daily": daily,
