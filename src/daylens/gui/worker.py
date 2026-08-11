@@ -754,14 +754,11 @@ class RecordingWorker(QThread):
         self._tracker.cross_group_grace = cross_group_grace
         self._tracker.sample_interval = self.sample_interval
         self._tracker.flush_interval = self.flush_interval
-        self._tracker._max_pending_attention_rewrites = max(
-            1,
-            int(
-                tracker_cfg.get(
-                    "attention_rewrite_queue_size",
-                    self._max_pending_persists,
-                )
-            ),
+        self._tracker.set_rewrite_capacity(
+            tracker_cfg.get(
+                "attention_rewrite_queue_size",
+                self._max_pending_persists,
+            )
         )
         self._sampling_cadence.reset()
 

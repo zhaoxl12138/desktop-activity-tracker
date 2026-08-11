@@ -1459,6 +1459,115 @@ def test_provisional_boundaries_stop_before_exceeding_rewrite_capacity():
     ) == 2
 
 
+def test_runtime_shrink_waits_for_reserved_provisional_owners_to_drain():
+    rewritten = []
+
+    def rewrite(session):
+        rewritten.append(session.session_id)
+        return True
+
+    tracker = SessionTracker(
+        config={
+            "tracker": {
+                "sample_interval_seconds": 1,
+                "idle_threshold_seconds": 10,
+                "entertainment_idle_threshold_seconds": 99,
+                "attention_rewrite_queue_size": 3,
+            }
+        },
+        classifier=MappingClassifier(),
+        on_session_end=lambda _session: True,
+        on_session_rewrite=rewrite,
+    )
+    coding = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 95,
+    }
+    notes = {
+        "process_name": "Notes.exe",
+        "window_title": "notes.md",
+        "exe_path": "",
+        "pid": 96,
+    }
+
+    tracker.tick(0, coding)
+    tracker.tick(0, notes)
+    tracker.tick(0, coding)
+    tracker.tick(0, notes)
+    reserved_ids = tracker._rewrite_owner_ids(tracker._provisional_attention)
+    assert len(reserved_ids) == 3
+    assert tracker.pending_rewrite_sessions() == ()
+
+    tracker.set_rewrite_capacity(1)
+
+    assert tracker.rewrite_capacity_requested == 1
+    assert tracker.rewrite_capacity_effective == 3
+    for _ in range(7):
+        tracker.tick(0, notes)
+
+    assert set(rewritten) == reserved_ids
+    assert tracker.pending_rewrite_sessions() == ()
+    assert tracker.rewrite_capacity_effective == 1
+    before_duration = tracker.current_session.duration_seconds
+
+    tracker.tick(0, notes)
+
+    assert tracker.current_session.duration_seconds == before_duration + 1
+
+
+def test_pending_rewrite_snapshot_cannot_mutate_tracker_owned_session():
+    tracker = SessionTracker(
+        config={
+            "tracker": {
+                "sample_interval_seconds": 1,
+                "idle_threshold_seconds": 1,
+                "entertainment_idle_threshold_seconds": 99,
+            }
+        },
+        classifier=MappingClassifier(),
+        on_session_end=lambda _session: True,
+        on_session_rewrite=lambda _session: False,
+    )
+    coding = {
+        "process_name": "Code.exe",
+        "window_title": "main.py",
+        "exe_path": "",
+        "pid": 97,
+    }
+    notes = {
+        "process_name": "Notes.exe",
+        "window_title": "notes.md",
+        "exe_path": "",
+        "pid": 98,
+    }
+    tracker.tick(0, coding)
+    tracker.tick(0, notes)
+
+    snapshot = tracker.pending_rewrite_sessions()
+    assert len(snapshot) == 1
+    session_id = snapshot[0].session_id
+    snapshot[0].window_title = "mutated outside tracker"
+    snapshot[0].duration_seconds = 999
+    snapshot[0].engaged_seconds = 999
+    snapshot[0].passive_seconds = 999
+    snapshot[0].effective_seconds = 1998
+    snapshot[0].idle_seconds = 999
+
+    internal_snapshot = tracker.pending_rewrite_sessions()
+    assert internal_snapshot[0].window_title == "main.py"
+    assert internal_snapshot[0].duration_seconds == 1
+    assert internal_snapshot[0].engaged_seconds == 0
+    assert internal_snapshot[0].passive_seconds == 0
+    assert internal_snapshot[0].effective_seconds == 0
+    assert internal_snapshot[0].idle_seconds == 1
+
+    tracker.acknowledge_pending_rewrites([session_id])
+
+    assert tracker.pending_rewrite_sessions() == ()
+
+
 def test_video_title_change_after_sixty_idle_seconds_starts_idle():
     ended = []
     tracker = SessionTracker(

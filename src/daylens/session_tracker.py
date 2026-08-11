@@ -1,5 +1,6 @@
 """Session tracker — 1s sampling + session aggregation + state machine."""
 
+import copy
 import ctypes
 import re
 import time
@@ -244,9 +245,12 @@ class SessionTracker:
         self._video_silent_idle: float = 0.0
         self._provisional_attention: list[dict] = []
         self._pending_attention_rewrites: dict[str, ActivitySession] = {}
-        self._max_pending_attention_rewrites = max(
+        self._requested_rewrite_capacity = max(
             1,
             int(tracker.get("attention_rewrite_queue_size", 100)),
+        )
+        self._max_pending_attention_rewrites = (
+            self._requested_rewrite_capacity
         )
         self._rewrite_backpressured = False
 
@@ -257,8 +261,24 @@ class SessionTracker:
         return self._current
 
     def pending_rewrite_sessions(self) -> tuple[ActivitySession, ...]:
-        """Return tracker-owned idempotent rewrites for drain or recovery."""
-        return tuple(self._pending_attention_rewrites.values())
+        """Return detached rewrite copies for persistence or recovery."""
+        return tuple(
+            copy.deepcopy(session)
+            for session in self._pending_attention_rewrites.values()
+        )
+
+    @property
+    def rewrite_capacity_requested(self) -> int:
+        return self._requested_rewrite_capacity
+
+    @property
+    def rewrite_capacity_effective(self) -> int:
+        return self._max_pending_attention_rewrites
+
+    def set_rewrite_capacity(self, capacity: int) -> None:
+        """Apply capacity only after already-reserved rewrite IDs are safe."""
+        self._requested_rewrite_capacity = max(1, int(capacity))
+        self._refresh_rewrite_capacity()
 
     def drain_pending_rewrites(self) -> bool:
         """Offer every tracker-owned rewrite to the explicit rewrite callback."""
@@ -268,6 +288,7 @@ class SessionTracker:
         """Release rewrites only after another owner durably stores them."""
         for session_id in session_ids:
             self._pending_attention_rewrites.pop(str(session_id), None)
+        self._refresh_rewrite_capacity()
         if len(self._pending_attention_rewrites) < self._max_pending_attention_rewrites:
             self._rewrite_backpressured = False
 
@@ -285,6 +306,7 @@ class SessionTracker:
         persisted = self._emit_session()
         if persisted:
             self._provisional_attention.clear()
+            self._refresh_rewrite_capacity()
         return persisted
 
     def replace_classifier(self, replacement_classifier) -> bool:
@@ -371,6 +393,7 @@ class SessionTracker:
         self._persistent_idle = 0.0
         self._idle_corrected = False
         self._provisional_attention.clear()
+        self._refresh_rewrite_capacity()
 
     def _attention_bucket(self, category_key: str, audio_playing: bool) -> str:
         if self._persistent_idle <= self.idle_threshold:
@@ -445,6 +468,7 @@ class SessionTracker:
             if persisted is False:
                 return False
             self._pending_attention_rewrites.pop(session_id, None)
+            self._refresh_rewrite_capacity()
         return True
 
     def _rewrite_owner_ids(self, entries: list[dict]) -> set[str]:
@@ -453,6 +477,14 @@ class SessionTracker:
             for entry in entries
             if entry.get("persisted") and not isinstance(entry["owner"], dict)
         }
+
+    def _refresh_rewrite_capacity(self) -> None:
+        reserved_ids = set(self._pending_attention_rewrites)
+        reserved_ids.update(self._rewrite_owner_ids(self._provisional_attention))
+        self._max_pending_attention_rewrites = max(
+            self._requested_rewrite_capacity,
+            len(reserved_ids),
+        )
 
     def _can_reserve_rewrites(self, entries: list[dict]) -> bool:
         owner_ids = self._rewrite_owner_ids(entries)
@@ -505,6 +537,7 @@ class SessionTracker:
             owner = entry["owner"]
             if entry.get("persisted") and not isinstance(owner, dict):
                 self._pending_attention_rewrites[owner.session_id] = owner
+        self._refresh_rewrite_capacity()
         self._idle_corrected = True
         return self._retry_attention_rewrites()
 
@@ -1178,6 +1211,7 @@ class SessionTracker:
             self._last_attention_state = "idle"
             self._video_silent_idle = 0.0
             self._provisional_attention.clear()
+            self._refresh_rewrite_capacity()
         if not correction_attempted:
             self._retry_attention_rewrites()
 

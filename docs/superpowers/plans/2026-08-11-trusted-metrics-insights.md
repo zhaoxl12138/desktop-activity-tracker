@@ -360,6 +360,67 @@ git add docs/superpowers/plans/2026-08-11-trusted-metrics-insights.md src/daylen
 git commit -m "fix: bound and recover attention rewrites"
 ```
 
+### Task 3B: Safe runtime shrink and isolated rewrite snapshots
+
+**Files:**
+- Modify: `src/daylens/session_tracker.py`
+- Modify: `src/daylens/gui/worker.py`
+- Modify: `tests/test_session_tracker_policies.py`
+- Modify: `tests/test_recording_worker.py`
+
+- [ ] **Step 1: Add the runtime-shrink red test**
+
+Create three persisted provisional owners while the configured rewrite
+capacity is three, then request capacity one before the idle threshold is
+confirmed. Assert the effective capacity remains three until correction can
+invoke a succeeding rewrite callback for every owner, then converges to one.
+Assert a subsequent tick advances instead of repeatedly raising
+`AttentionRewriteBackpressure`.
+
+- [ ] **Step 2: Run and confirm the shrink failure**
+
+```powershell
+$env:QT_QPA_PLATFORM='offscreen'
+python -m pytest -q tests/test_session_tracker_policies.py -k "runtime_shrink"
+```
+
+Expected: direct capacity shrink leaves three reserved owners against capacity
+one, so correction raises before invoking the healthy callback.
+
+- [ ] **Step 3: Implement deferred capacity convergence**
+
+Add a tracker method that records the requested capacity and computes the
+effective capacity as at least the union of pending rewrite IDs and persisted
+provisional owner IDs. Recompute after correction, retry, acknowledgement, and
+idle-ledger reset. Have worker hot reload call this public method so published
+settings retain the requested value while tracker state exposes the temporarily
+safe effective value.
+
+- [ ] **Step 4: Add the isolated-snapshot red test**
+
+Queue a corrected rewrite, obtain `pending_rewrite_sessions()`, mutate every
+counter and title on the returned session, then fetch a second snapshot and
+assert all tracker-owned values remain unchanged. Acknowledge the rewrite by
+the copied session's `session_id` and assert the internal queue is empty.
+
+- [ ] **Step 5: Return deep snapshot copies**
+
+Build the tuple with `copy.deepcopy()` for each queued `ActivitySession`.
+Keep callback drain on tracker-owned sessions and acknowledgement keyed only by
+the string `session_id`, never object identity.
+
+- [ ] **Step 6: Verify and append the fix commit**
+
+```powershell
+$env:QT_QPA_PLATFORM='offscreen'
+python -m pytest -q tests/test_session_tracker_policies.py tests/test_recording_worker.py tests/test_session_runtime_service.py tests/test_command_handlers_recording.py tests/test_session_recovery_service.py tests/test_timeline_logic.py
+python -m pytest -q
+python -m compileall -q src tests
+git diff --check
+git add docs/superpowers/plans/2026-08-11-trusted-metrics-insights.md src/daylens/session_tracker.py src/daylens/gui/worker.py tests/test_session_tracker_policies.py tests/test_recording_worker.py
+git commit -m "fix: make rewrite capacity updates safe"
+```
+
 ### Task 4: Aggregation and trust assessment
 
 **Files:**

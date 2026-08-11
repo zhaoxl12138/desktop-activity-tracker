@@ -18,6 +18,7 @@ class TrackerStub:
         self.flush_interval = 5
         self.cross_group_grace = 30
         self._max_pending_attention_rewrites = 100
+        self.capacity_requests = []
         self.classifier = object()
         self.replacement_calls = []
         self.replace_result = True
@@ -32,6 +33,10 @@ class TrackerStub:
             return False
         self.classifier = replacement_classifier
         return True
+
+    def set_rewrite_capacity(self, capacity):
+        self.capacity_requests.append(capacity)
+        self._max_pending_attention_rewrites = capacity
 
 
 class StaticClassifier:
@@ -365,6 +370,7 @@ def test_settings_update_is_applied_only_when_worker_consumes_command(monkeypatc
     assert tracker.min_session == 4
     assert tracker.cross_group_grace == 45
     assert tracker._max_pending_attention_rewrites == 12
+    assert tracker.capacity_requests == [12]
     assert tracker.classifier is replacement_classifier
     assert tracker.replacement_calls == [replacement_classifier]
     assert worker.sample_interval == 3
