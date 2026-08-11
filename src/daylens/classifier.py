@@ -1,5 +1,7 @@
 """Classify foreground window into categories based on config.yaml rules."""
 
+import hashlib
+import json
 import os
 import re
 import yaml
@@ -37,6 +39,37 @@ def _match_title(title_lower, match_rules, compiled_patterns=None):
 
 
 class Classifier:
+    @staticmethod
+    def rule_fingerprint(config: dict) -> str:
+        """Return a deterministic version for the effective classifier rules."""
+        canonical = {}
+        for key in sorted((config.get("categories", {}) or {})):
+            category = config["categories"][key] or {}
+            match = category.get("match", {}) or {}
+            canonical[key] = {
+                "active_rule": str(category.get("active_rule", "")),
+                "process_names": sorted({
+                    str(value).strip().casefold()
+                    for value in (match.get("process_names", []) or [])
+                }),
+                "title_keywords": sorted({
+                    str(value).strip().casefold()
+                    for value in (match.get("title_keywords", []) or [])
+                }),
+                "title_patterns": sorted({
+                    str(value).strip()
+                    for value in (match.get("title_patterns", []) or [])
+                }),
+            }
+        payload = json.dumps(
+            canonical,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        return f"rules-{digest[:12]}"
+
     def __init__(self, config_path=None, db_path=None):
         if config_path is None:
             config_path = os.path.join(get_app_root(), "config", "config.yaml")
@@ -49,6 +82,8 @@ class Classifier:
             from . import database
             database.merge_custom_rules(self.config, db_path)
             self.categories = self.config.get("categories", {})
+
+        self.classification_version = self.rule_fingerprint(self.config)
 
         browser_match = self.categories.get("browser_general", {}).get("match", {})
         self.browser_processes = _DEFAULT_BROWSER_PROCESSES | {

@@ -24,6 +24,10 @@ class MappingClassifier:
         }
 
 
+class VersionedMappingClassifier(MappingClassifier):
+    classification_version = "rules-0123456789ab"
+
+
 class ManualClock:
     def __init__(self):
         self.now = 0.0
@@ -253,6 +257,95 @@ def test_finished_short_session_is_handed_to_persistence_callback():
     assert len(ended) == 1
     assert ended[0].duration_seconds == 1
     assert ended[0].switch_reason == "shutdown"
+
+
+def test_new_session_uses_classifier_version_and_metric_default():
+    tracker = SessionTracker(
+        config={"tracker": {"min_session_seconds": 1}},
+        classifier=VersionedMappingClassifier(),
+    )
+
+    tracker.tick(
+        0,
+        {
+            "process_name": "Code.exe",
+            "window_title": "main.py",
+            "exe_path": "",
+            "pid": 24,
+        },
+    )
+
+    assert tracker.classification_version == "rules-0123456789ab"
+    assert tracker.current_session.classification_version == "rules-0123456789ab"
+    assert tracker.current_session.metric_version == "attention-v1"
+
+
+def test_new_session_falls_back_to_legacy_classification_version():
+    tracker = _tracker()
+
+    tracker.tick(
+        0,
+        {
+            "process_name": "Code.exe",
+            "window_title": "main.py",
+            "exe_path": "",
+            "pid": 25,
+        },
+    )
+
+    assert tracker.classification_version == "legacy"
+    assert tracker.current_session.classification_version == "legacy"
+
+
+@pytest.mark.parametrize(
+    ("target_process", "target_title"),
+    [("VLC.exe", "Movie"), ("Chat.exe", "Friends")],
+)
+def test_cross_domain_session_uses_classifier_version(target_process, target_title):
+    tracker = SessionTracker(
+        config={
+            "tracker": {
+                "sample_interval_seconds": 1,
+                "cross_group_grace_seconds": 0,
+                "min_session_seconds": 1,
+            }
+        },
+        classifier=VersionedMappingClassifier(),
+        on_session_end=lambda _session: True,
+    )
+    tracker.tick(
+        0,
+        {
+            "process_name": "Code.exe",
+            "window_title": "main.py",
+            "exe_path": "",
+            "pid": 26,
+        },
+    )
+
+    tracker.tick(
+        0,
+        {
+            "process_name": target_process,
+            "window_title": target_title,
+            "exe_path": "",
+            "pid": 27,
+        },
+    )
+    if target_process == "Chat.exe":
+        tracker.tick(
+            0,
+            {
+                "process_name": target_process,
+                "window_title": target_title,
+                "exe_path": "",
+                "pid": 27,
+            },
+        )
+
+    assert tracker.current_session.process_name == target_process
+    assert tracker.current_session.classification_version == "rules-0123456789ab"
+    assert tracker.current_session.metric_version == "attention-v1"
 
 
 def test_social_passive_grace_uses_pending_policy_at_threshold_boundary():

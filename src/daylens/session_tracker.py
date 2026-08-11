@@ -204,6 +204,11 @@ class SessionTracker:
         self.cross_group_grace = tracker.get("cross_group_grace_seconds", 30)
 
         self.classifier = classifier
+        self.classification_version = getattr(
+            classifier,
+            "classification_version",
+            "legacy",
+        )
         self._on_session_end = on_session_end
         self._on_flush = on_flush
         self._audio_detector = audio_detector
@@ -439,6 +444,7 @@ class SessionTracker:
                 category_name=cat_name,
                 active_rule=active_rule,
                 initial_title=norm_title,
+                classification_version=self.classification_version,
             )
 
         self._tick_current(idle_seconds, now, hwnd)
@@ -535,6 +541,7 @@ class SessionTracker:
                 effective_seconds=effective,
                 idle_seconds=idle,
                 initial_title=p["norm_title"],
+                classification_version=self.classification_version,
             )
             self._pending_switch = None
             return True
@@ -596,6 +603,7 @@ class SessionTracker:
             effective_seconds=eff,
             idle_seconds=idle,
             initial_title=p["norm_title"],
+            classification_version=self.classification_version,
         )
         self._pending_switch = None
         self._last_cursor_pos = None
