@@ -387,7 +387,7 @@ def test_trusted_insight_card_collapses_low_confidence_and_expands_high_confiden
     app.processEvents()
 
 
-def test_top_app_widget_renders_purpose_and_attention_breakdown():
+def test_top_app_widget_keeps_compact_single_line_rows_without_overlap():
     app = _app()
     widget = dashboard_widgets.TopAppListWidget()
     widget.set_items(
@@ -408,9 +408,11 @@ def test_top_app_widget_renders_purpose_and_attention_breakdown():
 
     labels = [label.text() for label in widget._row_widgets[0].findChildren(QLabel)]
     assert "Chrome" in labels
-    assert "RK3568 文档" in labels
-    assert any("前台 15分0秒" in text for text in labels)
-    assert any("参与 11分40秒" in text for text in labels)
+    assert "RK3568 文档" not in labels
+    assert "15分0秒" in labels
+    assert not any("前台" in text or "参与" in text or "被动" in text for text in labels)
+    assert len(labels) == 4
+    assert widget._row_widgets[0].minimumHeight() <= 32
     widget.deleteLater()
     app.processEvents()
 

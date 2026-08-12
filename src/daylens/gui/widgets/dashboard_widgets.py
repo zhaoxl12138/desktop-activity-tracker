@@ -2022,6 +2022,7 @@ class TopAppListWidget(QFrame):
 
     def _build_row(self, rank: int):
         row = QWidget()
+        row.setFixedHeight(30)
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
@@ -2036,19 +2037,10 @@ class TopAppListWidget(QFrame):
         icon_label.setStyleSheet(f"background: {COLORS['panel_bg_alt']}; border-radius: 6px;")
         layout.addWidget(icon_label)
 
-        name_box = QWidget()
-        name_box.setMinimumWidth(118)
-        name_layout = QVBoxLayout(name_box)
-        name_layout.setContentsMargins(0, 0, 0, 0)
-        name_layout.setSpacing(1)
         name_label = ElidedLabel("--")
-        name_label.setStyleSheet(f"font-size: 13px; color: {COLORS['text']}; font-weight: 700;")
-        purpose_label = ElidedLabel("")
-        purpose_label.setTextFormat(Qt.PlainText)
-        purpose_label.setStyleSheet(f"font-size: 10px; color: {COLORS['text_muted']};")
-        name_layout.addWidget(name_label)
-        name_layout.addWidget(purpose_label)
-        layout.addWidget(name_box)
+        name_label.setMinimumWidth(96)
+        name_label.setStyleSheet(f"font-size: 13px; color: {COLORS['text']}; font-weight: 600;")
+        layout.addWidget(name_label)
 
         progress_bar = QProgressBar()
         progress_bar.setTextVisible(False)
@@ -2069,24 +2061,14 @@ class TopAppListWidget(QFrame):
         )
         layout.addWidget(progress_bar, 1)
 
-        duration_box = QWidget()
-        duration_box.setFixedWidth(104)
-        duration_layout = QVBoxLayout(duration_box)
-        duration_layout.setContentsMargins(0, 0, 0, 0)
-        duration_layout.setSpacing(1)
         duration_label = QLabel("--")
         duration_label.setTextFormat(Qt.PlainText)
+        duration_label.setFixedWidth(68)
         duration_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        duration_label.setStyleSheet(f"font-size: 12px; color: {COLORS['text_secondary']};")
-        attention_label = QLabel("")
-        attention_label.setTextFormat(Qt.PlainText)
-        attention_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        attention_label.setStyleSheet(f"font-size: 10px; color: {COLORS['text_muted']};")
-        duration_layout.addWidget(duration_label)
-        duration_layout.addWidget(attention_label)
-        layout.addWidget(duration_box)
+        duration_label.setStyleSheet(f"font-size: 13px; color: {COLORS['text_secondary']};")
+        layout.addWidget(duration_label)
 
-        return row, icon_label, name_label, purpose_label, progress_bar, duration_label, attention_label
+        return row, icon_label, name_label, progress_bar, duration_label
 
     def set_items(self, items) -> None:
         # Remove old rows
@@ -2122,26 +2104,14 @@ class TopAppListWidget(QFrame):
             process_name = str(item.get("process_name", "") or "")
             display_name = str(item.get("display_name", "") or process_name)
             seconds = int(item.get("seconds", 0) or 0)
-            engaged = int(item.get("engaged_seconds", 0) or 0)
-            passive = int(item.get("passive_seconds", 0) or 0)
-            purpose = str(item.get("purpose", "") or "")
             icon = item.get("icon")
-            row, icon_lbl, name_lbl, purpose_lbl, bar, dur_lbl, attention_lbl = self._build_row(index + 1)
+            row, icon_lbl, name_lbl, bar, dur_lbl = self._build_row(index + 1)
             icon_lbl.setPixmap(icon.pixmap(26, 26) if icon else QIcon().pixmap(18, 18))
             name_lbl.setText(display_name)
-            purpose_lbl.setText(purpose)
-            purpose_lbl.setVisible(bool(purpose))
             if not name_lbl.toolTip() and display_name != process_name:
                 name_lbl.setToolTip(f"{display_name} — {process_name}")
             bar.setValue(int(round((seconds / max_seconds) * 100)))
-            dur_lbl.setText(f"前台 {fmt_seconds(seconds)}")
-            parts = []
-            if engaged:
-                parts.append(f"参与 {fmt_seconds(engaged)}")
-            if passive:
-                parts.append(f"被动 {fmt_seconds(passive)}")
-            attention_lbl.setText(" · ".join(parts))
-            attention_lbl.setVisible(bool(parts))
+            dur_lbl.setText(fmt_seconds(seconds))
             self.rows_container.addWidget(row)
             self._row_widgets.append(row)
 
