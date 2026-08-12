@@ -127,6 +127,27 @@ def test_successful_save_emits_complete_saved_config(tmp_path, monkeypatch):
     page.deleteLater()
 
 
+def test_goal_boundaries_default_and_are_saved(tmp_path, monkeypatch):
+    _app, page, _worker, _old_db = _build_page(tmp_path, monkeypatch)
+    captured = {}
+
+    def fake_save(**kwargs):
+        captured.update(kwargs)
+        return {"db_path": kwargs["new_db_path"], "obsidian_output_path": ""}
+
+    monkeypatch.setattr(settings_service, "save_page_config", fake_save)
+
+    assert page.spin_weekday_entertainment.value() == 60
+    assert page.spin_weekend_entertainment.value() == 120
+    page.spin_weekday_entertainment.setValue(75)
+    page.spin_weekend_entertainment.setValue(0)
+    page._save_all()
+
+    assert captured["weekday_entertainment_limit_minutes"] == 75
+    assert captured["weekend_entertainment_limit_minutes"] == 0
+    page.deleteLater()
+
+
 def test_main_window_propagates_saved_config_to_live_consumers():
     reports_page = SimpleNamespace(obsidian_path="old")
     tray = SimpleNamespace(config={"obsidian_output_path": "old"})

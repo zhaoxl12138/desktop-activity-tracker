@@ -158,5 +158,17 @@ def test_trusted_insight_card_stays_compact_above_trend_at_1280x720(tmp_path):
     assert page.insight_card.evidence_label.wordWrap() is False
     assert page.insight_card.height() <= 72
 
+    ordered_cards = [
+        page.insight_card,
+        page.trend_card,
+        page.top_app_card,
+        page.daily_goals_card,
+    ]
+    assert all(
+        upper.geometry().bottom() < lower.geometry().top()
+        for upper, lower in zip(ordered_cards, ordered_cards[1:])
+    )
+    assert page.top_app_card.width() == page.daily_goals_card.width()
+
     window.dashboard_refresh.shutdown(timeout_ms=1_000)
     window.deleteLater()

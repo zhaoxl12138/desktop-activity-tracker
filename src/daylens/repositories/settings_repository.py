@@ -14,6 +14,8 @@ SETTING_KEYS = [
     "theme",
     "startup_enabled",
     "wizard_completed",
+    "weekday_entertainment_limit_minutes",
+    "weekend_entertainment_limit_minutes",
 ]
 
 _INTEGER_SETTING_RANGES = {
@@ -21,6 +23,15 @@ _INTEGER_SETTING_RANGES = {
     "idle_threshold_seconds": (10, 600),
     "flush_interval_seconds": (1, 300),
     "min_session_seconds": (0, 600),
+    "weekday_entertainment_limit_minutes": (0, 720),
+    "weekend_entertainment_limit_minutes": (0, 720),
+}
+
+_TRACKER_INTEGER_KEYS = {
+    "sample_interval_seconds",
+    "idle_threshold_seconds",
+    "flush_interval_seconds",
+    "min_session_seconds",
 }
 
 
@@ -77,7 +88,8 @@ def merge_db_settings(config: dict, db_path: str) -> None:
             if not minimum <= parsed <= maximum:
                 continue
             config[key] = parsed
-            config.setdefault("tracker", {})[key] = parsed
+            if key in _TRACKER_INTEGER_KEYS:
+                config.setdefault("tracker", {})[key] = parsed
         elif key == "startup_enabled":
             normalized = value.lower()
             if normalized not in {"true", "1", "yes", "false", "0", "no"}:

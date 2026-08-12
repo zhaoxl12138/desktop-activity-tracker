@@ -21,6 +21,7 @@ from daylens.services.dashboard_service import (  # noqa: E402
     _rolling_date_strings,
     build_day_over_day_comparison,
     build_distribution_sections,
+    build_daily_goals,
     build_hourly_series,
     build_hourly_series_split,
     build_work_episode_rows,
@@ -524,6 +525,93 @@ def test_work_episode_rows_merge_short_work_switches_and_conserve_engagement():
     assert rows[0]["apps"] == ["Codex", "Chrome"]
     assert rows[0]["topic"] == "DayLens 首页重构"
     assert sum(row["engaged_seconds"] for row in rows) == 2_100
+
+
+def test_daily_goals_use_same_day_type_median_rounded_to_fifteen_minutes():
+    captured = datetime(2026, 8, 12, 14, 0)  # Wednesday
+    daily = []
+    for offset, seconds in zip((1, 2, 6, 7, 8, 9, 13), (3600, 4500, 5400, 6300, 7200, 8100, 18_000)):
+        day = captured.date() - timedelta(days=offset)
+        daily.append(_trusted_rhythm_day(day.isoformat(), seconds))
+
+    goals = build_daily_goals(
+        captured_now=captured,
+        daily_rows=daily,
+        current_work_seconds=3_600,
+        current_entertainment_seconds=900,
+        weekday_entertainment_limit_minutes=60,
+        weekend_entertainment_limit_minutes=120,
+        query_failed=False,
+    )
+
+    assert goals["work"]["target_seconds"] == 6_300
+    assert goals["work"]["sample_count"] == 7
+    assert goals["work"]["remaining_seconds"] == 2_700
+    assert goals["entertainment"]["limit_seconds"] == 3_600
+    assert goals["advice"] == "再完成一个25分钟工作段，继续接近今日目标"
+
+
+def test_daily_goals_degrade_without_three_trusted_samples_or_boundary():
+    captured = datetime(2026, 8, 16, 14, 0)  # Sunday
+    daily = [
+        _trusted_rhythm_day("2026-08-09", 3600),
+        _trusted_rhythm_day("2026-08-08", 7200),  # Saturday is same weekend type
+    ]
+
+    goals = build_daily_goals(
+        captured_now=captured,
+        daily_rows=daily,
+        current_work_seconds=1_200,
+        current_entertainment_seconds=600,
+        weekday_entertainment_limit_minutes=60,
+        weekend_entertainment_limit_minutes=0,
+        query_failed=False,
+    )
+
+    assert goals["work"]["comparable"] is False
+    assert goals["work"]["target_seconds"] is None
+    assert goals["entertainment"]["limit_seconds"] is None
+    assert goals["advice"] == "目标数据积累中，先按自己的节奏继续"
+
+
+def test_daily_goals_hide_target_across_metric_or_classification_break():
+    captured = datetime(2026, 8, 12, 14, 0)
+    daily = [
+        _trusted_rhythm_day((captured.date() - timedelta(days=offset)).isoformat(), 3600)
+        for offset in (1, 2, 6)
+    ]
+    daily[0]["metric_versions"] = ["legacy"]
+
+    goals = build_daily_goals(
+        captured_now=captured,
+        daily_rows=daily,
+        current_work_seconds=600,
+        current_entertainment_seconds=0,
+        weekday_entertainment_limit_minutes=60,
+        weekend_entertainment_limit_minutes=120,
+        query_failed=False,
+    )
+
+    assert goals["status"]["kind"] == "unavailable"
+    assert goals["work"]["target_seconds"] is None
+
+
+def test_dashboard_snapshot_exposes_goal_model_with_supplied_boundary(tmp_path: Path):
+    db_path = tmp_path / "usage.db"
+    database.init_db(str(db_path)).close()
+
+    snapshot = load_today_snapshot(
+        str(db_path),
+        lambda process_name, _details: process_name,
+        {
+            "weekday_entertainment_limit_minutes": 75,
+            "weekend_entertainment_limit_minutes": 75,
+        },
+    )
+
+    assert snapshot["goals"]["version"] == 1
+    assert snapshot["goals"]["work"]["target_seconds"] is None
+    assert snapshot["goals"]["entertainment"]["limit_seconds"] == 4_500
 
 
 def test_work_episode_rows_skip_malformed_sessions():

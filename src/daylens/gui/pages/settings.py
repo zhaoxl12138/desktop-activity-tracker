@@ -126,6 +126,48 @@ class SettingsPage(QWidget):
 
         layout.addWidget(g1)
 
+        # ── Goals and boundaries ──
+        goals_group = QGroupBox("目标与边界")
+        goals_group.setStyleSheet(build_group_style())
+        goals_layout = QVBoxLayout(goals_group)
+        goals_layout.setContentsMargins(16, 20, 16, 16)
+        goals_layout.setSpacing(10)
+
+        goals_hint = QLabel("工作目标根据近期同类日自动生成；娱乐边界包含被动视频时长。设为 0 表示不设置。")
+        goals_hint.setWordWrap(True)
+        goals_hint.setTextFormat(Qt.PlainText)
+        goals_hint.setStyleSheet(f"font-size: 12px; color: {ui_style.COLORS['text_muted']};")
+        goals_layout.addWidget(goals_hint)
+
+        weekday_row = QHBoxLayout()
+        weekday_row.addWidget(QLabel("工作日娱乐边界:"))
+        self.spin_weekday_entertainment = QSpinBox()
+        self.spin_weekday_entertainment.setRange(0, 720)
+        self.spin_weekday_entertainment.setSingleStep(15)
+        self.spin_weekday_entertainment.setSuffix(" 分钟")
+        self.spin_weekday_entertainment.setSpecialValueText("不设置")
+        self.spin_weekday_entertainment.setValue(
+            int(self.config.get("weekday_entertainment_limit_minutes", 60) or 0)
+        )
+        weekday_row.addWidget(self.spin_weekday_entertainment)
+        weekday_row.addStretch()
+        goals_layout.addLayout(weekday_row)
+
+        weekend_row = QHBoxLayout()
+        weekend_row.addWidget(QLabel("周末娱乐边界:"))
+        self.spin_weekend_entertainment = QSpinBox()
+        self.spin_weekend_entertainment.setRange(0, 720)
+        self.spin_weekend_entertainment.setSingleStep(15)
+        self.spin_weekend_entertainment.setSuffix(" 分钟")
+        self.spin_weekend_entertainment.setSpecialValueText("不设置")
+        self.spin_weekend_entertainment.setValue(
+            int(self.config.get("weekend_entertainment_limit_minutes", 120) or 0)
+        )
+        weekend_row.addWidget(self.spin_weekend_entertainment)
+        weekend_row.addStretch()
+        goals_layout.addLayout(weekend_row)
+        layout.addWidget(goals_group)
+
         # ── Startup ──
         g_startup = QGroupBox("开机自启")
         g_startup.setStyleSheet(build_group_style())
@@ -261,6 +303,12 @@ class SettingsPage(QWidget):
                 startup_enabled=startup_enabled,
                 new_db_path=requested_db_path,
                 obsidian_output_path=self.edit_obsidian.text().strip(),
+                weekday_entertainment_limit_minutes=(
+                    self.spin_weekday_entertainment.value()
+                ),
+                weekend_entertainment_limit_minutes=(
+                    self.spin_weekend_entertainment.value()
+                ),
             )
         except Exception as exc:
             QMessageBox.warning(self, "保存失败", str(exc))

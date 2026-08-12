@@ -62,7 +62,12 @@ def test_save_page_config_initializes_a_new_database(tmp_path, monkeypatch):
         startup_enabled=False,
         new_db_path=str(new_db_path),
         obsidian_output_path="",
+        weekday_entertainment_limit_minutes=75,
+        weekend_entertainment_limit_minutes=0,
     )
 
     assert updated["db_path"] == str(new_db_path)
-    assert database.load_settings(str(new_db_path))["sample_interval_seconds"] == "2"
+    saved = database.load_settings(str(new_db_path))
+    assert saved["sample_interval_seconds"] == "2"
+    assert saved["weekday_entertainment_limit_minutes"] == "75"
+    assert saved["weekend_entertainment_limit_minutes"] == "0"

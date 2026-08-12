@@ -183,7 +183,8 @@ def test_homepage_shell_matches_reference_structure():
         assert window.pages["today"].insight_card.maximumHeight() <= 124
         assert window.pages["today"].insight_card.geometry().bottom() <= window.pages["today"].trend_card.geometry().top()
         assert window.pages["today"].trend_card.minimumHeight() >= 230
-        assert window.pages["today"].top_app_card.minimumHeight() >= 230
+        assert window.pages["today"].top_app_card.minimumHeight() >= 180
+        assert window.pages["today"].daily_goals_card.minimumHeight() >= 160
         assert window.pages["today"].distribution_cmp_labels == {}
         distribution_texts = {
             label.text()

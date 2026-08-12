@@ -1997,14 +1997,196 @@ class _TrendCanvas(QWidget):
         painter.drawText(rect, Qt.AlignCenter, text)
 
 
-class TopAppListWidget(QFrame):
-    MAX_ROWS = 9
+def _goal_duration(seconds: int | None) -> str:
+    parsed = parse_nonnegative_int(seconds) or 0
+    hours, remainder = divmod(parsed, 3600)
+    minutes = remainder // 60
+    if hours and minutes:
+        return f"{hours}小时{minutes}分钟"
+    if hours:
+        return f"{hours}小时"
+    return f"{minutes}分钟"
+
+
+class DailyGoalsCard(QFrame):
+    """Compact daily smart target and entertainment boundary card."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("dashboardCard")
         self.setStyleSheet(ui_style.get_dashboard_card_style())
-        self.setMinimumHeight(260)
+        self.setMinimumHeight(180)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 12, 16, 12)
+        root.setSpacing(7)
+
+        header = QHBoxLayout()
+        title = QLabel("今日目标与边界")
+        title.setTextFormat(Qt.PlainText)
+        title.setStyleSheet(
+            f"font-size: 16px; font-weight: 800; color: {COLORS['text']};"
+        )
+        header.addWidget(title)
+        header.addStretch(1)
+        self.status_label = QLabel("数据积累中")
+        self.status_label.setTextFormat(Qt.PlainText)
+        header.addWidget(self.status_label)
+        root.addLayout(header)
+
+        (
+            work_row,
+            self.work_value_label,
+            self.work_detail_label,
+            self.work_bar,
+        ) = self._build_progress_row("工作参与", COLORS["primary"])
+        root.addWidget(work_row)
+        (
+            entertainment_row,
+            self.entertainment_value_label,
+            self.entertainment_detail_label,
+            self.entertainment_bar,
+        ) = self._build_progress_row("娱乐边界", COLORS["video_orange"])
+        root.addWidget(entertainment_row)
+
+        self.advice_label = QLabel("目标数据积累中")
+        self.advice_label.setTextFormat(Qt.PlainText)
+        self.advice_label.setWordWrap(True)
+        self.advice_label.setStyleSheet(
+            f"font-size: 11px; color: {COLORS['text_secondary']}; "
+            f"background: {COLORS['panel_bg_alt']}; border-radius: 7px; padding: 5px 8px;"
+        )
+        root.addWidget(self.advice_label)
+        self.set_data({})
+
+    @staticmethod
+    def _build_progress_row(label_text: str, color: str):
+        row = QFrame()
+        row.setStyleSheet("QFrame { background: transparent; border: none; }")
+        layout = QGridLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setHorizontalSpacing(8)
+        layout.setVerticalSpacing(1)
+        label = QLabel(label_text)
+        value = QLabel("--")
+        detail = QLabel("")
+        for dynamic in (label, value, detail):
+            dynamic.setTextFormat(Qt.PlainText)
+        label.setFixedWidth(64)
+        label.setStyleSheet(
+            f"font-size: 12px; font-weight: 700; color: {COLORS['text']};"
+        )
+        value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        value.setStyleSheet(
+            f"font-size: 12px; font-weight: 700; color: {COLORS['text']};"
+        )
+        bar = QProgressBar()
+        bar.setRange(0, 100)
+        bar.setTextVisible(False)
+        bar.setFixedHeight(8)
+        bar.setStyleSheet(
+            f"QProgressBar {{ background: {COLORS['panel_bg_alt']}; border: none; "
+            f"border-radius: 4px; }} QProgressBar::chunk {{ background: {color}; "
+            "border-radius: 4px; }}"
+        )
+        detail.setStyleSheet(f"font-size: 10px; color: {COLORS['text_muted']};")
+        layout.addWidget(label, 0, 0, 2, 1)
+        layout.addWidget(value, 0, 1)
+        layout.addWidget(bar, 1, 1)
+        layout.addWidget(detail, 2, 1)
+        return row, value, detail, bar
+
+    def set_data(self, payload: dict | None) -> None:
+        data = dict(payload or {})
+        if not data:
+            self.status_label.setText("数据积累中")
+            self._set_status_style("waiting")
+            self.work_value_label.setText("目标数据积累中")
+            self.work_detail_label.setText("")
+            self.work_bar.setValue(0)
+            self.entertainment_value_label.setText("尚未设置")
+            self.entertainment_detail_label.setText("可在设置中心配置")
+            self.entertainment_bar.setValue(0)
+            self.advice_label.setText("目标数据积累中")
+            return
+
+        status = dict(data.get("status", {}) or {})
+        self.status_label.setText(str(status.get("label", "数据积累中")))
+        self._set_status_style(str(status.get("kind", "waiting")))
+        work = dict(data.get("work", {}) or {})
+        current_work = parse_nonnegative_int(work.get("current_seconds")) or 0
+        target = parse_nonnegative_int(work.get("target_seconds"))
+        if target:
+            self.work_value_label.setText(
+                f"{_goal_duration(current_work)} / {_goal_duration(target)}"
+            )
+            remaining = parse_nonnegative_int(work.get("remaining_seconds")) or 0
+            sample_count = parse_nonnegative_int(work.get("sample_count")) or 0
+            self.work_detail_label.setText(
+                f"还差 {_goal_duration(remaining)} · 参考同类日 {sample_count} 天"
+                if remaining
+                else f"今日已达成 · 参考同类日 {sample_count} 天"
+            )
+        else:
+            self.work_value_label.setText(f"已参与 {_goal_duration(current_work)}")
+            self.work_detail_label.setText("可信同类日不足，暂不生成目标")
+        self.work_bar.setValue(
+            min(100, parse_nonnegative_int(work.get("progress_percent")) or 0)
+        )
+
+        entertainment = dict(data.get("entertainment", {}) or {})
+        current_entertainment = (
+            parse_nonnegative_int(entertainment.get("current_seconds")) or 0
+        )
+        limit = parse_nonnegative_int(entertainment.get("limit_seconds"))
+        if limit:
+            self.entertainment_value_label.setText(
+                f"{_goal_duration(current_entertainment)} / {_goal_duration(limit)}"
+            )
+            state = str(entertainment.get("state", "within"))
+            self.entertainment_detail_label.setText(
+                "已超过建议边界"
+                if state == "over"
+                else "接近建议边界"
+                if state == "near"
+                else "包含前台娱乐与被动视频"
+            )
+        else:
+            self.entertainment_value_label.setText(
+                f"已娱乐 {_goal_duration(current_entertainment)}"
+            )
+            self.entertainment_detail_label.setText("未设置今日边界")
+        self.entertainment_bar.setValue(
+            min(
+                100,
+                parse_nonnegative_int(entertainment.get("progress_percent")) or 0,
+            )
+        )
+        self.advice_label.setText(str(data.get("advice", "目标数据积累中")))
+
+    def _set_status_style(self, kind: str) -> None:
+        color = (
+            COLORS["primary"]
+            if kind == "ready"
+            else COLORS["warning_yellow"]
+            if kind == "unavailable"
+            else COLORS["text_muted"]
+        )
+        self.status_label.setStyleSheet(
+            f"font-size: 10px; font-weight: 800; color: {color}; "
+            f"background: {COLORS['panel_bg_alt']}; border: 1px solid {COLORS['border']}; "
+            "border-radius: 8px; padding: 2px 7px;"
+        )
+
+
+class TopAppListWidget(QFrame):
+    MAX_ROWS = 5
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("dashboardCard")
+        self.setStyleSheet(ui_style.get_dashboard_card_style())
+        self.setMinimumHeight(200)
         self._row_widgets: list[QWidget] = []
 
         root = QVBoxLayout(self)
@@ -2016,7 +2198,7 @@ class TopAppListWidget(QFrame):
         root.addWidget(title)
 
         self.rows_container = QVBoxLayout()
-        self.rows_container.setSpacing(14)
+        self.rows_container.setSpacing(8)
         root.addLayout(self.rows_container)
         root.addStretch()
 

@@ -249,6 +249,127 @@ def _metric_break(daily_rows: list[dict]) -> bool:
     )
 
 
+def build_daily_goals(
+    *,
+    captured_now: datetime,
+    daily_rows: list[dict],
+    current_work_seconds: int,
+    current_entertainment_seconds: int,
+    weekday_entertainment_limit_minutes: int,
+    weekend_entertainment_limit_minutes: int,
+    query_failed: bool,
+) -> dict[str, object]:
+    """Build the dashboard's smart work target and entertainment boundary."""
+    today = captured_now.date()
+    row_map = _daily_row_map(daily_rows)
+    same_day_type = lambda day: (day.weekday() < 5) == (today.weekday() < 5)
+    samples: list[int] = []
+    for offset in range(1, 31):
+        candidate = today - timedelta(days=offset)
+        if not same_day_type(candidate):
+            continue
+        value = _trusted_work_seconds(row_map.get(candidate.isoformat()))
+        if value is not None:
+            samples.append(value)
+        if len(samples) == 7:
+            break
+
+    metric_break = _metric_break(daily_rows)
+    classification_break = len(_classification_versions(daily_rows)) > 1
+    comparable = (
+        not query_failed
+        and not metric_break
+        and not classification_break
+        and len(samples) >= 3
+    )
+    target_seconds: int | None = None
+    if comparable:
+        sample_median = float(median(samples))
+        rounded_target = int(math.floor((sample_median + 450) / 900) * 900)
+        if rounded_target > 0:
+            target_seconds = rounded_target
+        else:
+            comparable = False
+
+    current_work = parse_nonnegative_int(current_work_seconds) or 0
+    remaining = (
+        max(0, int(target_seconds) - current_work)
+        if target_seconds is not None
+        else None
+    )
+    work_progress = (
+        min(100, int(round(current_work * 100 / target_seconds)))
+        if target_seconds
+        else 0
+    )
+
+    configured_minutes = (
+        weekday_entertainment_limit_minutes
+        if today.weekday() < 5
+        else weekend_entertainment_limit_minutes
+    )
+    parsed_limit = parse_nonnegative_int(configured_minutes)
+    if parsed_limit is None or parsed_limit > 720:
+        parsed_limit = 0
+    limit_seconds = parsed_limit * 60 if parsed_limit else None
+    current_entertainment = parse_nonnegative_int(current_entertainment_seconds) or 0
+    entertainment_progress = (
+        min(100, int(round(current_entertainment * 100 / limit_seconds)))
+        if limit_seconds
+        else 0
+    )
+    if limit_seconds is None:
+        entertainment_state = "unset"
+    elif current_entertainment > limit_seconds:
+        entertainment_state = "over"
+    elif current_entertainment >= limit_seconds * 0.8:
+        entertainment_state = "near"
+    else:
+        entertainment_state = "within"
+
+    if query_failed:
+        status = {"label": "暂不可用", "kind": "unavailable"}
+    elif metric_break:
+        status = {"label": "口径已变化", "kind": "unavailable"}
+    elif classification_break:
+        status = {"label": "分类已变化", "kind": "unavailable"}
+    elif comparable:
+        status = {"label": "智能目标", "kind": "ready"}
+    else:
+        status = {"label": "数据积累中", "kind": "waiting"}
+
+    if not comparable or target_seconds is None:
+        advice = "目标数据积累中，先按自己的节奏继续"
+    elif entertainment_state == "over":
+        advice = "娱乐已超过今日建议边界，建议先回到计划任务"
+    elif current_work >= target_seconds:
+        advice = "今日工作参与已达到目标，可以开始收尾"
+    elif entertainment_state == "near":
+        advice = "娱乐接近今日建议边界，建议先完成一个工作段"
+    else:
+        advice = "再完成一个25分钟工作段，继续接近今日目标"
+
+    return {
+        "version": 1,
+        "status": status,
+        "work": {
+            "current_seconds": current_work,
+            "target_seconds": target_seconds,
+            "remaining_seconds": remaining,
+            "progress_percent": work_progress,
+            "sample_count": len(samples),
+            "comparable": comparable,
+        },
+        "entertainment": {
+            "current_seconds": current_entertainment,
+            "limit_seconds": limit_seconds,
+            "progress_percent": entertainment_progress,
+            "state": entertainment_state,
+        },
+        "advice": advice,
+    }
+
+
 def _weekday_label(value: date) -> str:
     return "周" + "一二三四五六日"[value.weekday()]
 
@@ -1500,7 +1621,11 @@ def _has_thirty_day_classification_break(daily_rows: list[dict]) -> bool:
     return len(versions) > 1
 
 
-def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
+def load_today_snapshot(
+    db_path: str,
+    resolve_display,
+    goal_settings: dict | None = None,
+) -> dict[str, object]:
     captured_now = datetime.now()
     today_date = captured_now.date()
     today_str = today_date.strftime("%Y-%m-%d")
@@ -1618,6 +1743,41 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
             captured_now=captured_now,
             sessions=[],
             daily_rows=[],
+            query_failed=True,
+        )
+
+    today_work_seconds = sum(
+        parse_nonnegative_int(session.get("engaged_seconds")) or 0
+        for session in sessions
+        if str(session.get("category_key", "") or "") in WORK_KEYS
+    )
+    today_entertainment_seconds = category_seconds(stats)["entertainment"]
+    goal_config = dict(goal_settings or {})
+    try:
+        goals = build_daily_goals(
+            captured_now=captured_now,
+            daily_rows=rhythm_daily,
+            current_work_seconds=today_work_seconds,
+            current_entertainment_seconds=today_entertainment_seconds,
+            weekday_entertainment_limit_minutes=goal_config.get(
+                "weekday_entertainment_limit_minutes", 60
+            ),
+            weekend_entertainment_limit_minutes=goal_config.get(
+                "weekend_entertainment_limit_minutes", 120
+            ),
+            query_failed=(
+                rhythm_query_failed or today_str in malformed_session_dates
+            ),
+        )
+    except Exception:
+        LOGGER.exception("Failed to build dashboard daily goals")
+        goals = build_daily_goals(
+            captured_now=captured_now,
+            daily_rows=[],
+            current_work_seconds=today_work_seconds,
+            current_entertainment_seconds=today_entertainment_seconds,
+            weekday_entertainment_limit_minutes=0,
+            weekend_entertainment_limit_minutes=0,
             query_failed=True,
         )
 
@@ -1763,6 +1923,7 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
         "comparison": comparison,
         "insight": insight,
         "rhythm": rhythm,
+        "goals": goals,
         "trend": {
             "today": split_today["total"],
             "today_work": split_today["work"],

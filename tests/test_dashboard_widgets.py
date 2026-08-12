@@ -417,6 +417,71 @@ def test_top_app_widget_keeps_compact_single_line_rows_without_overlap():
     app.processEvents()
 
 
+def test_top_app_widget_limits_dashboard_ranking_to_five_rows():
+    app = _app()
+    widget = dashboard_widgets.TopAppListWidget()
+    widget.set_items(
+        [
+            {
+                "process_name": f"app{index}.exe",
+                "display_name": f"App {index}",
+                "seconds": 600 - index,
+                "icon": None,
+            }
+            for index in range(8)
+        ]
+    )
+    widget.show()
+    app.processEvents()
+
+    assert widget.MAX_ROWS == 5
+    assert len(widget._row_widgets) == 5
+    widget.deleteLater()
+    app.processEvents()
+
+
+def test_daily_goals_card_renders_work_boundary_and_legacy_fallback():
+    app = _app()
+    card_type = getattr(dashboard_widgets, "DailyGoalsCard", None)
+    assert card_type is not None
+    card = card_type()
+    card.set_data(
+        {
+            "status": {"label": "智能目标", "kind": "ready"},
+            "work": {
+                "current_seconds": 3_600,
+                "target_seconds": 6_300,
+                "remaining_seconds": 2_700,
+                "progress_percent": 57,
+                "sample_count": 7,
+                "comparable": True,
+            },
+            "entertainment": {
+                "current_seconds": 900,
+                "limit_seconds": 3_600,
+                "progress_percent": 25,
+                "state": "within",
+            },
+            "advice": "再完成一个25分钟工作段，继续接近今日目标",
+        }
+    )
+    card.show()
+    app.processEvents()
+
+    assert card.status_label.text() == "智能目标"
+    assert "1小时 / 1小时45分钟" in card.work_value_label.text()
+    assert "15分钟 / 1小时" in card.entertainment_value_label.text()
+    assert card.work_bar.value() == 57
+    assert card.entertainment_bar.value() == 25
+    assert card.advice_label.textFormat() == Qt.PlainText
+
+    card.set_data({})
+    assert card.status_label.text() == "数据积累中"
+    assert card.advice_label.text() == "目标数据积累中"
+    card.deleteLater()
+    app.processEvents()
+
+
 def test_trend_canvas_renders_sparse_weekly_series():
     canvas = _TrendCanvas()
 

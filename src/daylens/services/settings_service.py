@@ -58,6 +58,8 @@ def save_page_config(
     startup_enabled: bool,
     new_db_path: str,
     obsidian_output_path: str,
+    weekday_entertainment_limit_minutes: int = 60,
+    weekend_entertainment_limit_minutes: int = 120,
 ) -> dict:
     normalized_db_path = normalize_database_path(new_db_path)
 
@@ -68,6 +70,12 @@ def save_page_config(
     updated["startup_enabled"] = startup_enabled
     updated["obsidian_output_path"] = obsidian_output_path
     updated["theme"] = updated.get("theme", "dark")
+    updated["weekday_entertainment_limit_minutes"] = max(
+        0, min(720, int(weekday_entertainment_limit_minutes))
+    )
+    updated["weekend_entertainment_limit_minutes"] = max(
+        0, min(720, int(weekend_entertainment_limit_minutes))
+    )
 
     tracker = updated.setdefault("tracker", {})
     tracker["sample_interval_seconds"] = sample_interval

@@ -135,6 +135,7 @@ class MainWindow(QMainWindow):
                     app_details,
                     dashboard_mapping,
                 ),
+                self.config,
             ),
             parent=self,
         )

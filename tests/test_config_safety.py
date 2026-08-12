@@ -326,6 +326,37 @@ def test_load_config_merges_factory_user_then_database(tmp_path, monkeypatch):
     assert loaded["tracker"]["sample_interval_seconds"] == 7
 
 
+def test_goal_boundary_settings_merge_without_polluting_tracker(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    db_path = tmp_path / "usage.db"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "theme": "dark",
+                "db_path": str(db_path),
+                "tracker": {"sample_interval_seconds": 1},
+                "categories": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    _use_temp_data_dir(monkeypatch, tmp_path)
+    database.init_db(str(db_path)).close()
+    database.save_settings(
+        str(db_path),
+        {
+            "weekday_entertainment_limit_minutes": 75,
+            "weekend_entertainment_limit_minutes": 0,
+        },
+    )
+
+    loaded = load_config(str(config_path))
+
+    assert loaded["weekday_entertainment_limit_minutes"] == 75
+    assert loaded["weekend_entertainment_limit_minutes"] == 0
+    assert "weekday_entertainment_limit_minutes" not in loaded["tracker"]
+
+
 def test_invalid_database_settings_cannot_override_validated_config(
     tmp_path, monkeypatch
 ):
