@@ -196,6 +196,8 @@ def test_get_data_dir_reuses_project_data_from_frozen_worktree(tmp_path, monkeyp
     shared_data = workspace / "data"
     shared_data.mkdir()
     (shared_data / "usage.db").touch()
+    (worktree_root / "data").mkdir()
+    (worktree_root / "data" / "usage.db").touch()
 
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(daylens, "get_app_root", lambda: str(worktree_root))

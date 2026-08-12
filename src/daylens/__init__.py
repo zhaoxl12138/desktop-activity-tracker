@@ -38,8 +38,6 @@ def get_data_dir():
     if getattr(sys, 'frozen', False):
         legacy_dir = os.path.join(app_root, "data")
         state_names = ("usage.db", "user_config.yaml", "reports", "backups", "logs")
-        if any(os.path.exists(os.path.join(legacy_dir, name)) for name in state_names):
-            return legacy_dir
         # A frozen build launched from a .worktrees checkout must continue to
         # use the user's existing project data instead of creating an empty
         # isolated database and reports directory.
@@ -55,6 +53,8 @@ def get_data_dir():
                 for name in state_names
             ):
                 return shared_data_dir
+        if any(os.path.exists(os.path.join(legacy_dir, name)) for name in state_names):
+            return legacy_dir
         local_app_data = os.environ.get("LOCALAPPDATA")
         if local_app_data:
             return os.path.join(local_app_data, "DayLens")
