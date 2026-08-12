@@ -972,12 +972,182 @@ def build_top_app_rows(stats: dict, resolve_display) -> list[dict[str, object]]:
     merged: dict[str, dict[str, object]] = {}
     app_details = stats.get("by_app_detail", [])
     for item in stats.get("by_app", []):
-        process_name = item.get("process_name") or "Unknown"
+        process_name = str(item.get("process_name") or "Unknown")
         display_name = resolve_display(process_name, app_details)
         seconds = parse_nonnegative_int(item.get("effective_seconds")) or 0
-        bucket = merged.setdefault(display_name, {"process_name": process_name, "display_name": display_name, "seconds": 0})
+        identity = _stable_process_identity(process_name)
+        bucket = merged.setdefault(
+            identity,
+            {
+                "process_name": process_name.strip(),
+                "display_name": display_name,
+                "seconds": 0,
+                "engaged_seconds": 0,
+                "passive_seconds": 0,
+                "purpose": "",
+            },
+        )
         bucket["seconds"] = int(bucket["seconds"]) + seconds
+        bucket["engaged_seconds"] = int(bucket["engaged_seconds"]) + (
+            parse_nonnegative_int(item.get("engaged_seconds")) or 0
+        )
+        bucket["passive_seconds"] = int(bucket["passive_seconds"]) + (
+            parse_nonnegative_int(item.get("passive_seconds")) or 0
+        )
+
+    purposes: dict[str, dict[str, int]] = {}
+    for detail in app_details:
+        process_name = str(detail.get("process_name") or "Unknown")
+        identity = _stable_process_identity(process_name)
+        if identity not in merged:
+            continue
+        title = _safe_purpose_text(detail.get("window_title"))
+        if not title:
+            continue
+        seconds = parse_nonnegative_int(detail.get("effective_seconds")) or 0
+        purposes.setdefault(identity, {})[title] = (
+            purposes.setdefault(identity, {}).get(title, 0) + seconds
+        )
+    for identity, titles in purposes.items():
+        merged[identity]["purpose"] = max(
+            titles.items(),
+            key=lambda item: (item[1], item[0]),
+        )[0]
     return sorted(merged.values(), key=lambda item: -int(item["seconds"]))[:9]
+
+
+def _stable_process_identity(process_name: object) -> str:
+    normalized = unicodedata.normalize("NFKC", str(process_name or "Unknown")).strip()
+    return _strip_executable_suffix(normalized).casefold()
+
+
+def _safe_purpose_text(source: object) -> str:
+    text = unicodedata.normalize("NFKC", str(source or "")).strip()
+    if not text or any(unicodedata.category(char).startswith("C") for char in text):
+        return ""
+    return text
+
+
+def build_work_episode_rows(
+    sessions: list[dict],
+    resolve_display,
+) -> list[dict[str, object]]:
+    """Group adjacent work-learning sessions into reviewable work episodes."""
+    prepared: list[dict[str, object]] = []
+    blockers: list[tuple[datetime, datetime]] = []
+    for session in sessions:
+        interval = _session_interval(session)
+        if interval is None:
+            continue
+        if str(session.get("category_key", "") or "") not in WORK_KEYS:
+            blockers.append(interval)
+            continue
+        engaged = parse_nonnegative_int(session.get("engaged_seconds"))
+        metric_label = "参与"
+        seconds = engaged
+        if (
+            (engaged is None or engaged == 0)
+            and str(session.get("metric_version", "") or "") != "attention-v1"
+        ):
+            seconds = parse_nonnegative_int(session.get("effective_seconds"))
+            metric_label = "有效"
+        if seconds is None or seconds <= 0:
+            continue
+        process_name = str(session.get("process_name", "") or "Unknown")
+        title = _safe_purpose_text(
+            session.get("normalized_title") or session.get("window_title")
+        )
+        prepared.append(
+            {
+                "start": interval[0],
+                "end": interval[1],
+                "seconds": seconds,
+                "metric_label": metric_label,
+                "process_name": process_name,
+                "display_name": str(resolve_display(process_name, []) or process_name),
+                "title": title,
+            }
+        )
+    prepared.sort(key=lambda item: (item["start"], item["end"]))
+
+    groups: list[list[dict[str, object]]] = []
+    for item in prepared:
+        previous_end = (
+            max(part["end"] for part in groups[-1]) if groups else None
+        )
+        interrupted = bool(
+            previous_end is not None
+            and any(
+                block_start < item["start"] and block_end > previous_end
+                for block_start, block_end in blockers
+            )
+        )
+        if (
+            not groups
+            or interrupted
+            or (item["start"] - previous_end).total_seconds()
+            > RHYTHM_CONTINUITY_GAP_SECONDS
+        ):
+            groups.append([item])
+        else:
+            groups[-1].append(item)
+
+    rows: list[dict[str, object]] = []
+    for group in groups:
+        app_seconds: dict[str, int] = {}
+        title_seconds: dict[str, int] = {}
+        for item in group:
+            display_name = str(item["display_name"])
+            app_seconds[display_name] = app_seconds.get(display_name, 0) + int(
+                item["seconds"]
+            )
+            title = str(item["title"])
+            generic_titles = {
+                display_name.casefold(),
+                _strip_executable_suffix(str(item["process_name"])).casefold(),
+            }
+            if title and title.casefold() not in generic_titles:
+                title_seconds[title] = title_seconds.get(title, 0) + int(
+                    item["seconds"]
+                )
+        apps = [
+            name
+            for name, _seconds in sorted(
+                app_seconds.items(), key=lambda pair: (-pair[1], pair[0])
+            )
+        ]
+        topic = (
+            max(title_seconds.items(), key=lambda pair: (pair[1], pair[0]))[0]
+            if title_seconds
+            else " / ".join(apps)
+        )
+        rows.append(
+            {
+                "start_time": min(item["start"] for item in group).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                ),
+                "end_time": max(item["end"] for item in group).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                ),
+                "topic": topic,
+                "apps": apps,
+                "seconds": sum(int(item["seconds"]) for item in group),
+                "engaged_seconds": sum(
+                    int(item["seconds"])
+                    for item in group
+                    if item["metric_label"] == "参与"
+                ),
+                "metric_label": (
+                    "参与"
+                    if all(item["metric_label"] == "参与" for item in group)
+                    else "有效"
+                ),
+            }
+        )
+    return sorted(
+        rows,
+        key=lambda row: (-int(row["seconds"]), str(row["start_time"])),
+    )
 
 
 def build_hourly_series(sessions: list[dict]) -> list[int]:
@@ -1585,6 +1755,7 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
         "distribution_sections": distribution_sections,
         "day_comparison": day_comparison,
         "sessions": sessions,
+        "work_episode_rows": build_work_episode_rows(sessions, resolve_display),
         "focus_summary": focus_summary,
         "consecutive_days": consecutive_days,
         "top_app_rows": build_top_app_rows(stats, resolve_display),

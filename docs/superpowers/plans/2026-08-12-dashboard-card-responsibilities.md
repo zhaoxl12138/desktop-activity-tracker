@@ -64,11 +64,10 @@
 
 **Files:**
 - Verify: `tests/`
-- Verify: `scripts/build_release.ps1`
+- Verify: `tools/build_release.py`
 
 - [ ] Run focused dashboard service, widget, homepage, responsive-layout, and GUI smoke tests.
 - [ ] Run the complete pytest suite and require zero failures.
 - [ ] Run `python -m compileall -q src tests` and `git diff --check`.
 - [ ] Rebuild the release with the repository release script.
 - [ ] Verify the release configuration and runtime resolve only `D:\\OfficeSoftware\\DayLens\\data\\usage.db`, then launch one release process and inspect the homepage layout.
-

@@ -45,3 +45,15 @@ def test_multiline_elided_label_limits_each_poetry_line_independently():
     assert all("…" in line for line in visible_lines)
     assert label.toolTip() == full_text
     label.deleteLater()
+
+
+def test_elided_label_updates_max_lines_without_private_state_mutation():
+    app = QApplication.instance() or QApplication([])
+    label = ElidedLabel("两行内容", max_lines=2)
+
+    label.setMaxLines(1)
+
+    assert label.maxLines() == 1
+    assert label.wordWrap() is False
+    label.deleteLater()
+    app.processEvents()

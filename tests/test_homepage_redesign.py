@@ -184,7 +184,12 @@ def test_homepage_shell_matches_reference_structure():
         assert window.pages["today"].insight_card.geometry().bottom() <= window.pages["today"].trend_card.geometry().top()
         assert window.pages["today"].trend_card.minimumHeight() >= 230
         assert window.pages["today"].top_app_card.minimumHeight() >= 230
-        assert set(window.pages["today"].distribution_cmp_labels) == {"work", "entertainment", "social", "idle"}
+        assert window.pages["today"].distribution_cmp_labels == {}
+        distribution_texts = {
+            label.text()
+            for label in window.pages["today"].distribution_card.findChildren(QLabel)
+        }
+        assert "较昨日" not in distribution_texts
         assert ui_style.get_category_color("other") != ui_style.COLORS["social_purple"]
         assert window.pages["today"]._distribution_color("other") == ui_style.get_category_color("other")
         assert window.pages["today"]._color_for_category("other") == ui_style.get_category_color("other")
@@ -354,7 +359,7 @@ def test_today_overview_applies_old_and_trusted_snapshots_safely():
 
         assert page.trust_badge.isVisible() is True
         assert page.classification_notice.isVisible() is False
-        assert page.distribution_cmp_labels["work"].text() == "分类不可比"
+        assert page.distribution_cmp_labels == {}
         assert page.insight_card.title_label.fullText() == "洞察积累中"
 
         window.close()

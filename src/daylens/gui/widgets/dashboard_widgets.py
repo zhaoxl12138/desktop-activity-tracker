@@ -962,6 +962,7 @@ class TrustedInsightCard(QFrame):
             self.evidence_label.setText("继续记录以形成可靠基线")
             self.action_label.setText("")
             self._set_confidence("数据不足", "low")
+            self._set_compact(True)
             return
         self.title_label.setText(str(insight.get("title", "今日建议")))
         self.evidence_label.setText(str(insight.get("evidence", "")))
@@ -976,6 +977,13 @@ class TrustedInsightCard(QFrame):
             confidence_text,
             confidence if confidence in {"high", "medium", "low"} else "low",
         )
+        self._set_compact(confidence == "low")
+
+    def _set_compact(self, compact: bool) -> None:
+        self.setMinimumHeight(58 if compact else 96)
+        self.setMaximumHeight(72 if compact else 124)
+        self.evidence_label.setMaxLines(1 if compact else 2)
+        self.action_label.setVisible(not compact and bool(self.action_label.fullText()))
 
     def _set_confidence(self, text: str, confidence: str) -> None:
         color = {
@@ -2028,10 +2036,19 @@ class TopAppListWidget(QFrame):
         icon_label.setStyleSheet(f"background: {COLORS['panel_bg_alt']}; border-radius: 6px;")
         layout.addWidget(icon_label)
 
+        name_box = QWidget()
+        name_box.setMinimumWidth(118)
+        name_layout = QVBoxLayout(name_box)
+        name_layout.setContentsMargins(0, 0, 0, 0)
+        name_layout.setSpacing(1)
         name_label = ElidedLabel("--")
-        name_label.setMinimumWidth(96)
-        name_label.setStyleSheet(f"font-size: 13px; color: {COLORS['text']}; font-weight: 600;")
-        layout.addWidget(name_label)
+        name_label.setStyleSheet(f"font-size: 13px; color: {COLORS['text']}; font-weight: 700;")
+        purpose_label = ElidedLabel("")
+        purpose_label.setTextFormat(Qt.PlainText)
+        purpose_label.setStyleSheet(f"font-size: 10px; color: {COLORS['text_muted']};")
+        name_layout.addWidget(name_label)
+        name_layout.addWidget(purpose_label)
+        layout.addWidget(name_box)
 
         progress_bar = QProgressBar()
         progress_bar.setTextVisible(False)
@@ -2052,15 +2069,26 @@ class TopAppListWidget(QFrame):
         )
         layout.addWidget(progress_bar, 1)
 
+        duration_box = QWidget()
+        duration_box.setFixedWidth(104)
+        duration_layout = QVBoxLayout(duration_box)
+        duration_layout.setContentsMargins(0, 0, 0, 0)
+        duration_layout.setSpacing(1)
         duration_label = QLabel("--")
-        duration_label.setFixedWidth(68)
+        duration_label.setTextFormat(Qt.PlainText)
         duration_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        duration_label.setStyleSheet(f"font-size: 13px; color: {COLORS['text_secondary']};")
-        layout.addWidget(duration_label)
+        duration_label.setStyleSheet(f"font-size: 12px; color: {COLORS['text_secondary']};")
+        attention_label = QLabel("")
+        attention_label.setTextFormat(Qt.PlainText)
+        attention_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        attention_label.setStyleSheet(f"font-size: 10px; color: {COLORS['text_muted']};")
+        duration_layout.addWidget(duration_label)
+        duration_layout.addWidget(attention_label)
+        layout.addWidget(duration_box)
 
-        return row, icon_label, name_label, progress_bar, duration_label
+        return row, icon_label, name_label, purpose_label, progress_bar, duration_label, attention_label
 
-    def set_items(self, items: list[tuple[str, str, int, QIcon | None]]) -> None:
+    def set_items(self, items) -> None:
         # Remove old rows
         for w in self._row_widgets:
             self.rows_container.removeWidget(w)
@@ -2071,18 +2099,136 @@ class TopAppListWidget(QFrame):
         if n == 0:
             return
 
-        max_seconds = max((seconds for _, _, seconds, _ in items[:n]), default=1)
+        normalized = []
+        for item in items[:n]:
+            if isinstance(item, dict):
+                normalized.append(dict(item))
+            else:
+                process_name, display_name, seconds, icon = item
+                normalized.append(
+                    {
+                        "process_name": process_name,
+                        "display_name": display_name,
+                        "seconds": seconds,
+                        "engaged_seconds": 0,
+                        "passive_seconds": 0,
+                        "purpose": "",
+                        "icon": icon,
+                    }
+                )
+        max_seconds = max((int(item.get("seconds", 0) or 0) for item in normalized), default=1)
         for index in range(n):
-            process_name, display_name, seconds, icon = items[index]
-            row, icon_lbl, name_lbl, bar, dur_lbl = self._build_row(index + 1)
+            item = normalized[index]
+            process_name = str(item.get("process_name", "") or "")
+            display_name = str(item.get("display_name", "") or process_name)
+            seconds = int(item.get("seconds", 0) or 0)
+            engaged = int(item.get("engaged_seconds", 0) or 0)
+            passive = int(item.get("passive_seconds", 0) or 0)
+            purpose = str(item.get("purpose", "") or "")
+            icon = item.get("icon")
+            row, icon_lbl, name_lbl, purpose_lbl, bar, dur_lbl, attention_lbl = self._build_row(index + 1)
             icon_lbl.setPixmap(icon.pixmap(26, 26) if icon else QIcon().pixmap(18, 18))
             name_lbl.setText(display_name)
+            purpose_lbl.setText(purpose)
+            purpose_lbl.setVisible(bool(purpose))
             if not name_lbl.toolTip() and display_name != process_name:
                 name_lbl.setToolTip(f"{display_name} — {process_name}")
             bar.setValue(int(round((seconds / max_seconds) * 100)))
-            dur_lbl.setText(fmt_seconds(seconds))
+            dur_lbl.setText(f"前台 {fmt_seconds(seconds)}")
+            parts = []
+            if engaged:
+                parts.append(f"参与 {fmt_seconds(engaged)}")
+            if passive:
+                parts.append(f"被动 {fmt_seconds(passive)}")
+            attention_lbl.setText(" · ".join(parts))
+            attention_lbl.setVisible(bool(parts))
             self.rows_container.addWidget(row)
             self._row_widgets.append(row)
+
+
+class WorkEpisodeListWidget(QFrame):
+    """Compact list of coherent work episodes rather than raw sessions."""
+
+    MAX_ROWS = 5
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("workEpisodeList")
+        self.setStyleSheet("QFrame#workEpisodeList { background: transparent; border: none; }")
+        self._episodes: list[dict] = []
+        self._row_widgets: list[QWidget] = []
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(4)
+
+    def set_episodes(self, episodes: list[dict]) -> None:
+        for row in self._row_widgets:
+            self._layout.removeWidget(row)
+            row.deleteLater()
+        self._row_widgets.clear()
+        self._episodes = list(episodes or [])
+        if not self._episodes:
+            empty = QLabel("暂无可回顾的工作片段")
+            empty.setTextFormat(Qt.PlainText)
+            empty.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']}; padding: 8px 0;")
+            self._layout.addWidget(empty)
+            self._row_widgets.append(empty)
+            return
+        for episode in self._episodes[: self.MAX_ROWS]:
+            row = self._build_row(episode)
+            self._layout.addWidget(row)
+            self._row_widgets.append(row)
+
+    def _build_row(self, episode: dict) -> QFrame:
+        row = QFrame()
+        row.setObjectName("workEpisodeRow")
+        row.setStyleSheet(
+            f"QFrame#workEpisodeRow {{ background: {COLORS['panel_bg_alt']}; "
+            f"border: 1px solid {COLORS['border']}; border-radius: 8px; }}"
+        )
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setSpacing(10)
+
+        text_box = QWidget()
+        text_layout = QVBoxLayout(text_box)
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(1)
+        topic = ElidedLabel(str(episode.get("topic", "") or "未命名工作片段"))
+        topic.setTextFormat(Qt.PlainText)
+        topic.setStyleSheet(f"font-size: 12px; font-weight: 800; color: {COLORS['text']};")
+        apps = " / ".join(str(app) for app in episode.get("apps", []) if str(app))
+        app_label = ElidedLabel(apps)
+        app_label.setTextFormat(Qt.PlainText)
+        app_label.setStyleSheet(f"font-size: 10px; color: {COLORS['text_muted']};")
+        text_layout.addWidget(topic)
+        text_layout.addWidget(app_label)
+        layout.addWidget(text_box, 1)
+
+        meta_box = QWidget()
+        meta_layout = QVBoxLayout(meta_box)
+        meta_layout.setContentsMargins(0, 0, 0, 0)
+        meta_layout.setSpacing(1)
+        start = str(episode.get("start_time", "") or "")
+        end = str(episode.get("end_time", "") or "")
+        time_label = QLabel(f"{start[11:16]}–{end[11:16]}")
+        time_label.setTextFormat(Qt.PlainText)
+        time_label.setAlignment(Qt.AlignRight)
+        time_label.setStyleSheet(f"font-size: 10px; color: {COLORS['text_secondary']};")
+        seconds = (
+            parse_nonnegative_int(episode.get("seconds"))
+            if "seconds" in episode
+            else parse_nonnegative_int(episode.get("engaged_seconds"))
+        ) or 0
+        metric_label = str(episode.get("metric_label", "参与") or "参与")
+        duration_label = QLabel(f"{metric_label} {fmt_seconds(seconds)}")
+        duration_label.setTextFormat(Qt.PlainText)
+        duration_label.setAlignment(Qt.AlignRight)
+        duration_label.setStyleSheet(f"font-size: 11px; font-weight: 800; color: {COLORS['primary']};")
+        meta_layout.addWidget(time_label)
+        meta_layout.addWidget(duration_label)
+        layout.addWidget(meta_box)
+        return row
 
 
 class DistributionLegend(QWidget):

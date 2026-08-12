@@ -29,6 +29,7 @@ from ..widgets.dashboard_widgets import (
     SessionTop3Widget,
     TimelineWidget,
     TopAppListWidget,
+    WorkEpisodeListWidget,
     RhythmComparisonCard,
     TrustedInsightCard,
 )
@@ -221,40 +222,7 @@ class TodayOverviewPage(QWidget):
         status_row.addStretch()
         layout.addLayout(status_row)
 
-        cmp_row = QHBoxLayout()
-        cmp_row.setSpacing(8)
-        cmp_title = QLabel("较昨日")
-        cmp_title.setStyleSheet(
-            f"font-size: 14px; color: {ui_style.COLORS['text_secondary']}; font-weight: 700;"
-        )
-        cmp_row.addWidget(cmp_title)
-
         self.distribution_cmp_labels = {}
-        for key, icon, label_text, color in [
-            ("work", "💼", "工作学习", ui_style.COLORS["coding_green"]),
-            ("entertainment", "📺", "娱乐休闲", ui_style.COLORS["video_orange"]),
-            ("social", "💬", "社交通讯", ui_style.COLORS["social_purple"]),
-            ("idle", "💤", "挂机时长", ui_style.COLORS["timeline_idle"]),
-        ]:
-            icon_label = QLabel(icon)
-            icon_label.setStyleSheet(f"font-size: 14px; color: {color};")
-            cmp_row.addWidget(icon_label)
-
-            name_label = QLabel(label_text)
-            name_label.setStyleSheet(
-                f"font-size: 13px; color: {ui_style.COLORS['text_secondary']}; font-weight: 700;"
-            )
-            cmp_row.addWidget(name_label)
-
-            value_label = QLabel("--")
-            value_label.setStyleSheet(
-                f"font-size: 13px; color: {ui_style.COLORS['text']}; font-weight: 800;"
-            )
-            cmp_row.addWidget(value_label)
-            self.distribution_cmp_labels[key] = value_label
-
-        cmp_row.addStretch()
-        layout.addLayout(cmp_row)
         return card
 
     def _build_time_stats_card(self) -> QWidget:
@@ -428,11 +396,13 @@ class TodayOverviewPage(QWidget):
         self.consecutive_label = QLabel("")
         self.consecutive_label.setVisible(False)
 
-        section_title = QLabel("今日关键 Session")
+        section_title = QLabel("关键工作片段")
+        section_title.setTextFormat(Qt.PlainText)
         section_title.setStyleSheet(f"font-size: 14px; font-weight: 700; color: {ui_style.COLORS['text']};")
         layout.addWidget(section_title)
 
-        self.session_top3_widget = SessionTop3Widget()
+        self.session_top3_widget = WorkEpisodeListWidget()
+        self.work_episode_widget = self.session_top3_widget
         layout.addWidget(self.session_top3_widget, 1)
         return card
 
@@ -459,23 +429,6 @@ class TodayOverviewPage(QWidget):
         trust_level = str(trust.get("level", "low") or "low")
         self.trust_badge.setVisible(trust_level != "high")
         self.insight_card.set_insight(snapshot.get("insight"))
-
-        comparison = dict(snapshot.get("comparison", {}) or {})
-        comparison_reason = str(comparison.get("reason", "") or "")
-        trust_reasons = [
-            str(reason)
-            for reason in trust.get("reasons", [])
-            if isinstance(reason, str)
-        ]
-        classification_changed = (
-            "分类规则" in comparison_reason
-            or any("分类版本" in reason for reason in trust_reasons)
-            or len(trust.get("classification_versions", []) or []) > 1
-        )
-        trend = dict(snapshot.get("trend", {}) or {})
-        classification_changed = classification_changed or bool(
-            trend.get("thirty_day_classification_break", False)
-        )
 
         distribution = [
             (str(item["label"]), int(item["seconds"]), self._distribution_color(str(item["category_key"])))
@@ -528,45 +481,6 @@ class TodayOverviewPage(QWidget):
             self.passive_status_label.setToolTip("")
         self.idle_status_label.setText(f"挂机/空闲 {_compact_duration(idle_seconds)}")
 
-        for key, label in self.distribution_cmp_labels.items():
-            if key == "idle":
-                # Idle time: show absolute value, not day-over-day comparison
-                idle_m = _compact_duration(idle_seconds)
-                label.setText(idle_m)
-                label.setStyleSheet(
-                    f"font-size: 13px; color: {ui_style.COLORS['text']}; font-weight: 800;"
-                )
-            else:
-                if classification_changed:
-                    label.setText("分类不可比")
-                    label.setStyleSheet(
-                        f"font-size: 13px; color: {ui_style.COLORS['warning_yellow']}; font-weight: 800;"
-                    )
-                    continue
-                item = dict(snapshot.get("day_comparison", {}) or {}).get(key, {})
-                direction = str(item.get("direction", "empty"))
-                delta = int(item.get("delta_seconds", 0) or 0)
-                if direction == "empty":
-                    label.setText("--")
-                    label.setStyleSheet(
-                        f"font-size: 13px; color: {ui_style.COLORS['text_muted']}; font-weight: 800;"
-                    )
-                elif direction == "flat":
-                    label.setText("≈ 0")
-                    label.setStyleSheet(
-                        f"font-size: 13px; color: {ui_style.COLORS['text_muted']}; font-weight: 800;"
-                    )
-                elif direction == "up":
-                    label.setText(f"+{_compact_duration(delta)}")
-                    label.setStyleSheet(
-                        f"font-size: 13px; color: {ui_style.COLORS['success_green']}; font-weight: 800;"
-                    )
-                else:
-                    label.setText(f"-{_compact_duration(abs(delta))}")
-                    label.setStyleSheet(
-                        f"font-size: 13px; color: {ui_style.COLORS['danger_red']}; font-weight: 800;"
-                    )
-
         sessions = [
             {
                 **session,
@@ -577,10 +491,6 @@ class TodayOverviewPage(QWidget):
             }
             for session in snapshot.get("sessions", [])
         ]
-        sessions_with_icons = []
-        for session in sessions:
-            proc = str(session.get("process_name", ""))
-            sessions_with_icons.append({**session, "_icon": self._app_icon(proc)})
         timeline_sessions = sorted(
             sessions,
             key=lambda session: (
@@ -588,7 +498,19 @@ class TodayOverviewPage(QWidget):
                 str(session.get("end_time", "") or ""),
             ),
         )
-        self.session_top3_widget.set_sessions(sessions_with_icons, self.display_name_mapping)
+        work_episode_rows = list(snapshot.get("work_episode_rows", []) or [])
+        if not work_episode_rows:
+            from ...services.dashboard_service import build_work_episode_rows
+
+            work_episode_rows = build_work_episode_rows(
+                sessions,
+                lambda process, details: resolve_display_name(
+                    process,
+                    details,
+                    self.display_name_mapping,
+                ),
+            )
+        self.work_episode_widget.set_episodes(work_episode_rows)
         self.focus_axis.set_minutes(self._build_focus_axis(timeline_sessions))
         self.rhythm_card.set_data(dict(snapshot.get("rhythm", {}) or {}))
         focus_summary = str(snapshot.get("focus_summary", ""))
@@ -606,7 +528,15 @@ class TodayOverviewPage(QWidget):
             display_name = str(item["display_name"])
             seconds = int(item["seconds"])
             icon_process = self._icon_process_for_display(process_name, display_name)
-            rows.append((process_name, display_name, seconds, self._app_icon(icon_process)))
+            rows.append(
+                {
+                    **item,
+                    "process_name": process_name,
+                    "display_name": display_name,
+                    "seconds": seconds,
+                    "icon": self._app_icon(icon_process),
+                }
+            )
         self.top_app_card.set_items(rows)
 
     def _distribution_color(self, category_key: str) -> str:

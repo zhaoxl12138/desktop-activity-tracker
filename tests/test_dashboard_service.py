@@ -23,6 +23,7 @@ from daylens.services.dashboard_service import (  # noqa: E402
     build_distribution_sections,
     build_hourly_series,
     build_hourly_series_split,
+    build_work_episode_rows,
     build_top_app_rows,
     load_today_snapshot,
 )
@@ -476,6 +477,131 @@ def test_top_app_rows_merge_same_display_name_and_sort():
     assert rows[0]["display_name"] == "VS Code"
     assert rows[0]["seconds"] == 2500
     assert rows[1]["display_name"] == "Cursor"
+
+
+def test_work_episode_rows_merge_short_work_switches_and_conserve_engagement():
+    sessions = [
+        {
+            **_rhythm_session("2026-08-12", "09:00:00", "09:20:00", 1_000),
+            "session_id": "codex",
+            "process_name": "Codex.exe",
+            "normalized_title": "DayLens 首页重构",
+        },
+        {
+            **_rhythm_session("2026-08-12", "09:20:20", "09:35:00", 700),
+            "session_id": "chrome",
+            "process_name": "chrome.exe",
+            "normalized_title": "PySide6 布局资料",
+        },
+        {
+            **_rhythm_session("2026-08-12", "09:40:00", "09:50:00", 500),
+            "session_id": "wechat",
+            "process_name": "WeChat.exe",
+            "normalized_title": "微信",
+            "category_key": "social",
+        },
+        {
+            **_rhythm_session("2026-08-12", "10:00:00", "10:10:00", 400),
+            "session_id": "code",
+            "process_name": "Code.exe",
+            "normalized_title": "dashboard_service.py",
+        },
+    ]
+
+    rows = build_work_episode_rows(
+        sessions,
+        lambda process, _details: {
+            "Codex.exe": "Codex",
+            "chrome.exe": "Chrome",
+            "Code.exe": "VS Code",
+        }.get(process, process),
+    )
+
+    assert len(rows) == 2
+    assert rows[0]["start_time"] == "2026-08-12 09:00:00"
+    assert rows[0]["end_time"] == "2026-08-12 09:35:00"
+    assert rows[0]["engaged_seconds"] == 1_700
+    assert rows[0]["apps"] == ["Codex", "Chrome"]
+    assert rows[0]["topic"] == "DayLens 首页重构"
+    assert sum(row["engaged_seconds"] for row in rows) == 2_100
+
+
+def test_work_episode_rows_skip_malformed_sessions():
+    valid = _rhythm_session("2026-08-12", "11:00:00", "11:10:00", 600)
+    invalid = {**valid, "session_id": "bad", "start_time": "bad"}
+
+    rows = build_work_episode_rows([invalid, valid], lambda process, _details: process)
+
+    assert len(rows) == 1
+    assert rows[0]["engaged_seconds"] == 600
+
+
+def test_work_episode_rows_split_on_short_non_work_interruption():
+    first = {
+        **_rhythm_session("2026-08-12", "13:00:00", "13:10:00", 600),
+        "session_id": "first",
+    }
+    interruption = {
+        **_rhythm_session("2026-08-12", "13:10:05", "13:10:15", 10),
+        "session_id": "social",
+        "category_key": "social",
+    }
+    second = {
+        **_rhythm_session("2026-08-12", "13:10:20", "13:20:00", 580),
+        "session_id": "second",
+    }
+
+    rows = build_work_episode_rows(
+        [first, interruption, second], lambda process, _details: process
+    )
+
+    assert len(rows) == 2
+
+
+def test_work_episode_rows_marks_legacy_fallback_as_effective():
+    legacy = {
+        **_rhythm_session("2026-08-12", "14:00:00", "14:10:00", 600),
+        "metric_version": "legacy",
+    }
+    legacy["engaged_seconds"] = 0
+
+    rows = build_work_episode_rows([legacy], lambda process, _details: process)
+
+    assert rows[0]["seconds"] == 600
+    assert rows[0]["metric_label"] == "有效"
+
+
+def test_top_app_rows_merge_only_stable_process_aliases_and_keep_browsers_separate():
+    stats = {
+        "by_app": [
+            {"process_name": "chrome.exe", "effective_seconds": 600, "engaged_seconds": 500, "passive_seconds": 0},
+            {"process_name": " Chrome.EXE ", "effective_seconds": 300, "engaged_seconds": 200, "passive_seconds": 0},
+            {"process_name": "360ChromeX.exe", "effective_seconds": 800, "engaged_seconds": 100, "passive_seconds": 600},
+        ],
+        "by_app_detail": [
+            {"process_name": "chrome.exe", "window_title": "RK3568 文档", "effective_seconds": 500},
+            {"process_name": " Chrome.EXE ", "window_title": "RK3568 文档", "effective_seconds": 200},
+            {"process_name": "360ChromeX.exe", "window_title": "招录页面", "effective_seconds": 700},
+        ],
+    }
+
+    rows = build_top_app_rows(stats, lambda process, _details: {
+        "chrome.exe": "Chrome",
+        " Chrome.EXE ": "Chrome",
+        "360ChromeX.exe": "360极速浏览器",
+    }[process])
+
+    assert [row["display_name"] for row in rows] == ["Chrome", "360极速浏览器"]
+    assert rows[0] == {
+        "process_name": "chrome.exe",
+        "display_name": "Chrome",
+        "seconds": 900,
+        "engaged_seconds": 700,
+        "passive_seconds": 0,
+        "purpose": "RK3568 文档",
+    }
+    assert rows[1]["process_name"] == "360ChromeX.exe"
+    assert rows[1]["passive_seconds"] == 600
 
 
 def test_build_hourly_series_splits_effective_time_into_hour_buckets():

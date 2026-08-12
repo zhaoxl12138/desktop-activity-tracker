@@ -325,6 +325,96 @@ def test_key_sessions_use_five_minute_minimum():
     assert [session["process_name"] for session in widget._sessions] == ["Code.exe"]
 
 
+def test_work_episode_widget_renders_topic_apps_and_participation():
+    app = _app()
+    widget_type = getattr(dashboard_widgets, "WorkEpisodeListWidget", None)
+    assert widget_type is not None
+    widget = widget_type()
+    widget.set_episodes(
+        [
+            {
+                "start_time": "2026-08-12 09:00:00",
+                "end_time": "2026-08-12 09:35:00",
+                "topic": "DayLens 首页重构",
+                "apps": ["Codex", "Chrome"],
+                "engaged_seconds": 1_700,
+            }
+        ]
+    )
+    widget.show()
+    app.processEvents()
+
+    labels = [label.text() for label in widget._row_widgets[0].findChildren(QLabel)]
+    assert "DayLens 首页重构" in labels
+    assert any("Codex / Chrome" in text for text in labels)
+    assert any("09:00–09:35" in text for text in labels)
+    assert any("参与 28分20秒" in text for text in labels)
+    assert all(label.textFormat() == Qt.PlainText for label in widget._row_widgets[0].findChildren(QLabel))
+    widget.deleteLater()
+    app.processEvents()
+
+
+def test_trusted_insight_card_collapses_low_confidence_and_expands_high_confidence():
+    app = _app()
+    card = dashboard_widgets.TrustedInsightCard()
+    card.set_insight(
+        {
+            "title": "先让数据口径稳定",
+            "evidence": "旧计量口径占比超过20%",
+            "action": "继续记录",
+            "confidence": "low",
+        }
+    )
+    app.processEvents()
+
+    assert card.maximumHeight() <= 72
+    assert card.action_label.isHidden()
+    assert card.evidence_label.maxLines() == 1
+
+    card.set_insight(
+        {
+            "title": "你的优势时段是 09:00–11:00",
+            "evidence": "最近14天证据充分",
+            "action": "保护这个时间窗口",
+            "confidence": "high",
+        }
+    )
+    app.processEvents()
+
+    assert card.maximumHeight() >= 110
+    assert not card.action_label.isHidden()
+    card.deleteLater()
+    app.processEvents()
+
+
+def test_top_app_widget_renders_purpose_and_attention_breakdown():
+    app = _app()
+    widget = dashboard_widgets.TopAppListWidget()
+    widget.set_items(
+        [
+            {
+                "process_name": "chrome.exe",
+                "display_name": "Chrome",
+                "seconds": 900,
+                "engaged_seconds": 700,
+                "passive_seconds": 0,
+                "purpose": "RK3568 文档",
+                "icon": None,
+            }
+        ]
+    )
+    widget.show()
+    app.processEvents()
+
+    labels = [label.text() for label in widget._row_widgets[0].findChildren(QLabel)]
+    assert "Chrome" in labels
+    assert "RK3568 文档" in labels
+    assert any("前台 15分0秒" in text for text in labels)
+    assert any("参与 11分40秒" in text for text in labels)
+    widget.deleteLater()
+    app.processEvents()
+
+
 def test_trend_canvas_renders_sparse_weekly_series():
     canvas = _TrendCanvas()
 

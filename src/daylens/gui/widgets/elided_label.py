@@ -29,6 +29,14 @@ class ElidedLabel(QLabel):
     def fullText(self) -> str:  # noqa: N802
         return self._full_text
 
+    def setMaxLines(self, max_lines: int) -> None:  # noqa: N802
+        self._max_lines = max(1, int(max_lines))
+        self.setWordWrap(self._max_lines > 1)
+        self._apply_elision()
+
+    def maxLines(self) -> int:  # noqa: N802
+        return self._max_lines
+
     def minimumSizeHint(self) -> QSize:  # noqa: N802
         margins = self.contentsMargins()
         height = (
