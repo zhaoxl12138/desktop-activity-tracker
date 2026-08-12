@@ -440,7 +440,7 @@ def test_top_app_widget_limits_dashboard_ranking_to_five_rows():
     app.processEvents()
 
 
-def test_daily_goals_card_renders_work_boundary_and_legacy_fallback():
+def test_daily_goals_card_renders_only_work_and_entertainment_rows():
     app = _app()
     card_type = getattr(dashboard_widgets, "DailyGoalsCard", None)
     assert card_type is not None
@@ -468,16 +468,21 @@ def test_daily_goals_card_renders_work_boundary_and_legacy_fallback():
     card.show()
     app.processEvents()
 
-    assert card.status_label.text() == "智能目标"
     assert "1小时 / 1小时45分钟" in card.work_value_label.text()
     assert "15分钟 / 1小时" in card.entertainment_value_label.text()
     assert card.work_bar.value() == 57
     assert card.entertainment_bar.value() == 25
-    assert card.advice_label.textFormat() == Qt.PlainText
+    visible_text = {
+        label.text()
+        for label in card.findChildren(QLabel)
+        if not label.isHidden()
+    }
+    assert "智能目标" not in visible_text
+    assert "再完成一个25分钟工作段，继续接近今日目标" not in visible_text
 
     card.set_data({})
-    assert card.status_label.text() == "数据积累中"
-    assert card.advice_label.text() == "目标数据积累中"
+    assert card.work_value_label.text() == "目标数据积累中"
+    assert card.entertainment_value_label.text() == "尚未设置"
     card.deleteLater()
     app.processEvents()
 

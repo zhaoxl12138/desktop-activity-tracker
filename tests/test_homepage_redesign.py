@@ -177,14 +177,12 @@ def test_homepage_shell_matches_reference_structure():
         assert window.pages["today"].metric_cards == {}
         assert getattr(window.pages["today"], "time_stats_ratio_ring", None) is None
         assert window.pages["today"].time_stats_card is None
-        assert window.pages["today"].insight_card is not None
+        assert window.pages["today"].insight_card is None
         assert getattr(window.pages["today"], "insight_grid_widget", None) is None
         assert getattr(window.pages["today"], "insight_empty_label", None) is None
-        assert window.pages["today"].insight_card.maximumHeight() <= 124
-        assert window.pages["today"].insight_card.geometry().bottom() <= window.pages["today"].trend_card.geometry().top()
         assert window.pages["today"].trend_card.minimumHeight() >= 230
         assert window.pages["today"].top_app_card.minimumHeight() >= 180
-        assert window.pages["today"].daily_goals_card.minimumHeight() >= 160
+        assert window.pages["today"].daily_goals_card.minimumHeight() >= 130
         assert window.pages["today"].distribution_cmp_labels == {}
         distribution_texts = {
             label.text()
@@ -276,7 +274,7 @@ def test_today_overview_applies_old_and_trusted_snapshots_safely():
         assert window.capsule_labels["total"].text() == "有效时长"
         assert page.trust_badge.text() == "口径待稳定"
         assert page.trust_badge.isVisible() is True
-        assert page.insight_card.title_label.fullText() == "洞察积累中"
+        assert page.insight_card is None
         assert page.classification_notice.isVisible() is False
 
         trusted = _dashboard_snapshot(
@@ -336,7 +334,7 @@ def test_today_overview_applies_old_and_trusted_snapshots_safely():
         assert page.trend_card._status_label.text() == "数据积累中"
         assert page.trend_card._legend_text() == ""
         assert page.trust_badge.isVisible() is False
-        assert page.insight_card.title_label.fullText() == "你的优势时段是 09:00–11:00"
+        assert page.insight_card is None
         assert page.classification_notice.isVisible() is False
 
         mixed = dict(trusted)
@@ -361,7 +359,7 @@ def test_today_overview_applies_old_and_trusted_snapshots_safely():
         assert page.trust_badge.isVisible() is True
         assert page.classification_notice.isVisible() is False
         assert page.distribution_cmp_labels == {}
-        assert page.insight_card.title_label.fullText() == "洞察积累中"
+        assert page.insight_card is None
 
         window.close()
         app.processEvents()

@@ -32,7 +32,6 @@ from ..widgets.dashboard_widgets import (
     TopAppListWidget,
     WorkEpisodeListWidget,
     RhythmComparisonCard,
-    TrustedInsightCard,
 )
 
 
@@ -89,16 +88,15 @@ class TodayOverviewPage(QWidget):
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(14)
-        self.insight_card = TrustedInsightCard()
+        self.insight_card = None
         self.rhythm_card = RhythmComparisonCard()
         self.trend_card = self.rhythm_card
         self.classification_notice = self.trend_card.classification_notice
         self.top_app_card = TopAppListWidget()
         self.daily_goals_card = DailyGoalsCard()
-        right_layout.addWidget(self.insight_card, 0)
         right_layout.addWidget(self.trend_card, 5)
         right_layout.addWidget(self.top_app_card, 3)
-        right_layout.addWidget(self.daily_goals_card, 3)
+        right_layout.addWidget(self.daily_goals_card, 2)
         columns.addWidget(right_panel, 4)
 
         self.insight_grid_widget = None
@@ -431,7 +429,6 @@ class TodayOverviewPage(QWidget):
         trust = dict(snapshot.get("trust", {}) or {})
         trust_level = str(trust.get("level", "low") or "low")
         self.trust_badge.setVisible(trust_level != "high")
-        self.insight_card.set_insight(snapshot.get("insight"))
 
         distribution = [
             (str(item["label"]), int(item["seconds"]), self._distribution_color(str(item["category_key"])))

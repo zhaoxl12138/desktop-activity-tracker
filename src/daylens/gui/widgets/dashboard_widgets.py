@@ -2015,7 +2015,7 @@ class DailyGoalsCard(QFrame):
         super().__init__(parent)
         self.setObjectName("dashboardCard")
         self.setStyleSheet(ui_style.get_dashboard_card_style())
-        self.setMinimumHeight(180)
+        self.setMinimumHeight(138)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 12, 16, 12)
@@ -2029,9 +2029,6 @@ class DailyGoalsCard(QFrame):
         )
         header.addWidget(title)
         header.addStretch(1)
-        self.status_label = QLabel("数据积累中")
-        self.status_label.setTextFormat(Qt.PlainText)
-        header.addWidget(self.status_label)
         root.addLayout(header)
 
         (
@@ -2049,14 +2046,6 @@ class DailyGoalsCard(QFrame):
         ) = self._build_progress_row("娱乐边界", COLORS["video_orange"])
         root.addWidget(entertainment_row)
 
-        self.advice_label = QLabel("目标数据积累中")
-        self.advice_label.setTextFormat(Qt.PlainText)
-        self.advice_label.setWordWrap(True)
-        self.advice_label.setStyleSheet(
-            f"font-size: 11px; color: {COLORS['text_secondary']}; "
-            f"background: {COLORS['panel_bg_alt']}; border-radius: 7px; padding: 5px 8px;"
-        )
-        root.addWidget(self.advice_label)
         self.set_data({})
 
     @staticmethod
@@ -2099,20 +2088,14 @@ class DailyGoalsCard(QFrame):
     def set_data(self, payload: dict | None) -> None:
         data = dict(payload or {})
         if not data:
-            self.status_label.setText("数据积累中")
-            self._set_status_style("waiting")
             self.work_value_label.setText("目标数据积累中")
             self.work_detail_label.setText("")
             self.work_bar.setValue(0)
             self.entertainment_value_label.setText("尚未设置")
             self.entertainment_detail_label.setText("可在设置中心配置")
             self.entertainment_bar.setValue(0)
-            self.advice_label.setText("目标数据积累中")
             return
 
-        status = dict(data.get("status", {}) or {})
-        self.status_label.setText(str(status.get("label", "数据积累中")))
-        self._set_status_style(str(status.get("kind", "waiting")))
         work = dict(data.get("work", {}) or {})
         current_work = parse_nonnegative_int(work.get("current_seconds")) or 0
         target = parse_nonnegative_int(work.get("target_seconds"))
@@ -2161,21 +2144,6 @@ class DailyGoalsCard(QFrame):
                 100,
                 parse_nonnegative_int(entertainment.get("progress_percent")) or 0,
             )
-        )
-        self.advice_label.setText(str(data.get("advice", "目标数据积累中")))
-
-    def _set_status_style(self, kind: str) -> None:
-        color = (
-            COLORS["primary"]
-            if kind == "ready"
-            else COLORS["warning_yellow"]
-            if kind == "unavailable"
-            else COLORS["text_muted"]
-        )
-        self.status_label.setStyleSheet(
-            f"font-size: 10px; font-weight: 800; color: {color}; "
-            f"background: {COLORS['panel_bg_alt']}; border: 1px solid {COLORS['border']}; "
-            "border-radius: 8px; padding: 2px 7px;"
         )
 
 

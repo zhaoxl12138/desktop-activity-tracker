@@ -154,10 +154,7 @@ def main():
         assert overview.top_app_card is not None, "top app card missing"
         assert overview.focus_timeline_card is not None, "focus timeline card missing"
         assert overview.focus_axis is not None, "focus axis missing"
-        assert overview.insight_card is not None, "trusted insight card missing"
-        assert overview.insight_card.maximumHeight() <= 124, "insight card too tall"
-        assert overview.insight_card.geometry().bottom() <= overview.trend_card.geometry().top(), "insight card overlaps trend"
-        assert overview.insight_card.title_label.textFormat() == Qt.PlainText
+        assert overview.insight_card is None, "trusted insight card should be removed"
         assert overview.time_stats_card is None, "time stats card should be removed"
 
         for row in range(window.nav_list.count()):
