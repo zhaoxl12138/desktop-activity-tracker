@@ -27,6 +27,80 @@ def _app() -> QApplication:
     return QApplication.instance() or QApplication([])
 
 
+def test_rhythm_comparison_card_switches_modes_without_category_legend():
+    app = _app()
+    card_type = getattr(dashboard_widgets, "RhythmComparisonCard", None)
+    assert card_type is not None
+    card = card_type()
+    payload = {
+        "today": {
+            "title": "今日工作节奏",
+            "status": {"label": "基线7天", "kind": "baseline"},
+            "conclusion": "截至14:50，比近期同类日多20分钟",
+            "chart": {
+                "kind": "cumulative",
+                "labels": [f"{hour // 2:02d}:{(hour % 2) * 30:02d}" for hour in range(48)],
+                "current": [60 * index for index in range(30)] + [None] * 18,
+                "baseline_median": [50 * index for index in range(30)] + [None] * 18,
+                "baseline_low": [40 * index for index in range(30)] + [None] * 18,
+                "baseline_high": [55 * index for index in range(30)] + [None] * 18,
+            },
+            "metrics": [
+                {"label": "首次参与", "value": "09:00", "delta": "比平时早10分钟"},
+                {"label": "最长连续", "value": "50分钟", "delta": "比平时多5分钟"},
+                {"label": "明显中断", "value": "1次", "delta": "比平时少1次"},
+            ],
+        },
+        "7d": {
+            "title": "近7天工作节奏",
+            "status": {"label": "可比较", "kind": "baseline"},
+            "conclusion": "过去7个完整日，日均参与1小时",
+            "chart": {"kind": "bars", "labels": ["周三", "周四"], "values": [3600, 5400], "average_seconds": 4500},
+            "metrics": [],
+        },
+        "30d": {
+            "title": "近30天工作节奏",
+            "status": {"label": "数据积累中", "kind": "waiting"},
+            "conclusion": "完整周数据仍在积累",
+            "chart": {"kind": "weekly", "labels": ["7/13-7/19"], "values": [None]},
+            "metrics": [],
+        },
+    }
+
+    card.set_data(payload)
+    card.show()
+    app.processEvents()
+
+    assert card._title_label.text() == "今日工作节奏"
+    assert card._status_label.text() == "基线7天"
+    assert "工作学习" not in card._legend_text()
+    assert "娱乐休闲" not in card._legend_text()
+    assert all(label.textFormat() == Qt.PlainText for label in card._dynamic_labels())
+
+    card._mode_buttons["7d"].click()
+    app.processEvents()
+    assert card._mode == "7d"
+    assert card._title_label.text() == "近7天工作节奏"
+    assert card.canvas._kind == "bars"
+    card.deleteLater()
+    app.processEvents()
+
+
+def test_rhythm_comparison_card_falls_back_for_legacy_snapshot():
+    app = _app()
+    card_type = getattr(dashboard_widgets, "RhythmComparisonCard", None)
+    assert card_type is not None
+    card = card_type()
+
+    card.set_data({})
+
+    assert card._status_label.text() == "数据积累中"
+    assert card._conclusion_label.text() == "节奏数据积累中"
+    assert card.canvas._state == "empty"
+    card.deleteLater()
+    app.processEvents()
+
+
 def test_timeline_widget_expand_and_collapse():
     app = _app()
     widget = TimelineWidget(max_rows=2)

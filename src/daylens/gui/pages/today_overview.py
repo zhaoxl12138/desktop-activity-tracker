@@ -29,7 +29,7 @@ from ..widgets.dashboard_widgets import (
     SessionTop3Widget,
     TimelineWidget,
     TopAppListWidget,
-    TrendChartWidget,
+    RhythmComparisonCard,
     TrustedInsightCard,
 )
 
@@ -88,7 +88,8 @@ class TodayOverviewPage(QWidget):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(14)
         self.insight_card = TrustedInsightCard()
-        self.trend_card = TrendChartWidget()
+        self.rhythm_card = RhythmComparisonCard()
+        self.trend_card = self.rhythm_card
         self.classification_notice = self.trend_card.classification_notice
         self.top_app_card = TopAppListWidget()
         right_layout.addWidget(self.insight_card, 0)
@@ -475,10 +476,6 @@ class TodayOverviewPage(QWidget):
         classification_changed = classification_changed or bool(
             trend.get("thirty_day_classification_break", False)
         )
-        self.trend_card.set_history_comparability(
-            metric_break=bool(trend.get("thirty_day_metric_break", False)),
-            classification_comparable=not classification_changed,
-        )
 
         distribution = [
             (str(item["label"]), int(item["seconds"]), self._distribution_color(str(item["category_key"])))
@@ -593,20 +590,7 @@ class TodayOverviewPage(QWidget):
         )
         self.session_top3_widget.set_sessions(sessions_with_icons, self.display_name_mapping)
         self.focus_axis.set_minutes(self._build_focus_axis(timeline_sessions))
-        self.trend_card.set_data(
-            trend.get("today", []),
-            trend.get("yesterday", []),
-            trend.get("seven_days", []),
-            trend.get("thirty_days", []),
-            work_today=trend.get("today_work", []),
-            entertainment_today=trend.get("today_entertainment", []),
-            yesterday_work=trend.get("yesterday_work", []),
-            yesterday_entertainment=trend.get("yesterday_entertainment", []),
-            seven_day_labels=trend.get("seven_day_labels", []),
-            thirty_day_metric=str(
-                trend.get("thirty_day_metric", "effective") or "effective"
-            ),
-        )
+        self.rhythm_card.set_data(dict(snapshot.get("rhythm", {}) or {}))
         focus_summary = str(snapshot.get("focus_summary", ""))
         self.focus_hint.setText(focus_summary)
         self.focus_hint.setVisible("暂未识别" not in focus_summary)

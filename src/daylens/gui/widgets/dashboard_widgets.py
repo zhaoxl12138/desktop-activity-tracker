@@ -998,6 +998,318 @@ class TrustedInsightCard(QFrame):
         )
 
 
+class RhythmComparisonCard(QFrame):
+    """Shows work-engagement rhythm without repeating category distribution."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("dashboardCard")
+        self.setStyleSheet(ui_style.get_dashboard_card_style())
+        self.setMinimumHeight(260)
+        self._mode = "today"
+        self._payload: dict[str, dict] = {}
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 10, 16, 10)
+        root.setSpacing(6)
+
+        header = QHBoxLayout()
+        header.setSpacing(6)
+        self._title_label = QLabel("工作节奏对比")
+        self._title_label.setTextFormat(Qt.PlainText)
+        self._title_label.setStyleSheet(
+            f"font-size: 15px; font-weight: 800; color: {COLORS['text']};"
+        )
+        header.addWidget(self._title_label)
+        header.addStretch(1)
+
+        self.group = QButtonGroup(self)
+        self.group.setExclusive(True)
+        self._mode_buttons: dict[str, QPushButton] = {}
+        for mode, text in (("today", "今日"), ("7d", "近7天"), ("30d", "近30天")):
+            button = QPushButton(text)
+            button.setCheckable(True)
+            button.setCursor(Qt.PointingHandCursor)
+            button.setStyleSheet(
+                f"""
+                QPushButton {{
+                    padding: 3px 8px; border-radius: 6px;
+                    border: 1px solid {COLORS['border']};
+                    color: {COLORS['text_secondary']};
+                    background: {COLORS['panel_bg_alt']}; font-size: 11px;
+                }}
+                QPushButton:checked {{
+                    background: {COLORS['primary']}; color: white;
+                    border-color: {COLORS['primary']};
+                }}
+                """
+            )
+            button.clicked.connect(
+                lambda _checked=False, current_mode=mode: self.set_mode(current_mode)
+            )
+            header.addWidget(button)
+            self.group.addButton(button)
+            self._mode_buttons[mode] = button
+        self._mode_buttons["today"].setChecked(True)
+
+        self._status_label = QLabel("数据积累中")
+        self._status_label.setTextFormat(Qt.PlainText)
+        self._status_label.setAlignment(Qt.AlignCenter)
+        header.addWidget(self._status_label)
+        root.addLayout(header)
+
+        self._conclusion_label = QLabel("节奏数据积累中")
+        self._conclusion_label.setTextFormat(Qt.PlainText)
+        self._conclusion_label.setStyleSheet(
+            f"font-size: 12px; font-weight: 700; color: {COLORS['text_secondary']};"
+        )
+        root.addWidget(self._conclusion_label)
+
+        self.canvas = _RhythmCanvas()
+        self.canvas.setMinimumHeight(130)
+        root.addWidget(self.canvas, 1)
+
+        metrics = QHBoxLayout()
+        metrics.setSpacing(8)
+        self._metric_labels: list[tuple[QLabel, QLabel, QLabel]] = []
+        for _ in range(3):
+            cell = QFrame()
+            cell.setStyleSheet(
+                f"QFrame {{ background: {COLORS['panel_bg_alt']}; border-radius: 7px; }}"
+            )
+            layout = QVBoxLayout(cell)
+            layout.setContentsMargins(8, 4, 8, 4)
+            layout.setSpacing(0)
+            label = QLabel("")
+            value = QLabel("--")
+            delta = QLabel("")
+            for dynamic in (label, value, delta):
+                dynamic.setTextFormat(Qt.PlainText)
+            label.setStyleSheet(f"font-size: 10px; color: {COLORS['text_muted']};")
+            value.setStyleSheet(f"font-size: 12px; font-weight: 800; color: {COLORS['text']};")
+            delta.setStyleSheet(f"font-size: 9px; color: {COLORS['text_secondary']};")
+            layout.addWidget(label)
+            layout.addWidget(value)
+            layout.addWidget(delta)
+            metrics.addWidget(cell, 1)
+            self._metric_labels.append((label, value, delta))
+        root.addLayout(metrics)
+
+        # Compatibility alias for callers that previously exposed the yellow notice.
+        self.classification_notice = QLabel("")
+        self.classification_notice.setVisible(False)
+        self.set_data({})
+
+    def _dynamic_labels(self) -> list[QLabel]:
+        labels = [self._title_label, self._status_label, self._conclusion_label]
+        labels.extend(label for group in self._metric_labels for label in group)
+        return labels
+
+    def _legend_text(self) -> str:
+        return ""
+
+    def set_data(self, payload: dict | None) -> None:
+        self._payload = {
+            str(key): dict(value)
+            for key, value in dict(payload or {}).items()
+            if key in {"today", "7d", "30d"} and isinstance(value, dict)
+        }
+        self._apply_mode()
+
+    def set_mode(self, mode: str) -> None:
+        if mode not in {"today", "7d", "30d"}:
+            return
+        self._mode = mode
+        button = self._mode_buttons.get(mode)
+        if button is not None and not button.isChecked():
+            button.setChecked(True)
+        self._apply_mode()
+
+    def set_history_comparability(self, **_kwargs) -> None:
+        """Compatibility shim; comparability is already encoded in rhythm payload."""
+
+    def _apply_mode(self) -> None:
+        data = self._payload.get(self._mode)
+        if not data:
+            self._title_label.setText("工作节奏对比")
+            self._status_label.setText("数据积累中")
+            self._set_status_style("waiting")
+            self._conclusion_label.setText("节奏数据积累中")
+            self.canvas.set_data({})
+            self._set_metrics([])
+            return
+        self._title_label.setText(str(data.get("title", "工作节奏对比")))
+        status = dict(data.get("status", {}) or {})
+        self._status_label.setText(str(status.get("label", "数据积累中")))
+        self._set_status_style(str(status.get("kind", "waiting")))
+        self._conclusion_label.setText(str(data.get("conclusion", "节奏数据积累中")))
+        self.canvas.set_data(dict(data.get("chart", {}) or {}))
+        self._set_metrics(list(data.get("metrics", []) or []))
+
+    def _set_metrics(self, values: list[dict]) -> None:
+        for index, (label, value, delta) in enumerate(self._metric_labels):
+            item = dict(values[index]) if index < len(values) else {}
+            label.setText(str(item.get("label", "")))
+            value.setText(str(item.get("value", "--")))
+            delta.setText(str(item.get("delta", "")))
+
+    def _set_status_style(self, kind: str) -> None:
+        color = COLORS["primary"] if kind == "baseline" else COLORS["warning_yellow"] if kind == "break" else COLORS["text_muted"]
+        self._status_label.setStyleSheet(
+            f"font-size: 10px; font-weight: 800; color: {color}; "
+            f"background: {COLORS['panel_bg_alt']}; border: 1px solid {COLORS['border']}; "
+            "border-radius: 8px; padding: 2px 7px;"
+        )
+
+
+class _RhythmCanvas(QWidget):
+    def __init__(self):
+        super().__init__()
+        self._kind = "empty"
+        self._state = "empty"
+        self._data: dict = {}
+
+    def set_data(self, data: dict) -> None:
+        self._data = dict(data or {})
+        self._kind = str(self._data.get("kind", "empty") or "empty")
+        values = self._data.get("current") if self._kind == "cumulative" else self._data.get("values")
+        self._state = "chart" if any(value is not None for value in (values or [])) else "empty"
+        self.update()
+
+    @staticmethod
+    def _segments(values: list) -> list[list[tuple[int, float]]]:
+        result: list[list[tuple[int, float]]] = []
+        active: list[tuple[int, float]] = []
+        for index, value in enumerate(values):
+            if value is None:
+                if active:
+                    result.append(active)
+                    active = []
+                continue
+            active.append((index, max(0.0, float(value))))
+        if active:
+            result.append(active)
+        return result
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        rect = self.rect()
+        if self._state == "empty":
+            painter.setPen(QColor(COLORS["text_muted"]))
+            painter.drawText(rect, Qt.AlignCenter, "节奏数据积累中")
+            return
+        chart = rect.adjusted(38, 5, -10, -22)
+        values = list(self._data.get("current", [])) if self._kind == "cumulative" else list(self._data.get("values", []))
+        extra = []
+        for key in ("baseline_low", "baseline_high", "baseline_median"):
+            extra.extend(value for value in self._data.get(key, []) if value is not None)
+        numeric = [float(value) for value in values if value is not None] + [float(value) for value in extra]
+        y_max = max(numeric, default=1.0) * 1.15 or 1.0
+        painter.setPen(QPen(QColor(COLORS["border"]), 1, Qt.DashLine))
+        for index in range(4):
+            y = chart.top() + chart.height() * index / 3
+            painter.drawLine(QPointF(chart.left(), y), QPointF(chart.right(), y))
+        self._draw_y_labels(painter, chart, y_max)
+        if self._kind == "cumulative":
+            self._draw_cumulative(painter, chart, y_max)
+        elif self._kind == "bars":
+            self._draw_bars(painter, chart, y_max)
+        else:
+            self._draw_weekly(painter, chart, y_max)
+        self._draw_x_labels(painter, chart)
+
+    def _point(self, chart: QRectF, index: int, count: int, value: float, y_max: float) -> QPointF:
+        step = chart.width() / max(count - 1, 1)
+        return QPointF(chart.left() + step * index, chart.bottom() - value / y_max * chart.height())
+
+    def _draw_cumulative(self, painter: QPainter, chart: QRectF, y_max: float) -> None:
+        current = list(self._data.get("current", []))
+        low = list(self._data.get("baseline_low", []))
+        high = list(self._data.get("baseline_high", []))
+        median_values = list(self._data.get("baseline_median", []))
+        if low and high:
+            pairs = [(index, float(lo), float(hi)) for index, (lo, hi) in enumerate(zip(low, high)) if lo is not None and hi is not None]
+            if len(pairs) > 1:
+                path = QPainterPath()
+                path.moveTo(self._point(chart, pairs[0][0], len(current), pairs[0][2], y_max))
+                for index, _lo, hi in pairs[1:]:
+                    path.lineTo(self._point(chart, index, len(current), hi, y_max))
+                for index, lo, _hi in reversed(pairs):
+                    path.lineTo(self._point(chart, index, len(current), lo, y_max))
+                path.closeSubpath()
+                fill = QColor("#6b8fb8")
+                fill.setAlpha(50)
+                painter.fillPath(path, fill)
+        self._draw_line(painter, chart, median_values, y_max, QColor("#7792ae"), Qt.DashLine, 1.5)
+        self._draw_line(painter, chart, current, y_max, QColor(COLORS["primary"]), Qt.SolidLine, 2.5)
+
+    def _draw_bars(self, painter: QPainter, chart: QRectF, y_max: float) -> None:
+        values = list(self._data.get("values", []))
+        width = chart.width() / max(len(values), 1)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(COLORS["primary"]))
+        for index, value in enumerate(values):
+            if value is None:
+                continue
+            height = float(value) / y_max * chart.height()
+            painter.drawRoundedRect(QRectF(chart.left() + index * width + width * 0.2, chart.bottom() - height, width * 0.6, height), 3, 3)
+        average = self._data.get("average_seconds")
+        if average is not None:
+            y = chart.bottom() - float(average) / y_max * chart.height()
+            painter.setPen(QPen(QColor("#91a9c2"), 1.5, Qt.DashLine))
+            painter.drawLine(QPointF(chart.left(), y), QPointF(chart.right(), y))
+
+    def _draw_weekly(self, painter: QPainter, chart: QRectF, y_max: float) -> None:
+        self._draw_line(painter, chart, list(self._data.get("values", [])), y_max, QColor(COLORS["primary"]), Qt.SolidLine, 2.5)
+
+    def _draw_line(self, painter: QPainter, chart: QRectF, values: list, y_max: float, color: QColor, style, width: float) -> None:
+        for segment in self._segments(values):
+            if len(segment) == 1:
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(color)
+                painter.drawEllipse(self._point(chart, segment[0][0], len(values), segment[0][1], y_max), 3, 3)
+                continue
+            path = QPainterPath()
+            path.moveTo(self._point(chart, segment[0][0], len(values), segment[0][1], y_max))
+            for index, value in segment[1:]:
+                path.lineTo(self._point(chart, index, len(values), value, y_max))
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(color, width, style))
+            painter.drawPath(path)
+
+    def _draw_y_labels(self, painter: QPainter, chart: QRectF, y_max: float) -> None:
+        painter.setPen(QColor(COLORS["text_muted"]))
+        font = painter.font()
+        font.setPixelSize(9)
+        painter.setFont(font)
+        for index in range(4):
+            value = y_max * (3 - index) / 3
+            minutes = round(value / 60)
+            label = f"{minutes // 60}h" if minutes >= 60 and minutes % 60 == 0 else f"{minutes}m"
+            y = chart.top() + chart.height() * index / 3
+            painter.drawText(QRectF(0, y - 7, 32, 14), Qt.AlignRight | Qt.AlignVCenter, label)
+
+    def _draw_x_labels(self, painter: QPainter, chart: QRectF) -> None:
+        labels = list(self._data.get("labels", []))
+        if not labels:
+            return
+        painter.setPen(QColor(COLORS["text_muted"]))
+        font = painter.font()
+        font.setPixelSize(9)
+        painter.setFont(font)
+        if self._kind == "cumulative":
+            indices = [0, 12, 24, 36, 47]
+        else:
+            indices = list(range(len(labels)))
+        for index in indices:
+            if index >= len(labels):
+                continue
+            x = chart.left() + chart.width() * index / max(len(labels) - 1, 1)
+            painter.drawText(QRectF(x - 24, chart.bottom() + 4, 48, 14), Qt.AlignCenter, str(labels[index]))
+
+
 class TrendChartWidget(QFrame):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)

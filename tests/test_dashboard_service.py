@@ -29,6 +29,396 @@ from daylens.services.dashboard_service import (  # noqa: E402
 from datetime import date, datetime, timedelta
 
 
+def _rhythm_session(
+    date_str: str,
+    start: str,
+    end: str,
+    engaged_seconds: int,
+    *,
+    session_id: str = "work",
+    category_key: str = "coding",
+) -> dict:
+    duration = int(
+        (
+            datetime.strptime(f"{date_str} {end}", "%Y-%m-%d %H:%M:%S")
+            - datetime.strptime(f"{date_str} {start}", "%Y-%m-%d %H:%M:%S")
+        ).total_seconds()
+    )
+    return {
+        "session_id": session_id,
+        "date": date_str,
+        "start_time": f"{date_str} {start}",
+        "end_time": f"{date_str} {end}",
+        "process_name": "Code.exe",
+        "normalized_title": "Codex",
+        "category_key": category_key,
+        "category_name": "工作学习",
+        "duration_seconds": duration,
+        "effective_seconds": engaged_seconds,
+        "engaged_seconds": engaged_seconds,
+        "passive_seconds": 0,
+        "idle_seconds": max(0, duration - engaged_seconds),
+        "metric_version": "attention-v1",
+        "classification_version": "rules-a",
+    }
+
+
+def _trusted_rhythm_day(date_str: str, engaged_seconds: int) -> dict:
+    return {
+        "date": date_str,
+        "effective_seconds": engaged_seconds,
+        "engaged_seconds": engaged_seconds,
+        "work_engaged_seconds": engaged_seconds,
+        "passive_seconds": 0,
+        "idle_seconds": 0,
+        "total_seconds": engaged_seconds,
+        "session_count": 1,
+        "legacy_session_count": 0,
+        "legacy_log_sample_count": 0,
+        "session_anomaly_count": 0,
+        "legacy_log_anomaly_count": 0,
+        "anomaly_count": 0,
+        "legacy_granularity_unknown": False,
+        "dates_with_data": [date_str],
+        "metric_versions": ["attention-v1"],
+        "classification_versions": ["rules-a"],
+    }
+
+
+def test_rhythm_half_hour_cumulative_series_conserves_cross_slot_engagement():
+    sessions = [
+        _rhythm_session(
+            "2026-08-12",
+            "09:20:00",
+            "10:10:00",
+            2_400,
+        )
+    ]
+
+    buckets = dashboard_service.build_work_engaged_half_hours(
+        sessions,
+        "2026-08-12",
+    )
+
+    assert len(buckets) == 48
+    assert sum(buckets) == 2_400
+    assert buckets[18:21] == [480, 1_440, 480]
+
+
+def test_rhythm_half_hours_clip_cross_midnight_session_to_requested_date():
+    session = _rhythm_session(
+        "2026-08-11",
+        "23:50:00",
+        "23:59:59",
+        600,
+    )
+    session["end_time"] = "2026-08-12 00:10:00"
+    session["duration_seconds"] = 1_200
+    session["effective_seconds"] = 1_200
+    session["engaged_seconds"] = 1_200
+
+    buckets = dashboard_service.build_work_engaged_half_hours(
+        [session],
+        "2026-08-11",
+    )
+
+    assert sum(buckets) == 600
+    assert buckets[47] == 600
+    assert buckets[0] == 0
+
+
+def test_rhythm_today_uses_recent_seven_trusted_same_day_type_baseline():
+    today = date(2026, 8, 12)  # Wednesday
+    candidate_dates = [today - timedelta(days=offset) for offset in range(1, 31)]
+    workdays = [day for day in candidate_dates if day.weekday() < 5][:8]
+    sessions = [
+        _rhythm_session(today.isoformat(), "09:00:00", "10:00:00", 3_600),
+        *[
+            _rhythm_session(
+                day.isoformat(),
+                "09:00:00",
+                "10:00:00",
+                600 * (index + 1),
+                session_id=f"base-{index}",
+            )
+            for index, day in enumerate(workdays)
+        ],
+    ]
+    daily = [
+        _trusted_rhythm_day(day.isoformat(), 600 * (index + 1))
+        for index, day in enumerate(workdays)
+    ]
+    daily.append(_trusted_rhythm_day(today.isoformat(), 3_600))
+
+    rhythm = dashboard_service.build_rhythm_snapshot(
+        captured_now=datetime(2026, 8, 12, 14, 50),
+        sessions=sessions,
+        daily_rows=daily,
+        query_failed=False,
+    )
+
+    current = rhythm["today"]
+    assert current["comparison"]["sample_count"] == 7
+    assert current["status"]["label"] == "基线7天"
+    assert len(current["chart"]["current"]) == 48
+    assert current["chart"]["current"][29] == 3_600
+    assert current["chart"]["current"][30:] == [None] * 18
+    assert current["chart"]["baseline_median"][29] == 2_400
+
+
+def test_rhythm_today_hides_comparison_when_metric_history_changed():
+    today = date(2026, 8, 12)
+    legacy_day = _trusted_rhythm_day("2026-08-11", 3_600)
+    legacy_day["metric_versions"] = ["legacy"]
+    legacy_day["legacy_session_count"] = 1
+
+    rhythm = dashboard_service.build_rhythm_snapshot(
+        captured_now=datetime(2026, 8, 12, 12, 0),
+        sessions=[
+            _rhythm_session(today.isoformat(), "09:00:00", "10:00:00", 3_600)
+        ],
+        daily_rows=[_trusted_rhythm_day(today.isoformat(), 3_600), legacy_day],
+        query_failed=False,
+    )
+
+    assert rhythm["today"]["comparison"]["comparable"] is False
+    assert rhythm["today"]["status"]["label"] == "口径已变化"
+    assert rhythm["today"]["chart"]["baseline_median"] == []
+
+
+def test_rhythm_complete_day_and_week_views_preserve_unknown_gaps():
+    today = date(2026, 8, 12)
+    complete_dates = [today - timedelta(days=offset) for offset in range(1, 31)]
+    daily = [
+        _trusted_rhythm_day(day.isoformat(), 3_600 + index * 60)
+        for index, day in enumerate(complete_dates)
+        if day != date(2026, 8, 8)
+    ]
+
+    rhythm = dashboard_service.build_rhythm_snapshot(
+        captured_now=datetime(2026, 8, 12, 14, 0),
+        sessions=[],
+        daily_rows=daily,
+        query_failed=False,
+    )
+
+    seven = rhythm["7d"]
+    assert seven["date_range"] == ["2026-08-05", "2026-08-11"]
+    assert seven["chart"]["values"][3] is None  # 2026-08-08 is unknown.
+    assert seven["metrics"][2]["value"] == "6天"
+    thirty = rhythm["30d"]
+    assert thirty["date_range"] == ["2026-07-13", "2026-08-11"]
+    assert len(thirty["chart"]["labels"]) == 5
+    assert thirty["chart"]["values"][-1] is None  # Partial week has < 4 trusted days.
+
+
+@pytest.mark.parametrize(
+    ("query_failed", "legacy", "expected"),
+    [
+        (True, False, "暂不可比较"),
+        (False, True, "口径已变化"),
+    ],
+)
+def test_rhythm_all_modes_expose_unavailable_comparison_reason(
+    query_failed: bool,
+    legacy: bool,
+    expected: str,
+):
+    today = date(2026, 8, 12)
+    daily = [
+        _trusted_rhythm_day(
+            (today - timedelta(days=offset)).isoformat(),
+            3_600,
+        )
+        for offset in range(31)
+    ]
+    if legacy:
+        daily[4]["metric_versions"] = ["legacy"]
+        daily[4]["legacy_session_count"] = 1
+
+    rhythm = dashboard_service.build_rhythm_snapshot(
+        captured_now=datetime(2026, 8, 12, 14, 0),
+        sessions=[],
+        daily_rows=daily,
+        query_failed=query_failed,
+    )
+
+    assert {rhythm[mode]["status"]["label"] for mode in ("today", "7d", "30d")} == {expected}
+    assert all(
+        rhythm[mode]["comparison"]["comparable"] is False
+        for mode in ("today", "7d", "30d")
+    )
+
+
+def test_rhythm_rejects_daily_rows_with_anomalies_from_baseline():
+    today = date(2026, 8, 12)
+    days = [today - timedelta(days=offset) for offset in range(1, 9)]
+    daily = [_trusted_rhythm_day(day.isoformat(), 3_600) for day in days]
+    daily[0]["session_anomaly_count"] = 1
+    sessions = [
+        _rhythm_session(
+            day.isoformat(),
+            "09:00:00",
+            "10:00:00",
+            3_600,
+            session_id=f"work-{day}",
+        )
+        for day in days
+    ]
+
+    rhythm = dashboard_service.build_rhythm_snapshot(
+        captured_now=datetime(2026, 8, 12, 14, 0),
+        sessions=sessions,
+        daily_rows=daily,
+        query_failed=False,
+    )
+
+    assert rhythm["today"]["comparison"]["sample_count"] == 5
+
+
+def test_rhythm_classification_break_only_keeps_latest_version_points():
+    today = date(2026, 8, 12)
+    daily = []
+    for offset in reversed(range(31)):
+        day = today - timedelta(days=offset)
+        row = _trusted_rhythm_day(day.isoformat(), 3_600)
+        row["classification_versions"] = [
+            "rules-new" if offset <= 5 else "rules-old"
+        ]
+        daily.append(row)
+
+    rhythm = dashboard_service.build_rhythm_snapshot(
+        captured_now=datetime(2026, 8, 12, 14, 0),
+        sessions=[],
+        daily_rows=daily,
+        query_failed=False,
+    )
+
+    assert rhythm["7d"]["chart"]["values"][:2] == [None, None]
+    assert rhythm["7d"]["chart"]["values"][2:] == [3_600] * 5
+    assert "仅展示当前规则记录" in rhythm["7d"]["conclusion"]
+    assert "日均" not in rhythm["7d"]["conclusion"]
+    assert "仅展示当前规则记录" in rhythm["30d"]["conclusion"]
+
+
+def test_rhythm_today_baseline_is_clipped_to_the_same_time_of_day():
+    today = date(2026, 8, 12)
+    baseline_days = [
+        today - timedelta(days=offset)
+        for offset in range(1, 6)
+        if (today - timedelta(days=offset)).weekday() < 5
+    ]
+    sessions = [
+        _rhythm_session(today.isoformat(), "14:30:00", "14:50:00", 1_200),
+        *[
+            _rhythm_session(
+                day.isoformat(),
+                "14:30:00",
+                "15:00:00",
+                1_800,
+                session_id=f"base-{day}",
+            )
+            for day in baseline_days
+        ],
+    ]
+    daily = [
+        _trusted_rhythm_day(day.isoformat(), 1_800)
+        for day in baseline_days
+    ]
+
+    rhythm = dashboard_service.build_rhythm_snapshot(
+        captured_now=datetime(2026, 8, 12, 14, 50),
+        sessions=sessions,
+        daily_rows=daily,
+        query_failed=False,
+    )
+
+    assert rhythm["today"]["comparison"]["delta_seconds"] == 0
+    assert rhythm["today"]["chart"]["baseline_median"][29] == 1_200
+
+
+def test_rhythm_today_baseline_clips_each_session_at_exact_clock_time():
+    today = date(2026, 8, 12)
+    baseline_days = [date(2026, 8, 11), date(2026, 8, 10), date(2026, 8, 7)]
+    sessions = []
+    daily = []
+    for day in baseline_days:
+        sessions.extend(
+            [
+                _rhythm_session(
+                    day.isoformat(),
+                    "14:00:00",
+                    "14:15:00",
+                    900,
+                    session_id=f"done-{day}",
+                ),
+                _rhythm_session(
+                    day.isoformat(),
+                    "14:45:00",
+                    "15:00:00",
+                    900,
+                    session_id=f"partial-{day}",
+                ),
+            ]
+        )
+        daily.append(_trusted_rhythm_day(day.isoformat(), 1_800))
+
+    rhythm = dashboard_service.build_rhythm_snapshot(
+        captured_now=datetime(2026, 8, 12, 14, 50),
+        sessions=sessions,
+        daily_rows=daily,
+        query_failed=False,
+    )
+
+    assert rhythm["today"]["chart"]["baseline_median"][29] == 1_200
+
+
+def test_rhythm_version_break_filters_sessions_to_latest_versions():
+    today = date(2026, 8, 12)
+    daily = [_trusted_rhythm_day(today.isoformat(), 600)]
+    daily[0]["classification_versions"] = ["rules-old", "rules-new"]
+    sessions = [
+        {
+            **_rhythm_session(
+                today.isoformat(),
+                "09:00:00",
+                "10:00:00",
+                3_600,
+                session_id="old",
+            ),
+            "classification_version": "rules-old",
+            "metric_version": "legacy",
+        },
+        {
+            **_rhythm_session(
+                today.isoformat(),
+                "10:00:00",
+                "10:10:00",
+                600,
+                session_id="new",
+            ),
+            "classification_version": "rules-new",
+            "metric_version": "attention-v1",
+        },
+    ]
+
+    rhythm = dashboard_service.build_rhythm_snapshot(
+        captured_now=datetime(2026, 8, 12, 14, 0),
+        sessions=sessions,
+        daily_rows=daily,
+        query_failed=False,
+    )
+
+    assert rhythm["today"]["chart"]["current"][28] == 600
+    assert rhythm["today"]["metrics"][0]["value"] == "10:00"
+
+
+def test_rhythm_interruption_metric_formats_count_delta():
+    assert dashboard_service._count_delta_text(-2) == "比平时少2次"
+    assert dashboard_service._count_delta_text(1) == "比平时多1次"
+    assert dashboard_service._count_delta_text(0) == "与平时接近"
+
+
 def test_distribution_sections_exclude_tools_from_primary_breakdown():
     stats = {
         "by_category": [
@@ -944,7 +1334,14 @@ def test_snapshot_builds_exact_trusted_insight_payload_without_daily_session_que
     assert FrozenDateTime.calls == 1
     assert calls["today_sessions"] == 0
     assert calls["range_sessions"] == 1
-    assert [len(dates) for dates in calls["range_stats"]] == [30]
+    assert [len(dates) for dates in calls["range_stats"]] == [31]
+    assert snapshot["rhythm"]["version"] == 1
+    assert snapshot["rhythm"]["primary_metric"] == "work_engaged_seconds"
+    assert snapshot["rhythm"]["today"]["chart"]["kind"] == "cumulative"
+    assert snapshot["rhythm"]["7d"]["date_range"] == [
+        "2026-08-04",
+        "2026-08-10",
+    ]
     assert snapshot["totals"] == {
         "effective_seconds": 80,
         "engaged_seconds": 60,

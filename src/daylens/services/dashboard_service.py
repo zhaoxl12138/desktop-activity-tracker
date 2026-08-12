@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 import html
 import logging
+import math
+from statistics import median
 import unicodedata
 
 from .. import database, timeline
@@ -25,6 +27,8 @@ THIRTY_DAY_METRIC_BREAK_NOTICE = (
     "计量口径已变化，历史参与趋势暂不可比"
 )
 
+RHYTHM_CONTINUITY_GAP_SECONDS = 30
+
 
 def _rolling_date_strings(end_date: date, days: int) -> list[str]:
     """Return an inclusive rolling window ordered from oldest to newest."""
@@ -41,6 +45,514 @@ def _sessions_for_date(sessions: list[dict], date_str: str) -> list[dict]:
         for session in sessions
         if str(session.get("date", "") or "") == date_str
     ]
+
+
+def _allocate_seconds_to_half_hours(
+    start_dt: datetime,
+    end_dt: datetime,
+    seconds: int,
+) -> list[int]:
+    buckets = [0] * 48
+    if seconds <= 0 or end_dt < start_dt:
+        return buckets
+    if end_dt == start_dt:
+        buckets[start_dt.hour * 2 + (1 if start_dt.minute >= 30 else 0)] = seconds
+        return buckets
+    span = (end_dt - start_dt).total_seconds()
+    pieces: list[tuple[int, float]] = []
+    current = start_dt
+    while current < end_dt:
+        slot_start = current.replace(
+            minute=30 if current.minute >= 30 else 0,
+            second=0,
+            microsecond=0,
+        )
+        slot_end = slot_start + timedelta(minutes=30)
+        segment_end = min(end_dt, slot_end)
+        slot_index = current.hour * 2 + (1 if current.minute >= 30 else 0)
+        pieces.append((slot_index, seconds * (segment_end - current).total_seconds() / span))
+        current = segment_end
+    floors = [(index, math.floor(value), value - math.floor(value)) for index, value in pieces]
+    remainder = seconds - sum(value for _, value, _ in floors)
+    for position, (index, value, _fraction) in enumerate(
+        sorted(floors, key=lambda item: (-item[2], item[0]))
+    ):
+        buckets[index] += value + (1 if position < remainder else 0)
+    return buckets
+
+
+def build_work_engaged_half_hours(
+    sessions: list[dict],
+    date_str: str,
+    *,
+    through_time=None,
+) -> list[int]:
+    """Allocate work-learning engaged seconds into 48 exact half-hour buckets."""
+    buckets = [0] * 48
+    for session in sessions:
+        if str(session.get("date", "") or "") != date_str:
+            continue
+        if str(session.get("category_key", "") or "") not in WORK_KEYS:
+            continue
+        engaged = parse_nonnegative_int(session.get("engaged_seconds"))
+        interval = _session_interval(session)
+        if engaged is None or engaged <= 0 or interval is None:
+            continue
+        try:
+            requested_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except (TypeError, ValueError, OverflowError):
+            continue
+        day_start = datetime.combine(requested_date, datetime.min.time())
+        day_end = day_start + timedelta(days=1)
+        clipped_start = max(interval[0], day_start)
+        clipped_end = min(interval[1], day_end)
+        if through_time is not None:
+            clipped_end = min(
+                clipped_end,
+                datetime.combine(requested_date, through_time),
+            )
+        full_span = (interval[1] - interval[0]).total_seconds()
+        clipped_span = (clipped_end - clipped_start).total_seconds()
+        if full_span > 0 and clipped_span > 0:
+            clipped_engaged = round(engaged * clipped_span / full_span)
+        elif clipped_span == 0 and interval[0] == interval[1]:
+            clipped_engaged = engaged
+        else:
+            continue
+        allocated = _allocate_seconds_to_half_hours(
+            clipped_start,
+            clipped_end,
+            clipped_engaged,
+        )
+        buckets = [current + added for current, added in zip(buckets, allocated)]
+    return buckets
+
+
+def _cumulative(values: list[int]) -> list[int]:
+    total = 0
+    result: list[int] = []
+    for value in values:
+        total += int(value)
+        result.append(total)
+    return result
+
+
+def _percentile(values: list[int], quantile: float) -> int:
+    if not values:
+        return 0
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    position = (len(ordered) - 1) * quantile
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return ordered[lower]
+    fraction = position - lower
+    return round(ordered[lower] * (1 - fraction) + ordered[upper] * fraction)
+
+
+def _work_intervals(sessions: list[dict], date_str: str) -> list[tuple[datetime, datetime, int]]:
+    intervals: list[tuple[datetime, datetime, int]] = []
+    for session in sessions:
+        if str(session.get("date", "") or "") != date_str:
+            continue
+        if str(session.get("category_key", "") or "") not in WORK_KEYS:
+            continue
+        engaged = parse_nonnegative_int(session.get("engaged_seconds")) or 0
+        interval = _session_interval(session)
+        if engaged > 0 and interval is not None:
+            intervals.append((interval[0], interval[1], engaged))
+    return sorted(intervals, key=lambda item: (item[0], item[1]))
+
+
+def _rhythm_day_metrics(sessions: list[dict], date_str: str) -> dict[str, int | str | None]:
+    intervals = _work_intervals(sessions, date_str)
+    if not intervals:
+        return {"first_start": None, "longest_seconds": 0, "interruptions": 0}
+    groups: list[list[tuple[datetime, datetime, int]]] = []
+    for interval in intervals:
+        if not groups or (interval[0] - groups[-1][-1][1]).total_seconds() > RHYTHM_CONTINUITY_GAP_SECONDS:
+            groups.append([interval])
+        else:
+            groups[-1].append(interval)
+    longest = max(sum(item[2] for item in group) for group in groups)
+    interruption = _build_interruptions_section(
+        _sessions_for_date(sessions, date_str),
+        [date_str],
+        True,
+    )["count"]
+    return {
+        "first_start": intervals[0][0].strftime("%H:%M"),
+        "longest_seconds": longest,
+        "interruptions": int(interruption),
+    }
+
+
+def _duration_short(seconds: int) -> str:
+    seconds = max(0, int(seconds))
+    hours, remainder = divmod(seconds, 3600)
+    minutes = remainder // 60
+    if hours and minutes:
+        return f"{hours}小时{minutes}分钟"
+    if hours:
+        return f"{hours}小时"
+    return f"{minutes}分钟"
+
+
+def _delta_text(delta_seconds: int, *, positive_word: str = "多", negative_word: str = "少") -> str:
+    if abs(delta_seconds) < 60:
+        return "与平时接近"
+    word = positive_word if delta_seconds > 0 else negative_word
+    return f"比平时{word}{_duration_short(abs(delta_seconds))}"
+
+
+def _count_delta_text(delta: int) -> str:
+    if delta == 0:
+        return "与平时接近"
+    return f"比平时{'多' if delta > 0 else '少'}{abs(delta)}次"
+
+
+def _daily_row_map(daily_rows: list[dict]) -> dict[str, dict]:
+    return {str(row.get("date", "") or ""): row for row in daily_rows}
+
+
+def _trusted_work_seconds(row: dict | None) -> int | None:
+    if row is None or not _day_has_metric_data(row) or not _day_is_attention_v1_only(row):
+        return None
+    if any(
+        (parse_nonnegative_int(row.get(field)) or 0) > 0
+        for field in (
+            "session_anomaly_count",
+            "legacy_log_anomaly_count",
+            "anomaly_count",
+        )
+    ):
+        return None
+    return parse_nonnegative_int(row.get("work_engaged_seconds"))
+
+
+def _classification_versions(daily_rows: list[dict]) -> set[str]:
+    return {
+        str(version or "")
+        for row in daily_rows
+        if _day_has_metric_data(row)
+        for version in (row.get("classification_versions") or [])
+        if str(version or "")
+    }
+
+
+def _metric_break(daily_rows: list[dict]) -> bool:
+    return any(
+        _day_has_metric_data(row) and not _day_is_attention_v1_only(row)
+        for row in daily_rows
+    )
+
+
+def _weekday_label(value: date) -> str:
+    return "周" + "一二三四五六日"[value.weekday()]
+
+
+def _build_today_rhythm(
+    captured_now: datetime,
+    sessions: list[dict],
+    daily_rows: list[dict],
+    *,
+    query_failed: bool,
+) -> dict[str, object]:
+    today = captured_now.date()
+    today_str = today.isoformat()
+    row_map = _daily_row_map(daily_rows)
+    has_metric_break = _metric_break(daily_rows)
+    has_classification_break = len(_classification_versions(daily_rows)) > 1
+    same_day_type = lambda day: (day.weekday() < 5) == (today.weekday() < 5)
+    candidates: list[str] = []
+    for offset in range(1, 31):
+        candidate = today - timedelta(days=offset)
+        if not same_day_type(candidate):
+            continue
+        date_str = candidate.isoformat()
+        if _trusted_work_seconds(row_map.get(date_str)) is not None:
+            candidates.append(date_str)
+        if len(candidates) == 7:
+            break
+    baseline_allowed = (
+        not query_failed
+        and not has_metric_break
+        and not has_classification_break
+        and len(candidates) >= 3
+    )
+    current = _cumulative(
+        build_work_engaged_half_hours(
+            sessions,
+            today_str,
+            through_time=captured_now.time(),
+        )
+    )
+    current_slot = min(47, captured_now.hour * 2 + (1 if captured_now.minute >= 30 else 0))
+    current_visible: list[int | None] = [
+        value if index <= current_slot else None
+        for index, value in enumerate(current)
+    ]
+    baseline_series = [
+        _cumulative(
+            build_work_engaged_half_hours(
+                sessions,
+                date_str,
+                through_time=captured_now.time(),
+            )
+        )
+        for date_str in candidates
+    ] if baseline_allowed else []
+    median_line = [round(median([series[index] for series in baseline_series])) for index in range(48)] if baseline_series else []
+    low_line = [_percentile([series[index] for series in baseline_series], 0.25) for index in range(48)] if baseline_series else []
+    high_line = [_percentile([series[index] for series in baseline_series], 0.75) for index in range(48)] if baseline_series else []
+    if baseline_series:
+        median_line = [value if index <= current_slot else None for index, value in enumerate(median_line)]
+        low_line = [value if index <= current_slot else None for index, value in enumerate(low_line)]
+        high_line = [value if index <= current_slot else None for index, value in enumerate(high_line)]
+    current_total = current[current_slot]
+    baseline_total = int(median([series[current_slot] for series in baseline_series])) if baseline_series else 0
+    metrics_by_date = {
+        date_str: _rhythm_day_metrics(sessions, date_str)
+        for date_str in [today_str, *candidates]
+    }
+    metrics = metrics_by_date[today_str]
+    first_baselines = [
+        value
+        for date_str in candidates
+        if (value := metrics_by_date[date_str]["first_start"]) is not None
+    ]
+    longest_baselines = [int(metrics_by_date[date_str]["longest_seconds"]) for date_str in candidates]
+    interruption_baselines = [int(metrics_by_date[date_str]["interruptions"]) for date_str in candidates]
+    if query_failed:
+        status = {"label": "暂不可比较", "kind": "unavailable"}
+    elif has_metric_break:
+        status = {"label": "口径已变化", "kind": "break"}
+    elif has_classification_break:
+        status = {"label": "暂不可比较", "kind": "break"}
+    elif baseline_allowed:
+        status = {"label": f"基线{len(candidates)}天", "kind": "baseline"}
+    else:
+        status = {"label": "数据积累中", "kind": "waiting"}
+    if baseline_allowed:
+        conclusion = f"截至{captured_now:%H:%M}，{_delta_text(current_total - baseline_total)}"
+    else:
+        conclusion = f"截至{captured_now:%H:%M}，已参与{_duration_short(current_total)}"
+    first_delta = ""
+    if baseline_allowed and metrics["first_start"] and first_baselines:
+        def minutes(value: str) -> int:
+            hour, minute = value.split(":")
+            return int(hour) * 60 + int(minute)
+        first_diff = minutes(str(metrics["first_start"])) - round(median([minutes(str(value)) for value in first_baselines]))
+        first_delta = "与平时接近" if abs(first_diff) < 1 else f"比平时{'晚' if first_diff > 0 else '早'}{abs(first_diff)}分钟"
+    return {
+        "title": "今日工作节奏",
+        "date_range": [today_str, today_str],
+        "status": status,
+        "conclusion": conclusion,
+        "comparison": {
+            "comparable": baseline_allowed,
+            "sample_count": len(candidates) if baseline_allowed else 0,
+            "delta_seconds": current_total - baseline_total if baseline_allowed else None,
+        },
+        "chart": {
+            "kind": "cumulative",
+            "labels": [f"{index // 2:02d}:{(index % 2) * 30:02d}" for index in range(48)],
+            "current": current_visible,
+            "baseline_median": median_line,
+            "baseline_low": low_line,
+            "baseline_high": high_line,
+        },
+        "metrics": [
+            {"label": "首次参与", "value": str(metrics["first_start"] or "--"), "delta": first_delta},
+            {"label": "最长连续", "value": _duration_short(int(metrics["longest_seconds"])), "delta": _delta_text(int(metrics["longest_seconds"]) - round(median(longest_baselines))) if baseline_allowed and longest_baselines else ""},
+            {"label": "明显中断", "value": f"{metrics['interruptions']}次", "delta": _count_delta_text(int(metrics["interruptions"]) - round(median(interruption_baselines))) if baseline_allowed and interruption_baselines else ""},
+        ],
+    }
+
+
+def _build_seven_day_rhythm(
+    captured_now: datetime,
+    daily_rows: list[dict],
+    *,
+    comparison_allowed: bool,
+) -> dict[str, object]:
+    end = captured_now.date() - timedelta(days=1)
+    dates = [end - timedelta(days=offset) for offset in reversed(range(7))]
+    prior = [dates[0] - timedelta(days=offset) for offset in reversed(range(1, 8))]
+    row_map = _daily_row_map(daily_rows)
+    values = [_trusted_work_seconds(row_map.get(day.isoformat())) for day in dates]
+    prior_values = [_trusted_work_seconds(row_map.get(day.isoformat())) for day in prior]
+    valid = [value for value in values if value is not None]
+    valid_prior = [value for value in prior_values if value is not None]
+    comparable = comparison_allowed and len(valid) >= 3 and len(valid_prior) >= 3
+    average = round(sum(valid) / len(valid)) if valid else 0
+    prior_average = round(sum(valid_prior) / len(valid_prior)) if valid_prior else 0
+    best_index = max((index for index, value in enumerate(values) if value is not None), key=lambda index: int(values[index] or 0), default=None)
+    conclusion = f"{dates[0]:%m月%d日}—{dates[-1]:%m月%d日}，日均参与{_duration_short(average)}"
+    if comparable:
+        conclusion += f"，{_delta_text(average - prior_average).replace('平时', '前7日')}"
+    return {
+        "title": "近7天工作节奏",
+        "date_range": [dates[0].isoformat(), dates[-1].isoformat()],
+        "status": {"label": "可比较" if comparable else "数据积累中", "kind": "baseline" if comparable else "waiting"},
+        "conclusion": conclusion,
+        "comparison": {"comparable": comparable, "delta_seconds": average - prior_average if comparable else None},
+        "chart": {"kind": "bars", "labels": [_weekday_label(day) for day in dates], "values": values, "average_seconds": average if valid else None},
+        "metrics": [
+            {"label": "日均参与", "value": _duration_short(average), "delta": ""},
+            {"label": "最高一天", "value": _weekday_label(dates[best_index]) if best_index is not None else "--", "delta": _duration_short(int(values[best_index] or 0)) if best_index is not None else ""},
+            {"label": "有效数据", "value": f"{len(valid)}天", "delta": ""},
+        ],
+    }
+
+
+def _build_thirty_day_rhythm(captured_now: datetime, daily_rows: list[dict]) -> dict[str, object]:
+    end = captured_now.date() - timedelta(days=1)
+    dates = [end - timedelta(days=offset) for offset in reversed(range(30))]
+    row_map = _daily_row_map(daily_rows)
+    weeks: list[list[date]] = []
+    for day in dates:
+        if not weeks or weeks[-1][-1].isocalendar()[:2] != day.isocalendar()[:2]:
+            weeks.append([])
+        weeks[-1].append(day)
+    labels: list[str] = []
+    values: list[int | None] = []
+    for week in weeks:
+        trusted = [_trusted_work_seconds(row_map.get(day.isoformat())) for day in week]
+        valid = [value for value in trusted if value is not None]
+        labels.append(f"{week[0].month}/{week[0].day}-{week[-1].month}/{week[-1].day}")
+        values.append(round(sum(valid) / len(valid)) if len(valid) >= 4 else None)
+    valid_weeks = [(index, value) for index, value in enumerate(values) if value is not None]
+    weekly_average = round(sum(int(value) for _, value in valid_weeks) / len(valid_weeks)) if valid_weeks else 0
+    best = max(valid_weeks, key=lambda item: int(item[1])) if valid_weeks else None
+    recent_dates = dates[-7:]
+    prior_dates = dates[-14:-7]
+    recent_values = [_trusted_work_seconds(row_map.get(day.isoformat())) for day in recent_dates]
+    prior_values = [_trusted_work_seconds(row_map.get(day.isoformat())) for day in prior_dates]
+    recent_valid = [value for value in recent_values if value is not None]
+    prior_valid = [value for value in prior_values if value is not None]
+    recent_delta: int | None = None
+    if len(recent_valid) >= 3 and len(prior_valid) >= 3 and not _metric_break(daily_rows) and len(_classification_versions(daily_rows)) <= 1:
+        recent_delta = round(sum(recent_valid) / len(recent_valid)) - round(sum(prior_valid) / len(prior_valid))
+    return {
+        "title": "近30天工作节奏",
+        "date_range": [dates[0].isoformat(), dates[-1].isoformat()],
+        "status": {"label": "可比较" if recent_delta is not None else "数据积累中", "kind": "baseline" if recent_delta is not None else "waiting"},
+        "conclusion": f"{dates[0]:%m月%d日}—{dates[-1]:%m月%d日}，完整周日均参与{_duration_short(weekly_average)}" if valid_weeks else "完整周数据仍在积累",
+        "comparison": {"comparable": recent_delta is not None, "delta_seconds": recent_delta},
+        "chart": {"kind": "weekly", "labels": labels, "values": values},
+        "metrics": [
+            {"label": "周均参与", "value": _duration_short(weekly_average), "delta": ""},
+            {"label": "最佳一周", "value": labels[best[0]] if best else "--", "delta": _duration_short(int(best[1])) if best else ""},
+            {"label": "近7日变化", "value": _delta_text(recent_delta).replace("平时", "前7日") if recent_delta is not None else "--", "delta": ""},
+        ],
+    }
+
+
+def build_rhythm_snapshot(
+    *,
+    captured_now: datetime,
+    sessions: list[dict],
+    daily_rows: list[dict],
+    query_failed: bool,
+) -> dict[str, object]:
+    latest_session = max(
+        sessions,
+        key=lambda session: (
+            str(session.get("date", "") or ""),
+            str(session.get("end_time", "") or ""),
+        ),
+        default={},
+    )
+    current_metric_version = str(
+        latest_session.get("metric_version", "attention-v1") or "attention-v1"
+    )
+    current_classification_version = str(
+        latest_session.get("classification_version", "") or ""
+    )
+    has_session_metric_break = any(
+        str(session.get("metric_version", "") or "") != current_metric_version
+        for session in sessions
+    )
+    has_session_classification_break = bool(
+        current_classification_version
+        and any(
+            str(session.get("classification_version", "") or "")
+            != current_classification_version
+            for session in sessions
+        )
+    )
+    filtered_sessions = [
+        session
+        for session in sessions
+        if str(session.get("metric_version", "") or "") == current_metric_version
+        and (
+            not current_classification_version
+            or str(session.get("classification_version", "") or "")
+            == current_classification_version
+        )
+    ]
+    effective_daily_rows = list(daily_rows)
+    classification_versions = _classification_versions(daily_rows)
+    classification_break = (
+        len(classification_versions) > 1
+        or has_session_classification_break
+    )
+    if classification_break:
+        latest_row = max(
+            (row for row in daily_rows if _day_has_metric_data(row)),
+            key=lambda row: str(row.get("date", "") or ""),
+            default={},
+        )
+        current_versions = {
+            str(version or "")
+            for version in (latest_row.get("classification_versions") or [])
+            if str(version or "")
+        }
+        effective_daily_rows = [
+            row
+            for row in daily_rows
+            if not _day_has_metric_data(row)
+            or {
+                str(version or "")
+                for version in (row.get("classification_versions") or [])
+                if str(version or "")
+            } == current_versions
+        ]
+    comparison_allowed = (
+        not query_failed
+        and not _metric_break(daily_rows)
+        and not has_session_metric_break
+        and not classification_break
+    )
+    result = {
+        "version": 1,
+        "primary_metric": "work_engaged_seconds",
+        "today": _build_today_rhythm(captured_now, filtered_sessions, daily_rows, query_failed=query_failed),
+        "7d": _build_seven_day_rhythm(captured_now, effective_daily_rows, comparison_allowed=comparison_allowed),
+        "30d": _build_thirty_day_rhythm(captured_now, effective_daily_rows),
+    }
+    unavailable_status: dict[str, str] | None = None
+    if query_failed:
+        unavailable_status = {"label": "暂不可比较", "kind": "unavailable"}
+    elif _metric_break(daily_rows) or has_session_metric_break:
+        unavailable_status = {"label": "口径已变化", "kind": "break"}
+    elif classification_break:
+        unavailable_status = {"label": "暂不可比较", "kind": "break"}
+    if unavailable_status is not None:
+        for mode in ("today", "7d", "30d"):
+            result[mode]["status"] = dict(unavailable_status)
+            result[mode]["comparison"] = {
+                **dict(result[mode].get("comparison", {}) or {}),
+                "comparable": False,
+                "delta_seconds": None,
+            }
+        if classification_break:
+            for mode in ("7d", "30d"):
+                result[mode]["conclusion"] = "分类规则已变化，仅展示当前规则记录"
+    return result
 
 
 _SESSION_SECONDS_FIELDS = (
@@ -827,6 +1339,7 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
     fourteen_day_dates = _rolling_date_strings(today_date, 14)
     prior_seven_day_dates = fourteen_day_dates[:7]
     thirty_day_dates = _rolling_date_strings(today_date, 30)
+    rhythm_session_dates = _rolling_date_strings(today_date, 31)
 
     stats = database.query_date_stats(db_path, today_str)
     yesterday_stats = database.query_date_stats(db_path, yesterday_str)
@@ -850,17 +1363,26 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
     idle_ratio = max(0, 100 - active_ratio - passive_ratio) if attention_total else 0
 
     trusted_calculation_failed = False
+    rhythm_query_failed = False
     try:
         thirty_day_stats = database.query_date_range_stats(
             db_path,
-            thirty_day_dates,
+            rhythm_session_dates,
         )
-        thirty_day_daily = thirty_day_stats.get("daily", [])
+        rhythm_daily = list(thirty_day_stats.get("daily", []))
+        thirty_day_date_set = set(thirty_day_dates)
+        thirty_day_daily = [
+            row
+            for row in rhythm_daily
+            if str(row.get("date", "") or "") in thirty_day_date_set
+        ]
     except Exception:
         LOGGER.exception("Failed to read dashboard thirty-day range")
         thirty_day_stats = {"daily": []}
         thirty_day_daily = []
+        rhythm_daily = []
         trusted_calculation_failed = True
+        rhythm_query_failed = True
     try:
         thirty_day_trend = _build_thirty_day_trend(thirty_day_daily)
     except Exception:
@@ -873,13 +1395,19 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
         _has_thirty_day_classification_break(thirty_day_daily)
     )
     try:
-        raw_fourteen_day_sessions = database.query_sessions_for_dates(
+        raw_range_sessions = database.query_sessions_for_dates(
             db_path,
-            fourteen_day_dates,
+            rhythm_session_dates,
         )
-        fourteen_day_sessions, malformed_session_dates = _sanitize_sessions(
-            raw_fourteen_day_sessions
+        range_sessions, malformed_session_dates = _sanitize_sessions(
+            raw_range_sessions
         )
+        fourteen_day_set = set(fourteen_day_dates)
+        fourteen_day_sessions = [
+            session
+            for session in range_sessions
+            if str(session.get("date", "") or "") in fourteen_day_set
+        ]
         sessions = _sessions_for_date(fourteen_day_sessions, today_str)
         yesterday_sessions = _sessions_for_date(
             fourteen_day_sessions,
@@ -892,6 +1420,8 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
     except Exception:
         LOGGER.exception("Failed to read dashboard session range")
         trusted_calculation_failed = True
+        rhythm_query_failed = True
+        range_sessions = []
         fourteen_day_sessions = []
         malformed_session_dates = set()
         fallback_sessions, fallback_malformed_dates = _sanitize_sessions(
@@ -904,6 +1434,22 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
         sessions = _sessions_for_date(fallback_sessions, today_str)
         yesterday_sessions = _sessions_for_date(fallback_sessions, yesterday_str)
         seven_day_sessions = [[] for _ in seven_day_dates]
+
+    try:
+        rhythm = build_rhythm_snapshot(
+            captured_now=captured_now,
+            sessions=range_sessions,
+            daily_rows=rhythm_daily,
+            query_failed=rhythm_query_failed,
+        )
+    except Exception:
+        LOGGER.exception("Failed to build dashboard rhythm model")
+        rhythm = build_rhythm_snapshot(
+            captured_now=captured_now,
+            sessions=[],
+            daily_rows=[],
+            query_failed=True,
+        )
 
     focus_summary, consecutive_days = build_focus_summary(db_path, today_str)
     distribution_sections = build_distribution_sections(stats, effective_seconds)
@@ -1045,6 +1591,7 @@ def load_today_snapshot(db_path: str, resolve_display) -> dict[str, object]:
         "trust": trust,
         "comparison": comparison,
         "insight": insight,
+        "rhythm": rhythm,
         "trend": {
             "today": split_today["total"],
             "today_work": split_today["work"],

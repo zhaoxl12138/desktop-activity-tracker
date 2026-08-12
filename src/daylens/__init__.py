@@ -35,24 +35,24 @@ def get_data_dir():
     New frozen installs use LocalAppData. Source runs keep project-local data.
     """
     app_root = get_app_root()
+    state_names = ("usage.db", "user_config.yaml", "reports", "backups", "logs")
+    # Source and frozen runs from a linked worktree must share the canonical
+    # project state. This prevents a second database from being created merely
+    # because development runs from .worktrees/<branch>.
+    normalized_root = os.path.normcase(os.path.normpath(app_root))
+    normalized_parts = normalized_root.split(os.sep)
+    if ".worktrees" in normalized_parts:
+        worktree_index = normalized_parts.index(".worktrees")
+        original_parts = os.path.normpath(app_root).split(os.sep)
+        workspace_root = os.sep.join(original_parts[:worktree_index]) or os.sep
+        shared_data_dir = os.path.join(workspace_root, "data")
+        if any(
+            os.path.exists(os.path.join(shared_data_dir, name))
+            for name in state_names
+        ):
+            return shared_data_dir
     if getattr(sys, 'frozen', False):
         legacy_dir = os.path.join(app_root, "data")
-        state_names = ("usage.db", "user_config.yaml", "reports", "backups", "logs")
-        # A frozen build launched from a .worktrees checkout must continue to
-        # use the user's existing project data instead of creating an empty
-        # isolated database and reports directory.
-        normalized_root = os.path.normcase(os.path.normpath(app_root))
-        normalized_parts = normalized_root.split(os.sep)
-        if ".worktrees" in normalized_parts:
-            worktree_index = normalized_parts.index(".worktrees")
-            original_parts = os.path.normpath(app_root).split(os.sep)
-            workspace_root = os.sep.join(original_parts[:worktree_index]) or os.sep
-            shared_data_dir = os.path.join(workspace_root, "data")
-            if any(
-                os.path.exists(os.path.join(shared_data_dir, name))
-                for name in state_names
-            ):
-                return shared_data_dir
         if any(os.path.exists(os.path.join(legacy_dir, name)) for name in state_names):
             return legacy_dir
         local_app_data = os.environ.get("LOCALAPPDATA")

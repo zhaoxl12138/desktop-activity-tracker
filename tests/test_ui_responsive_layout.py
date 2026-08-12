@@ -149,6 +149,11 @@ def test_trusted_insight_card_stays_compact_above_trend_at_1280x720(tmp_path):
     assert page.insight_card.height() <= 124
     assert page.insight_card.geometry().bottom() <= page.trend_card.geometry().top()
     assert page.trend_card.height() >= page.trend_card.minimumHeight()
+    assert page.trend_card.width() >= 350
+    assert page.trend_card._conclusion_label.geometry().bottom() < page.trend_card.canvas.geometry().top()
+    metric_cells = [labels[0].parentWidget() for labels in page.trend_card._metric_labels]
+    assert all(cell.geometry().bottom() <= page.trend_card.rect().bottom() for cell in metric_cells)
+    assert all(label.textFormat() == Qt.PlainText for label in page.trend_card._dynamic_labels())
     assert page.insight_card.title_label.textFormat() == Qt.PlainText
     assert page.insight_card.evidence_label.wordWrap() is True
 

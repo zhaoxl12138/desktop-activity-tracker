@@ -327,7 +327,8 @@ def test_today_overview_applies_old_and_trusted_snapshots_safely():
         assert window.capsule_labels["total"].text() == "参与时长"
         assert window.capsule_values["total"].text() == "1时"
         page.trend_card.set_mode("30d")
-        assert "每日参与时间" in page.trend_card._cmp_legend.text()
+        assert page.trend_card._status_label.text() == "数据积累中"
+        assert page.trend_card._legend_text() == ""
         assert page.trust_badge.isVisible() is False
         assert page.insight_card.title_label.fullText() == "你的优势时段是 09:00–11:00"
         assert page.classification_notice.isVisible() is False
@@ -352,8 +353,7 @@ def test_today_overview_applies_old_and_trusted_snapshots_safely():
         app.processEvents()
 
         assert page.trust_badge.isVisible() is True
-        assert page.classification_notice.text() == "分类规则已变化，分类趋势暂不可比"
-        assert page.classification_notice.isVisible() is True
+        assert page.classification_notice.isVisible() is False
         assert page.distribution_cmp_labels["work"].text() == "分类不可比"
         assert page.insight_card.title_label.fullText() == "洞察积累中"
 
