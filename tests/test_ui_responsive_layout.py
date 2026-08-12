@@ -167,3 +167,33 @@ def test_right_column_shows_rhythm_ranking_and_goals_at_1280x720(tmp_path):
 
     window.dashboard_refresh.shutdown(timeout_ms=1_000)
     window.deleteLater()
+
+
+def test_dashboard_column_content_bottoms_align_with_compact_rhythm(tmp_path):
+    app, window = _window(tmp_path)
+    page = window.pages["today"]
+    page.work_episode_widget.set_episodes(
+        [
+            {
+                "start_time": f"2026-08-12 {9 + index:02d}:00:00",
+                "end_time": f"2026-08-12 {9 + index:02d}:20:00",
+                "engaged_seconds": 1_200,
+                "apps": ["Codex"],
+                "topic": f"工作片段 {index + 1}",
+            }
+            for index in range(5)
+        ]
+    )
+
+    for width, height in ((1280, 720), (1600, 900), (1706, 910)):
+        window.resize(width, height)
+        app.processEvents()
+
+        left_bottom = page.focus_timeline_card.geometry().bottom()
+        right_bottom = page.daily_goals_card.geometry().bottom()
+        assert abs(left_bottom - right_bottom) <= 2
+        assert page.trend_card.height() <= 225
+        assert page.trend_card.canvas.height() >= 80
+
+    window.dashboard_refresh.shutdown(timeout_ms=1_000)
+    window.deleteLater()

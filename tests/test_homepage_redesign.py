@@ -180,7 +180,7 @@ def test_homepage_shell_matches_reference_structure():
         assert window.pages["today"].insight_card is None
         assert getattr(window.pages["today"], "insight_grid_widget", None) is None
         assert getattr(window.pages["today"], "insight_empty_label", None) is None
-        assert window.pages["today"].trend_card.minimumHeight() >= 230
+        assert window.pages["today"].trend_card.height() <= 225
         assert window.pages["today"].top_app_card.minimumHeight() >= 180
         assert window.pages["today"].daily_goals_card.minimumHeight() >= 130
         assert window.pages["today"].distribution_cmp_labels == {}
