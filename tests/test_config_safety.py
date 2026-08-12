@@ -189,6 +189,21 @@ def test_get_data_dir_keeps_existing_frozen_install_state(tmp_path, monkeypatch)
     assert daylens.get_data_dir() == str(legacy_data)
 
 
+def test_get_data_dir_reuses_project_data_from_frozen_worktree(tmp_path, monkeypatch):
+    workspace = tmp_path / "DayLens"
+    worktree_root = workspace / ".worktrees" / "trusted-metrics-insights"
+    worktree_root.mkdir(parents=True)
+    shared_data = workspace / "data"
+    shared_data.mkdir()
+    (shared_data / "usage.db").touch()
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(daylens, "get_app_root", lambda: str(worktree_root))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+
+    assert daylens.get_data_dir() == str(shared_data)
+
+
 def test_get_data_dir_uses_local_appdata_for_new_frozen_install(
     tmp_path, monkeypatch
 ):
