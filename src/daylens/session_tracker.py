@@ -1206,7 +1206,6 @@ class SessionTracker:
                     self._video_silent_idle,
                 ) = original_state
                 return
-
             self._awaiting_activity = True
             self._last_attention_state = "idle"
             self._video_silent_idle = 0.0

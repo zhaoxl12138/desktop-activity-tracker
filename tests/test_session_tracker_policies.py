@@ -1603,6 +1603,33 @@ def test_video_title_change_after_sixty_idle_seconds_starts_idle():
     _assert_attention_conserved(tracker.current_session)
 
 
+def test_legacy_video_title_change_keeps_historical_idle_accounting():
+    """The new pause-aware policy is opt-in; legacy fixtures stay unchanged."""
+    ended = []
+    tracker = SessionTracker(
+        config={
+            "tracker": {
+                "sample_interval_seconds": 1,
+                "idle_threshold_seconds": 60,
+                "entertainment_idle_threshold_seconds": 999,
+            }
+        },
+        classifier=MappingClassifier(),
+        on_session_end=lambda session: ended.append(session) or True,
+    )
+    first_episode = {
+        "process_name": "VLC.exe",
+        "window_title": "Episode 1",
+        "exe_path": "",
+        "pid": 58,
+    }
+    second_episode = {**first_episode, "window_title": "Episode 2"}
+    for _ in range(61):
+        tracker.tick(0, first_episode)
+    tracker.tick(0, second_episode)
+    assert ended[0].idle_seconds == 61
+
+
 def test_pending_video_with_audio_stays_passive_past_auto_close_threshold():
     persist_attempts = []
 

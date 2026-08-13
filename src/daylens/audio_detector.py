@@ -34,7 +34,7 @@ class AudioDetector:
 
     def is_playing(self, pid: int | None) -> bool:
         if pid is None:
-            return False
+            return True
 
         now = time.time()
         if pid == self._last_pid and now - self._last_check < self._interval:
@@ -50,12 +50,12 @@ class AudioDetector:
                     meter = s._ctl.QueryInterface(IAudioMeterInformation)
                     self._cached = meter.GetPeakValue() > _PEAK_THRESHOLD
                     return self._cached
-            # No target session: unrelated audio is not playback evidence.
-            self._cached = False
+            # No session for this PID — might be child-process audio.
+            self._cached = self.is_any_playing()
         except Exception:
-            # Unknown is safer than treating unrelated system audio as proof
-            # that the foreground video is playing.
-            self._cached = False
+            # Unknown is safer for continuity: do not cut a video session
+            # merely because Core Audio was temporarily unavailable.
+            self._cached = True
 
         return self._cached
 
