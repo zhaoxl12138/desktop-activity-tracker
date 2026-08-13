@@ -213,6 +213,15 @@ def test_homepage_shell_matches_reference_structure():
             ui_style.COLORS["coding_green"],
             ui_style.COLORS["timeline_idle"],
         ]
+        episode_title = window.pages["today"].focus_timeline_card.findChild(
+            QLabel,
+            "workEpisodeSectionTitle",
+        )
+        assert episode_title is not None
+        assert episode_title.textFormat() == Qt.PlainText
+        assert "font-size: 15px" in episode_title.styleSheet()
+        assert "font-weight: 800" in episode_title.styleSheet()
+        assert ui_style.COLORS["primary_hover"] in episode_title.styleSheet()
         assert window.dashboard_refresh.timer.isActive() is True
 
         window.nav_list.setCurrentRow(1)

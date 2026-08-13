@@ -397,8 +397,11 @@ class TodayOverviewPage(QWidget):
         self.consecutive_label.setVisible(False)
 
         section_title = QLabel("关键工作片段")
+        section_title.setObjectName("workEpisodeSectionTitle")
         section_title.setTextFormat(Qt.PlainText)
-        section_title.setStyleSheet(f"font-size: 14px; font-weight: 700; color: {ui_style.COLORS['text']};")
+        section_title.setStyleSheet(
+            f"font-size: 15px; font-weight: 800; color: {ui_style.COLORS['primary_hover']};"
+        )
         layout.addWidget(section_title)
 
         self.session_top3_widget = WorkEpisodeListWidget()

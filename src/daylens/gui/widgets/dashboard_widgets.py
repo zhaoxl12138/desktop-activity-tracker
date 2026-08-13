@@ -2318,12 +2318,14 @@ class WorkEpisodeListWidget(QFrame):
         text_layout.setContentsMargins(0, 0, 0, 0)
         text_layout.setSpacing(1)
         topic = ElidedLabel(str(episode.get("topic", "") or "未命名工作片段"))
+        topic.setObjectName("workEpisodeTopic")
         topic.setTextFormat(Qt.PlainText)
-        topic.setStyleSheet(f"font-size: 12px; font-weight: 800; color: {COLORS['text']};")
+        topic.setStyleSheet(f"font-size: 13px; font-weight: 800; color: {COLORS['text']};")
         apps = " / ".join(str(app) for app in episode.get("apps", []) if str(app))
         app_label = ElidedLabel(apps)
+        app_label.setObjectName("workEpisodeApps")
         app_label.setTextFormat(Qt.PlainText)
-        app_label.setStyleSheet(f"font-size: 10px; color: {COLORS['text_muted']};")
+        app_label.setStyleSheet(f"font-size: 11px; color: {COLORS['text_secondary']};")
         text_layout.addWidget(topic)
         text_layout.addWidget(app_label)
         layout.addWidget(text_box, 1)
@@ -2335,9 +2337,12 @@ class WorkEpisodeListWidget(QFrame):
         start = str(episode.get("start_time", "") or "")
         end = str(episode.get("end_time", "") or "")
         time_label = QLabel(f"{start[11:16]}–{end[11:16]}")
+        time_label.setObjectName("workEpisodeTime")
         time_label.setTextFormat(Qt.PlainText)
         time_label.setAlignment(Qt.AlignRight)
-        time_label.setStyleSheet(f"font-size: 10px; color: {COLORS['text_secondary']};")
+        time_label.setStyleSheet(
+            f"font-size: 11px; font-weight: 700; color: {COLORS['primary_hover']};"
+        )
         seconds = (
             parse_nonnegative_int(episode.get("seconds"))
             if "seconds" in episode
@@ -2345,9 +2350,10 @@ class WorkEpisodeListWidget(QFrame):
         ) or 0
         metric_label = str(episode.get("metric_label", "参与") or "参与")
         duration_label = QLabel(f"{metric_label} {fmt_seconds(seconds)}")
+        duration_label.setObjectName("workEpisodeDuration")
         duration_label.setTextFormat(Qt.PlainText)
         duration_label.setAlignment(Qt.AlignRight)
-        duration_label.setStyleSheet(f"font-size: 11px; font-weight: 800; color: {COLORS['primary']};")
+        duration_label.setStyleSheet(f"font-size: 12px; font-weight: 800; color: {COLORS['primary']};")
         meta_layout.addWidget(time_label)
         meta_layout.addWidget(duration_label)
         layout.addWidget(meta_box)

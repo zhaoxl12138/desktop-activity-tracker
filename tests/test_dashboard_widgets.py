@@ -350,6 +350,27 @@ def test_work_episode_widget_renders_topic_apps_and_participation():
     assert any("09:00–09:35" in text for text in labels)
     assert any("参与 28分20秒" in text for text in labels)
     assert all(label.textFormat() == Qt.PlainText for label in widget._row_widgets[0].findChildren(QLabel))
+
+    row = widget._row_widgets[0]
+    topic_label = row.findChild(QLabel, "workEpisodeTopic")
+    app_label = row.findChild(QLabel, "workEpisodeApps")
+    time_label = row.findChild(QLabel, "workEpisodeTime")
+    duration_label = row.findChild(QLabel, "workEpisodeDuration")
+    assert topic_label is not None
+    assert app_label is not None
+    assert time_label is not None
+    assert duration_label is not None
+    assert "font-size: 13px" in topic_label.styleSheet()
+    assert "font-weight: 800" in topic_label.styleSheet()
+    assert dashboard_widgets.COLORS["text"] in topic_label.styleSheet()
+    assert "font-size: 11px" in app_label.styleSheet()
+    assert dashboard_widgets.COLORS["text_secondary"] in app_label.styleSheet()
+    assert "font-size: 11px" in time_label.styleSheet()
+    assert "font-weight: 700" in time_label.styleSheet()
+    assert dashboard_widgets.COLORS["primary_hover"] in time_label.styleSheet()
+    assert "font-size: 12px" in duration_label.styleSheet()
+    assert "font-weight: 800" in duration_label.styleSheet()
+    assert dashboard_widgets.COLORS["primary"] in duration_label.styleSheet()
     widget.deleteLater()
     app.processEvents()
 
