@@ -1013,7 +1013,9 @@ class RhythmComparisonCard(QFrame):
         super().__init__(parent)
         self.setObjectName("dashboardCard")
         self.setStyleSheet(ui_style.get_dashboard_card_style())
-        self.setFixedHeight(223)
+        self.setMinimumHeight(223)
+        self.setMaximumHeight(300)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._mode = "today"
         self._payload: dict[str, dict] = {}
 
@@ -2154,7 +2156,8 @@ class TopAppListWidget(QFrame):
         super().__init__(parent)
         self.setObjectName("dashboardCard")
         self.setStyleSheet(ui_style.get_dashboard_card_style())
-        self.setFixedHeight(200)
+        self.setMinimumHeight(200)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._row_widgets: list[QWidget] = []
 
         root = QVBoxLayout(self)

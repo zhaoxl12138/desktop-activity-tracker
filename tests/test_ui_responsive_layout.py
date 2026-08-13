@@ -192,7 +192,9 @@ def test_dashboard_column_content_bottoms_align_with_compact_rhythm(tmp_path):
         left_bottom = page.focus_timeline_card.geometry().bottom()
         right_bottom = page.daily_goals_card.geometry().bottom()
         assert abs(left_bottom - right_bottom) <= 2
-        assert page.trend_card.height() <= 225
+        assert page.focus_timeline_card.parentWidget().height() - left_bottom <= 2
+        assert page.daily_goals_card.parentWidget().height() - right_bottom <= 2
+        assert page.trend_card.height() <= 300
         assert page.trend_card.canvas.height() >= 80
 
     window.dashboard_refresh.shutdown(timeout_ms=1_000)

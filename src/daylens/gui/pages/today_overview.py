@@ -78,8 +78,7 @@ class TodayOverviewPage(QWidget):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(14)
         left_layout.addWidget(self.distribution_card)
-        left_layout.addWidget(self.focus_timeline_card)
-        left_layout.addStretch(1)
+        left_layout.addWidget(self.focus_timeline_card, 1)
         columns.addWidget(left_panel, 7)
 
         # Right panel: trend chart + TOP5 in a single vertical layout
@@ -94,10 +93,9 @@ class TodayOverviewPage(QWidget):
         self.classification_notice = self.trend_card.classification_notice
         self.top_app_card = TopAppListWidget()
         self.daily_goals_card = DailyGoalsCard()
-        right_layout.addWidget(self.trend_card)
-        right_layout.addWidget(self.top_app_card)
+        right_layout.addWidget(self.trend_card, 2)
+        right_layout.addWidget(self.top_app_card, 1)
         right_layout.addWidget(self.daily_goals_card)
-        right_layout.addStretch(1)
         columns.addWidget(right_panel, 4)
 
         self.insight_grid_widget = None
