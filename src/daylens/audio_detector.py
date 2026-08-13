@@ -8,6 +8,7 @@ if the audio session stays open.
 import time
 from ctypes import c_float, POINTER
 
+import psutil
 from comtypes import COMMETHOD, GUID, HRESULT, IUnknown
 from pycaw.pycaw import AudioUtilities
 
@@ -32,6 +33,17 @@ class AudioDetector:
         self._last_pid: int | None = None
         self._cached: bool = True
 
+    @staticmethod
+    def _process_tree_pids(pid: int) -> set[int]:
+        """Return a target process PID and all currently visible descendants."""
+        pids = {int(pid)}
+        try:
+            process = psutil.Process(int(pid))
+            pids.update(int(child.pid) for child in process.children(recursive=True))
+        except (psutil.Error, OSError, ValueError, TypeError):
+            pass
+        return pids
+
     def is_playing(self, pid: int | None) -> bool:
         if pid is None:
             return True
@@ -45,12 +57,23 @@ class AudioDetector:
 
         try:
             sessions = AudioUtilities.GetAllSessions()
-            for s in sessions:
-                if s.ProcessId == pid:
+            target_pids = self._process_tree_pids(pid)
+            target_sessions = [s for s in sessions if s.ProcessId in target_pids]
+            for s in target_sessions:
+                try:
                     meter = s._ctl.QueryInterface(IAudioMeterInformation)
-                    self._cached = meter.GetPeakValue() > _PEAK_THRESHOLD
-                    return self._cached
-            # No session for this PID — might be child-process audio.
+                    if meter.GetPeakValue() > _PEAK_THRESHOLD:
+                        self._cached = True
+                        return self._cached
+                except Exception:
+                    continue
+            if target_sessions:
+                # A known target tree with only silent meters is paused/silent;
+                # unrelated system audio must not turn it into a playing video.
+                self._cached = False
+                return self._cached
+            # No session for the target tree: shared/child output may be
+            # unattributable, so retain the historical global fallback.
             self._cached = self.is_any_playing()
         except Exception:
             # Unknown is safer for continuity: do not cut a video session
