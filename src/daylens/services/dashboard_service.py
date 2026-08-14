@@ -505,12 +505,19 @@ def _build_seven_day_rhythm(
     row_map = _daily_row_map(daily_rows)
     values = [_trusted_work_seconds(row_map.get(day.isoformat())) for day in dates]
     prior_values = [_trusted_work_seconds(row_map.get(day.isoformat())) for day in prior]
+    weekday_order = sorted(range(len(dates)), key=lambda index: dates[index].weekday())
+    display_dates = [dates[index] for index in weekday_order]
+    display_values = [values[index] for index in weekday_order]
     valid = [value for value in values if value is not None]
     valid_prior = [value for value in prior_values if value is not None]
     comparable = comparison_allowed and len(valid) >= 3 and len(valid_prior) >= 3
     average = round(sum(valid) / len(valid)) if valid else 0
     prior_average = round(sum(valid_prior) / len(valid_prior)) if valid_prior else 0
-    best_index = max((index for index, value in enumerate(values) if value is not None), key=lambda index: int(values[index] or 0), default=None)
+    best_index = max(
+        (index for index, value in enumerate(display_values) if value is not None),
+        key=lambda index: int(display_values[index] or 0),
+        default=None,
+    )
     conclusion = f"{dates[0]:%m月%d日}—{dates[-1]:%m月%d日}，日均参与{_duration_short(average)}"
     if comparable:
         conclusion += f"，{_delta_text(average - prior_average).replace('平时', '前7日')}"
@@ -520,7 +527,12 @@ def _build_seven_day_rhythm(
         "status": {"label": "可比较" if comparable else "数据积累中", "kind": "baseline" if comparable else "waiting"},
         "conclusion": conclusion,
         "comparison": {"comparable": comparable, "delta_seconds": average - prior_average if comparable else None},
-        "chart": {"kind": "bars", "labels": [_weekday_label(day) for day in dates], "values": values, "average_seconds": average if valid else None},
+        "chart": {
+            "kind": "bars",
+            "labels": [_weekday_label(day) for day in display_dates],
+            "values": display_values,
+            "average_seconds": average if valid else None,
+        },
         "metrics": [
             {"label": "日均参与", "value": _duration_short(average), "delta": ""},
             {"label": "最高一天", "value": _weekday_label(dates[best_index]) if best_index is not None else "--", "delta": _duration_short(int(values[best_index] or 0)) if best_index is not None else ""},

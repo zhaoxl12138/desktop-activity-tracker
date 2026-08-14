@@ -206,7 +206,8 @@ def test_rhythm_complete_day_and_week_views_preserve_unknown_gaps():
 
     seven = rhythm["7d"]
     assert seven["date_range"] == ["2026-08-05", "2026-08-11"]
-    assert seven["chart"]["values"][3] is None  # 2026-08-08 is unknown.
+    assert seven["chart"]["labels"] == ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+    assert seven["chart"]["values"][5] is None  # 2026-08-08 is unknown.
     assert seven["metrics"][2]["value"] == "6天"
     thirty = rhythm["30d"]
     assert thirty["date_range"] == ["2026-07-13", "2026-08-11"]
@@ -296,8 +297,8 @@ def test_rhythm_classification_break_only_keeps_latest_version_points():
         query_failed=False,
     )
 
-    assert rhythm["7d"]["chart"]["values"][:2] == [None, None]
-    assert rhythm["7d"]["chart"]["values"][2:] == [3_600] * 5
+    assert rhythm["7d"]["chart"]["labels"] == ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+    assert rhythm["7d"]["chart"]["values"] == [3_600, 3_600, None, None, 3_600, 3_600, 3_600]
     assert "仅展示当前规则记录" in rhythm["7d"]["conclusion"]
     assert "日均" not in rhythm["7d"]["conclusion"]
     assert "仅展示当前规则记录" in rhythm["30d"]["conclusion"]
