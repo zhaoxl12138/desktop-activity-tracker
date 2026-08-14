@@ -215,6 +215,28 @@ def test_rhythm_complete_day_and_week_views_preserve_unknown_gaps():
     assert thirty["chart"]["values"][-1] is None  # Partial week has < 4 trusted days.
 
 
+def test_rhythm_seven_day_best_day_uses_weekday_sorted_value():
+    captured = datetime(2026, 8, 14, 14, 0)
+    daily = [
+        _trusted_rhythm_day(
+            (captured.date() - timedelta(days=offset)).isoformat(),
+            120 if offset == 1 else 0,
+        )
+        for offset in range(1, 31)
+    ]
+
+    rhythm = dashboard_service.build_rhythm_snapshot(
+        captured_now=captured,
+        sessions=[],
+        daily_rows=daily,
+        query_failed=False,
+    )
+
+    assert rhythm["7d"]["chart"]["labels"] == ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+    assert rhythm["7d"]["metrics"][1]["value"] == "周四"
+    assert rhythm["7d"]["metrics"][1]["delta"] == "2分钟"
+
+
 @pytest.mark.parametrize(
     ("query_failed", "legacy", "expected"),
     [

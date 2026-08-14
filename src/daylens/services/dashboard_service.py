@@ -513,10 +513,15 @@ def _build_seven_day_rhythm(
     comparable = comparison_allowed and len(valid) >= 3 and len(valid_prior) >= 3
     average = round(sum(valid) / len(valid)) if valid else 0
     prior_average = round(sum(valid_prior) / len(valid_prior)) if valid_prior else 0
-    best_index = max(
+    best_display_index = max(
         (index for index, value in enumerate(display_values) if value is not None),
         key=lambda index: int(display_values[index] or 0),
         default=None,
+    )
+    best_index = (
+        weekday_order[best_display_index]
+        if best_display_index is not None
+        else None
     )
     conclusion = f"{dates[0]:%m月%d日}—{dates[-1]:%m月%d日}，日均参与{_duration_short(average)}"
     if comparable:
