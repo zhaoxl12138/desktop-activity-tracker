@@ -40,7 +40,7 @@ def test_timeline_duration_uses_idle_when_effective_is_zero():
     assert text == "12秒"
 
 
-def test_focus_axis_includes_the_last_minute_of_the_day():
+def test_focus_axis_hides_work_sessions_at_or_below_five_minutes():
     class AxisContext:
         @staticmethod
         def _to_minute(timestamp):
@@ -54,18 +54,27 @@ def test_focus_axis_includes_the_last_minute_of_the_day():
         AxisContext(),
         [
             {
-                "start_time": "2026-07-26 23:59:00",
-                "end_time": "2026-07-26 23:59:59",
-                "effective_seconds": 59,
-                "engaged_seconds": 59,
+                "start_time": "2026-07-26 09:00:00",
+                "end_time": "2026-07-26 09:05:00",
+                "effective_seconds": 300,
+                "engaged_seconds": 300,
                 "idle_seconds": 0,
                 "category_key": "coding",
-            }
+            },
+            {
+                "start_time": "2026-07-26 10:00:00",
+                "end_time": "2026-07-26 10:05:01",
+                "effective_seconds": 301,
+                "engaged_seconds": 301,
+                "idle_seconds": 0,
+                "category_key": "coding",
+            },
         ],
     )
 
     assert len(colors) == 1440
-    assert colors[1439] == "active"
+    assert all(colors[minute] != "active" for minute in range(540, 545))
+    assert any(colors[minute] == "active" for minute in range(600, 606))
 
 
 def test_focus_axis_never_promotes_legacy_passive_or_nonwork_time():

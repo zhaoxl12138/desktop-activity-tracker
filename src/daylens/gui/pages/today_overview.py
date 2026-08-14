@@ -654,7 +654,8 @@ class TodayOverviewPage(QWidget):
     def _build_focus_axis(self, sessions: list[dict]) -> list[str]:
         colors = [ui_style.COLORS["timeline_idle"]] * 1440
         minute_categories = timeline.build_engaged_work_minute_categories(
-            sessions
+            sessions,
+            min_engaged_seconds=5 * 60,
         )
         for minute, category in enumerate(minute_categories):
             if category is None:

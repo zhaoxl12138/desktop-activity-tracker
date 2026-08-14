@@ -375,6 +375,23 @@ def test_work_episode_widget_renders_topic_apps_and_participation():
     app.processEvents()
 
 
+def test_work_episode_widget_hides_episodes_at_or_below_five_minutes():
+    app = _app()
+    widget = dashboard_widgets.WorkEpisodeListWidget()
+    widget.set_episodes(
+        [
+            {"seconds": 300, "topic": "exactly five minutes"},
+            {"seconds": 301, "topic": "over five minutes"},
+        ]
+    )
+    app.processEvents()
+
+    assert [episode["seconds"] for episode in widget._episodes] == [301]
+    assert len(widget._row_widgets) == 1
+    widget.deleteLater()
+    app.processEvents()
+
+
 def test_trusted_insight_card_collapses_low_confidence_and_expands_high_confidence():
     app = _app()
     card = dashboard_widgets.TrustedInsightCard()

@@ -2273,6 +2273,7 @@ class WorkEpisodeListWidget(QFrame):
     """Compact list of coherent work episodes rather than raw sessions."""
 
     MAX_ROWS = 5
+    MIN_DISPLAY_SECONDS = 5 * 60
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -2289,7 +2290,19 @@ class WorkEpisodeListWidget(QFrame):
             self._layout.removeWidget(row)
             row.deleteLater()
         self._row_widgets.clear()
-        self._episodes = list(episodes or [])
+        # The focus card is meant to surface substantial work blocks, not
+        # every short context switch.  This is display-only: the snapshot and
+        # persisted sessions still retain all episode data for reports.
+        filtered: list[dict] = []
+        for episode in episodes or []:
+            seconds = (
+                parse_nonnegative_int(episode.get("seconds"))
+                if "seconds" in episode
+                else parse_nonnegative_int(episode.get("engaged_seconds"))
+            )
+            if seconds is not None and seconds > self.MIN_DISPLAY_SECONDS:
+                filtered.append(episode)
+        self._episodes = filtered
         if not self._episodes:
             empty = QLabel("暂无可回顾的工作片段")
             empty.setTextFormat(Qt.PlainText)

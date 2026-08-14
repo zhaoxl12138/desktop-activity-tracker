@@ -354,15 +354,23 @@ def seconds_buckets_to_minutes(seconds: list[int]) -> list[int]:
 
 def build_engaged_work_minute_categories(
     sessions: list[dict],
+    *,
+    min_engaged_seconds: int = 0,
 ) -> list[tuple[str, str] | None]:
-    """Return a 1440-minute engaged-work axis without legacy fallback."""
+    """Return a 1440-minute engaged-work axis without legacy fallback.
+
+    ``min_engaged_seconds`` is a display filter, not a persistence rule.  It
+    allows callers such as today's focus timeline to hide very short work
+    episodes while leaving the underlying session totals untouched.
+    """
     minute_categories: list[tuple[str, str] | None] = [None] * 1440
+    threshold = max(0, int(min_engaged_seconds))
     for session in sessions:
         category_key = str(session.get("category_key", "") or "")
         if category_key not in WORK_CATS:
             continue
         engaged = parse_nonnegative_int(session.get("engaged_seconds"))
-        if engaged is None or engaged <= 0:
+        if engaged is None or engaged <= threshold:
             continue
         try:
             start = datetime.strptime(
