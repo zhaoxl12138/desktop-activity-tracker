@@ -1188,9 +1188,7 @@ class _RhythmCanvas(QWidget):
         self.update()
 
     def _value_color(self, index: int) -> QColor:
-        kinds = list(self._data.get("value_kinds", []) or [])
-        kind = str(kinds[index]) if index < len(kinds) else "current"
-        return QColor(COLORS["primary"] if kind == "current" else "#7792ae")
+        return QColor(COLORS["primary"])
 
     @staticmethod
     def _x_label_indices(count: int) -> list[int]:

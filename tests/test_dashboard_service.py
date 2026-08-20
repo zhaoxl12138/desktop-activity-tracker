@@ -385,7 +385,7 @@ def test_rhythm_keeps_all_recorded_values_visible_from_august_thirteenth():
     assert thirty["chart"]["values"] == seven["chart"]["values"]
     assert thirty["chart"]["value_kinds"] == seven["chart"]["value_kinds"]
     assert thirty["comparison"]["comparable"] is False
-    assert thirty["conclusion"] == "8/13–8/19 · 灰色为旧口径"
+    assert thirty["conclusion"] == "8/13–8/19"
 
 
 def test_rhythm_today_baseline_is_clipped_to_the_same_time_of_day():

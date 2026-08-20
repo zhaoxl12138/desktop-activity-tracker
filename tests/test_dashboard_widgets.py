@@ -86,7 +86,7 @@ def test_rhythm_comparison_card_switches_modes_without_category_legend():
     app.processEvents()
 
 
-def test_rhythm_canvas_marks_legacy_and_partial_values_gray():
+def test_rhythm_canvas_uses_one_color_for_all_recorded_values():
     _app()
     canvas = dashboard_widgets._RhythmCanvas()
     canvas.set_data(
@@ -100,8 +100,12 @@ def test_rhythm_canvas_marks_legacy_and_partial_values_gray():
     assert canvas._value_color(0).name() == dashboard_widgets.QColor(
         dashboard_widgets.COLORS["primary"]
     ).name()
-    assert canvas._value_color(1).name() == dashboard_widgets.QColor("#7792ae").name()
-    assert canvas._value_color(2).name() == dashboard_widgets.QColor("#7792ae").name()
+    assert canvas._value_color(1).name() == dashboard_widgets.QColor(
+        dashboard_widgets.COLORS["primary"]
+    ).name()
+    assert canvas._value_color(2).name() == dashboard_widgets.QColor(
+        dashboard_widgets.COLORS["primary"]
+    ).name()
 
 
 def test_rhythm_canvas_limits_dense_date_labels_to_six_positions():

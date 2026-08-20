@@ -811,7 +811,6 @@ def build_rhythm_snapshot(
                 end_day = datetime.strptime(end_text, "%Y-%m-%d").date()
                 result[mode]["conclusion"] = (
                     f"{start_day.month}/{start_day.day}–{end_day.month}/{end_day.day}"
-                    " · 灰色为旧口径"
                 )
         elif classification_break:
             for mode in ("7d", "30d"):
