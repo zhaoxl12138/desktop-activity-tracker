@@ -696,7 +696,14 @@ class MainWindow(QMainWindow):
         today_page = self.pages.get("today")
         totals = getattr(today_page, "last_snapshot_totals", {}) if today_page is not None else {}
         effective_seconds = int((totals or {}).get("effective_seconds", 0) or 0)
-        consecutive_days = int(getattr(today_page, "last_consecutive_days", 0) or 0)
+        consecutive_days = int(
+            getattr(
+                today_page,
+                "last_recording_streak_days",
+                getattr(today_page, "last_consecutive_days", 0),
+            )
+            or 0
+        )
         self.sidebar_record_value.setText(
             f"已记录：{fmt_seconds(effective_seconds)}" if effective_seconds > 0 else "已记录：--"
         )

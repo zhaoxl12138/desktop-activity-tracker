@@ -1902,6 +1902,11 @@ def load_today_snapshot(
         )
 
     focus_summary, consecutive_days = build_focus_summary(db_path, today_str)
+    try:
+        recording_streak_days = database.count_recording_days(db_path)
+    except Exception:
+        LOGGER.exception("Failed to count consecutive recording days")
+        recording_streak_days = 0
     distribution_sections = build_distribution_sections(stats, effective_seconds)
     day_comparison = build_day_over_day_comparison(stats, yesterday_stats)
     split_today = build_hourly_series_split(sessions)
@@ -2038,6 +2043,7 @@ def load_today_snapshot(
         "work_episode_rows": build_work_episode_rows(sessions, resolve_display),
         "focus_summary": focus_summary,
         "consecutive_days": consecutive_days,
+        "recording_streak_days": recording_streak_days,
         "top_app_rows": build_top_app_rows(stats, resolve_display),
         "trust": trust,
         "comparison": comparison,

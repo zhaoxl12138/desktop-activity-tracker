@@ -82,6 +82,7 @@ def _snapshot_payload() -> dict[str, object]:
         "sessions": [],
         "focus_summary": "今日暂无连续专注时段",
         "consecutive_days": 3,
+        "recording_streak_days": 81,
         "top_app_rows": [],
         "trend": {
             "today": [0] * 24,
@@ -139,6 +140,7 @@ def test_main_window_uses_one_shared_background_snapshot(tmp_path, monkeypatch):
     assert window.capsule_values["total"].text() == "7分0秒"
     assert window.capsule_values["work"].text() == "4分0秒"
     assert "7分" in window.sidebar_record_value.text()
+    assert window.sidebar_record_streak.text() == "连续记录：第81天"
 
     window.hide()
     app.processEvents()

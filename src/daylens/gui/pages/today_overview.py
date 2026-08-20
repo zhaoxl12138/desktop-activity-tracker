@@ -52,6 +52,7 @@ class TodayOverviewPage(QWidget):
         self.last_shell_primary_seconds = 0
         self.last_shell_primary_label = "有效时长"
         self.last_consecutive_days = 0
+        self.last_recording_streak_days = 0
         setattr(self, "metric_cards", {})
         self.time_stats_labels: dict[str, QLabel] = {}
         self.distribution_cmp_labels: dict[str, QLabel] = {}
@@ -521,6 +522,9 @@ class TodayOverviewPage(QWidget):
         self.focus_hint.setVisible("暂未识别" not in focus_summary)
         consecutive_days = int(snapshot.get("consecutive_days", 0) or 0)
         self.last_consecutive_days = consecutive_days
+        self.last_recording_streak_days = int(
+            snapshot.get("recording_streak_days", consecutive_days) or 0
+        )
         self.consecutive_label.setText(f"连续专注 {consecutive_days}天" if consecutive_days > 0 else "")
         self._update_top_apps(snapshot.get("top_app_rows", []))
 

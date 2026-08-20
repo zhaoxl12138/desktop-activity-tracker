@@ -115,6 +115,31 @@ def test_consecutive_days_skips_noncanonical_historical_dates(tmp_path: Path):
     assert database.count_consecutive_days(str(db_path)) == 1
 
 
+def test_recording_streak_counts_legacy_days_without_changing_focus_streak(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "usage.db"
+    database.init_db(str(db_path)).close()
+    today = datetime.now().date()
+    for offset, engaged in ((0, 3_600), (1, 0), (2, 0)):
+        _insert_work_session(
+            db_path,
+            session_id=f"day-{offset}",
+            date_str=(today - timedelta(days=offset)).isoformat(),
+            engaged_seconds=engaged,
+        )
+
+    assert database.count_recording_days(str(db_path)) == 3
+    assert database.count_consecutive_days(str(db_path)) == 1
+
+    snapshot = load_today_snapshot(
+        str(db_path),
+        lambda process_name, _details: process_name,
+    )
+    assert snapshot["recording_streak_days"] == 3
+    assert snapshot["consecutive_days"] == 1
+
+
 def test_bad_historical_date_cannot_break_dashboard_snapshot(tmp_path: Path):
     db_path = tmp_path / "usage.db"
     database.init_db(str(db_path)).close()

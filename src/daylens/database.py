@@ -36,6 +36,7 @@ from .repositories.settings_repository import (
 )
 from .repositories.stats_repository import (
     count_consecutive_days as _count_consecutive_days,
+    count_recording_days as _count_recording_days,
     query_category_detail as _query_category_detail,
     query_date as _query_date,
     query_date_range_stats as _query_date_range_stats,
@@ -74,6 +75,7 @@ query_today_sessions = partial(_query_today_sessions, read_conn)
 query_sessions_for_dates = partial(_query_sessions_for_dates, read_conn)
 query_category_detail = partial(_query_category_detail, read_conn)
 count_consecutive_days = partial(_count_consecutive_days, read_conn)
+count_recording_days = partial(_count_recording_days, read_conn)
 query_date_range_stats = partial(_query_date_range_stats, read_conn)
 query_top_titles_by_category = partial(_query_top_titles_by_category, read_conn)
 query_timeline_sessions = partial(_query_timeline_sessions, read_conn)

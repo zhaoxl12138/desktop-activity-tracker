@@ -32,6 +32,10 @@ _CONSECUTIVE_DAYS_QUERY = (
     f"WHERE {_VALID_ENGAGED_WORK_PREDICATE} "
     "AND date <= ? ORDER BY date DESC"
 )
+_CONSECUTIVE_RECORDING_DAYS_QUERY = (
+    "SELECT DISTINCT date FROM activity_sessions "
+    "WHERE date <= ? ORDER BY date DESC"
+)
 # attention-v1 counters are incremented and rewritten as mutually exclusive
 # buckets, so persisted integer identities are exact and use a fixed tolerance.
 ATTENTION_V1_COMPOSITION_TOLERANCE_SECONDS = 0
@@ -874,6 +878,34 @@ def count_consecutive_days(read_conn, db_path: str) -> int:
                 continue
             if parsed < expected_date:
                 break
+    return count
+
+
+def count_recording_days(read_conn, db_path: str) -> int:
+    """Count consecutive calendar dates containing any recorded session."""
+    today = datetime.now().date()
+    expected_date = today
+    count = 0
+    with read_conn(db_path) as conn:
+        rows = conn.execute(
+            _CONSECUTIVE_RECORDING_DAYS_QUERY,
+            (today.isoformat(),),
+        )
+        for row in rows:
+            raw_date = str(row["date"] or "")
+            try:
+                parsed = datetime.strptime(raw_date, "%Y-%m-%d").date()
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if parsed.isoformat() != raw_date:
+                continue
+            if parsed == expected_date:
+                count += 1
+                expected_date -= timedelta(days=1)
+                continue
+            if parsed > expected_date:
+                continue
+            break
     return count
 
 
