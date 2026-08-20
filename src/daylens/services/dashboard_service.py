@@ -556,10 +556,9 @@ def _build_seven_day_rhythm(
     values = [point[0] for point in display_points]
     value_kinds = [point[1] for point in display_points]
     prior_values = [_trusted_work_seconds(row_map.get(day.isoformat())) for day in prior]
-    weekday_order = sorted(range(len(dates)), key=lambda index: dates[index].weekday())
-    display_dates = [dates[index] for index in weekday_order]
-    display_values = [values[index] for index in weekday_order]
-    display_kinds = [value_kinds[index] for index in weekday_order]
+    display_dates = dates
+    display_values = values
+    display_kinds = value_kinds
     valid = [value for value in values if value is not None]
     trusted_valid = [
         int(value)
@@ -570,17 +569,15 @@ def _build_seven_day_rhythm(
     comparable = comparison_allowed and len(trusted_valid) >= 3 and len(valid_prior) >= 3
     average = round(sum(valid) / len(valid)) if valid else 0
     prior_average = round(sum(valid_prior) / len(valid_prior)) if valid_prior else 0
-    best_display_index = max(
-        (index for index, value in enumerate(display_values) if value is not None),
-        key=lambda index: int(display_values[index] or 0),
+    best_index = max(
+        (index for index, value in enumerate(values) if value is not None),
+        key=lambda index: int(values[index] or 0),
         default=None,
     )
-    best_index = (
-        weekday_order[best_display_index]
-        if best_display_index is not None
-        else None
+    conclusion = (
+        f"{dates[0].month}/{dates[0].day}–{dates[-1].month}/{dates[-1].day}"
+        f" · 日均{_duration_short(average)}"
     )
-    conclusion = f"{dates[0]:%m月%d日}—{dates[-1]:%m月%d日}，日均参与{_duration_short(average)}"
     if comparable:
         conclusion += f"，{_delta_text(average - prior_average).replace('平时', '前7日')}"
     return {
@@ -591,14 +588,27 @@ def _build_seven_day_rhythm(
         "comparison": {"comparable": comparable, "delta_seconds": average - prior_average if comparable else None},
         "chart": {
             "kind": "bars",
-            "labels": [_weekday_label(day) for day in display_dates],
+            "labels": [f"{day.month}/{day.day}" for day in display_dates],
             "values": display_values,
             "value_kinds": display_kinds,
             "average_seconds": average if valid else None,
         },
         "metrics": [
             {"label": "日均参与", "value": _duration_short(average), "delta": ""},
-            {"label": "最高一天", "value": _weekday_label(dates[best_index]) if best_index is not None else "--", "delta": _duration_short(int(values[best_index] or 0)) if best_index is not None else ""},
+            {
+                "label": "最高一天",
+                "value": (
+                    f"{dates[best_index].month}/{dates[best_index].day} "
+                    f"{_weekday_label(dates[best_index])}"
+                    if best_index is not None
+                    else "--"
+                ),
+                "delta": (
+                    _duration_short(int(values[best_index] or 0))
+                    if best_index is not None
+                    else ""
+                ),
+            },
             {"label": "有效数据", "value": f"{len(valid)}天", "delta": ""},
         ],
     }
@@ -617,40 +627,33 @@ def _build_thirty_day_rhythm(captured_now: datetime, daily_rows: list[dict]) -> 
         for offset in range(max(0, (end - start).days + 1))
     ]
     row_map = _daily_row_map(daily_rows)
-    weeks: list[list[date]] = []
-    for day in dates:
-        if not weeks or weeks[-1][-1].isocalendar()[:2] != day.isocalendar()[:2]:
-            weeks.append([])
-        weeks[-1].append(day)
-    labels: list[str] = []
-    values: list[int | None] = []
-    value_kinds: list[str] = []
-    show_partial_weeks = captured_now.date() >= RHYTHM_HISTORY_START_DATE
-    for week in weeks:
-        points = [
-            _rhythm_display_value(
-                row_map.get(day.isoformat()),
-                day,
-                history_start=start,
-            )
-            for day in week
-        ]
-        valid = [int(value) for value, _kind in points if value is not None]
-        kinds = [kind for value, kind in points if value is not None]
-        labels.append(f"{week[0].month}/{week[0].day}-{week[-1].month}/{week[-1].day}")
-        visible = bool(valid) and (show_partial_weeks or len(valid) >= 4)
-        values.append(round(sum(valid) / len(valid)) if visible else None)
-        if not visible:
-            value_kinds.append("missing")
-        elif "legacy" in kinds:
-            value_kinds.append("legacy")
-        elif len(valid) < 4:
-            value_kinds.append("partial")
-        else:
-            value_kinds.append("current")
-    valid_weeks = [(index, value) for index, value in enumerate(values) if value is not None]
-    weekly_average = round(sum(int(value) for _, value in valid_weeks) / len(valid_weeks)) if valid_weeks else 0
-    best = max(valid_weeks, key=lambda item: int(item[1])) if valid_weeks else None
+    points = [
+        _rhythm_display_value(
+            row_map.get(day.isoformat()),
+            day,
+            history_start=start,
+        )
+        for day in dates
+    ]
+    values = [value for value, _kind in points]
+    value_kinds = [kind for _value, kind in points]
+    valid = [int(value) for value in values if value is not None]
+    trusted_valid = [
+        int(value)
+        for value, kind in zip(values, value_kinds)
+        if value is not None and kind == "current"
+    ]
+    average = round(sum(valid) / len(valid)) if valid else 0
+    average_line = (
+        round(sum(trusted_valid) / len(trusted_valid))
+        if len(trusted_valid) >= 7
+        else None
+    )
+    best_index = max(
+        (index for index, value in enumerate(values) if value is not None),
+        key=lambda index: int(values[index] or 0),
+        default=None,
+    )
     recent_dates = dates[-7:]
     prior_dates = dates[-14:-7]
     recent_values = [_trusted_work_seconds(row_map.get(day.isoformat())) for day in recent_dates]
@@ -664,18 +667,34 @@ def _build_thirty_day_rhythm(captured_now: datetime, daily_rows: list[dict]) -> 
         "title": "近30天工作节奏",
         "date_range": [dates[0].isoformat(), dates[-1].isoformat()],
         "status": {"label": "可比较" if recent_delta is not None else "数据积累中", "kind": "baseline" if recent_delta is not None else "waiting"},
-        "conclusion": f"{dates[0]:%m月%d日}—{dates[-1]:%m月%d日}，完整周日均参与{_duration_short(weekly_average)}" if valid_weeks else "完整周数据仍在积累",
+        "conclusion": (
+            f"{dates[0].month}/{dates[0].day}–{dates[-1].month}/{dates[-1].day}"
+            f" · 日均{_duration_short(average)}"
+        ),
         "comparison": {"comparable": recent_delta is not None, "delta_seconds": recent_delta},
         "chart": {
-            "kind": "weekly",
-            "labels": labels,
+            "kind": "bars",
+            "labels": [f"{day.month}/{day.day}" for day in dates],
             "values": values,
             "value_kinds": value_kinds,
+            "average_seconds": average_line,
         },
         "metrics": [
-            {"label": "周均参与", "value": _duration_short(weekly_average), "delta": ""},
-            {"label": "最佳一周", "value": labels[best[0]] if best else "--", "delta": _duration_short(int(best[1])) if best else ""},
-            {"label": "近7日变化", "value": _delta_text(recent_delta).replace("平时", "前7日") if recent_delta is not None else "--", "delta": ""},
+            {"label": "日均参与", "value": _duration_short(average), "delta": ""},
+            {
+                "label": "最高一天",
+                "value": (
+                    f"{dates[best_index].month}/{dates[best_index].day}"
+                    if best_index is not None
+                    else "--"
+                ),
+                "delta": (
+                    _duration_short(int(values[best_index] or 0))
+                    if best_index is not None
+                    else ""
+                ),
+            },
+            {"label": "记录数据", "value": f"{len(valid)}天", "delta": ""},
         ],
     }
 
@@ -787,8 +806,12 @@ def build_rhythm_snapshot(
             )
         ):
             for mode in ("7d", "30d"):
+                start_text, end_text = result[mode]["date_range"]
+                start_day = datetime.strptime(start_text, "%Y-%m-%d").date()
+                end_day = datetime.strptime(end_text, "%Y-%m-%d").date()
                 result[mode]["conclusion"] = (
-                    "8月13日起记录已显示，灰色为旧口径或不完整数据"
+                    f"{start_day.month}/{start_day.day}–{end_day.month}/{end_day.day}"
+                    " · 灰色为旧口径"
                 )
         elif classification_break:
             for mode in ("7d", "30d"):

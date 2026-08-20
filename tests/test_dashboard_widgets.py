@@ -104,6 +104,14 @@ def test_rhythm_canvas_marks_legacy_and_partial_values_gray():
     assert canvas._value_color(2).name() == dashboard_widgets.QColor("#7792ae").name()
 
 
+def test_rhythm_canvas_limits_dense_date_labels_to_six_positions():
+    _app()
+    canvas = dashboard_widgets._RhythmCanvas()
+
+    assert canvas._x_label_indices(7) == list(range(7))
+    assert canvas._x_label_indices(30) == [0, 6, 12, 18, 24, 29]
+
+
 def test_rhythm_comparison_card_falls_back_for_legacy_snapshot():
     app = _app()
     card_type = getattr(dashboard_widgets, "RhythmComparisonCard", None)

@@ -206,16 +206,19 @@ def test_rhythm_complete_day_and_week_views_preserve_unknown_gaps():
 
     seven = rhythm["7d"]
     assert seven["date_range"] == ["2026-08-05", "2026-08-11"]
-    assert seven["chart"]["labels"] == ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
-    assert seven["chart"]["values"][5] is None  # 2026-08-08 is unknown.
+    assert seven["chart"]["labels"] == [
+        "8/5", "8/6", "8/7", "8/8", "8/9", "8/10", "8/11"
+    ]
+    assert seven["chart"]["values"][3] is None  # 2026-08-08 is unknown.
     assert seven["metrics"][2]["value"] == "6天"
     thirty = rhythm["30d"]
     assert thirty["date_range"] == ["2026-07-13", "2026-08-11"]
-    assert len(thirty["chart"]["labels"]) == 5
-    assert thirty["chart"]["values"][-1] is None  # Partial week has < 4 trusted days.
+    assert thirty["chart"]["kind"] == "bars"
+    assert len(thirty["chart"]["labels"]) == 30
+    assert thirty["chart"]["values"][26] is None
 
 
-def test_rhythm_seven_day_best_day_uses_weekday_sorted_value():
+def test_rhythm_seven_day_best_day_uses_chronological_date_value():
     captured = datetime(2026, 8, 14, 14, 0)
     daily = [
         _trusted_rhythm_day(
@@ -232,8 +235,10 @@ def test_rhythm_seven_day_best_day_uses_weekday_sorted_value():
         query_failed=False,
     )
 
-    assert rhythm["7d"]["chart"]["labels"] == ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
-    assert rhythm["7d"]["metrics"][1]["value"] == "周四"
+    assert rhythm["7d"]["chart"]["labels"] == [
+        "8/7", "8/8", "8/9", "8/10", "8/11", "8/12", "8/13"
+    ]
+    assert rhythm["7d"]["metrics"][1]["value"] == "8/13 周四"
     assert rhythm["7d"]["metrics"][1]["delta"] == "2分钟"
 
 
@@ -319,8 +324,12 @@ def test_rhythm_classification_break_only_keeps_latest_version_points():
         query_failed=False,
     )
 
-    assert rhythm["7d"]["chart"]["labels"] == ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
-    assert rhythm["7d"]["chart"]["values"] == [3_600, 3_600, None, None, 3_600, 3_600, 3_600]
+    assert rhythm["7d"]["chart"]["labels"] == [
+        "8/5", "8/6", "8/7", "8/8", "8/9", "8/10", "8/11"
+    ]
+    assert rhythm["7d"]["chart"]["values"] == [
+        None, None, 3_600, 3_600, 3_600, 3_600, 3_600
+    ]
     assert "仅展示当前规则记录" in rhythm["7d"]["conclusion"]
     assert "日均" not in rhythm["7d"]["conclusion"]
     assert "仅展示当前规则记录" in rhythm["30d"]["conclusion"]
@@ -353,14 +362,17 @@ def test_rhythm_keeps_all_recorded_values_visible_from_august_thirteenth():
     )
 
     seven = rhythm["7d"]
-    assert seven["chart"]["values"] == [1700, 1800, 1900, 1300, 1400, 1500, 1600]
+    assert seven["chart"]["labels"] == [
+        "8/13", "8/14", "8/15", "8/16", "8/17", "8/18", "8/19"
+    ]
+    assert seven["chart"]["values"] == [1300, 1400, 1500, 1600, 1700, 1800, 1900]
     assert seven["chart"]["value_kinds"] == [
         "current",
         "current",
         "legacy",
-        "current",
-        "current",
         "legacy",
+        "current",
+        "current",
         "legacy",
     ]
     assert seven["comparison"]["comparable"] is False
@@ -368,10 +380,12 @@ def test_rhythm_keeps_all_recorded_values_visible_from_august_thirteenth():
 
     thirty = rhythm["30d"]
     assert thirty["date_range"] == ["2026-08-13", "2026-08-19"]
-    assert thirty["chart"]["values"] == [1450, 1800]
-    assert thirty["chart"]["value_kinds"] == ["legacy", "legacy"]
+    assert thirty["chart"]["kind"] == "bars"
+    assert thirty["chart"]["labels"] == seven["chart"]["labels"]
+    assert thirty["chart"]["values"] == seven["chart"]["values"]
+    assert thirty["chart"]["value_kinds"] == seven["chart"]["value_kinds"]
     assert thirty["comparison"]["comparable"] is False
-    assert "8月13日起" in thirty["conclusion"]
+    assert thirty["conclusion"] == "8/13–8/19 · 灰色为旧口径"
 
 
 def test_rhythm_today_baseline_is_clipped_to_the_same_time_of_day():

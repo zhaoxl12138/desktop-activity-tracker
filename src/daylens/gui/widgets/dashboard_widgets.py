@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import date, datetime, timedelta
 from typing import Iterable
 
@@ -1192,6 +1193,18 @@ class _RhythmCanvas(QWidget):
         return QColor(COLORS["primary"] if kind == "current" else "#7792ae")
 
     @staticmethod
+    def _x_label_indices(count: int) -> list[int]:
+        if count <= 0:
+            return []
+        if count <= 7:
+            return list(range(count))
+        step = max(1, math.ceil(count / 5))
+        indices = list(range(0, count, step))
+        if indices[-1] != count - 1:
+            indices.append(count - 1)
+        return indices[:6]
+
+    @staticmethod
     def _segments(values: list) -> list[list[tuple[int, float]]]:
         result: list[list[tuple[int, float]]] = []
         active: list[tuple[int, float]] = []
@@ -1343,7 +1356,7 @@ class _RhythmCanvas(QWidget):
         if self._kind == "cumulative":
             indices = [0, 12, 24, 36, 47]
         else:
-            indices = list(range(len(labels)))
+            indices = self._x_label_indices(len(labels))
         for index in indices:
             if index >= len(labels):
                 continue
