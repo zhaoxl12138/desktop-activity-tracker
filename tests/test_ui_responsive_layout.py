@@ -5,7 +5,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QObject, Qt, Signal
-from PySide6.QtWidgets import QApplication, QBoxLayout
+from PySide6.QtWidgets import QApplication, QBoxLayout, QLabel
 import yaml
 
 from daylens import database
@@ -196,6 +196,50 @@ def test_dashboard_column_content_bottoms_align_with_compact_rhythm(tmp_path):
         assert page.daily_goals_card.parentWidget().height() - right_bottom <= 2
         assert page.trend_card.height() <= 300
         assert page.trend_card.canvas.height() >= 80
+
+    window.dashboard_refresh.shutdown(timeout_ms=1_000)
+    window.deleteLater()
+
+
+def test_dashboard_work_episode_rows_stay_compact_at_supported_sizes(tmp_path):
+    app, window = _window(tmp_path)
+    page = window.pages["today"]
+
+    for episode_count in (1, 2):
+        page.work_episode_widget.set_episodes(
+            [
+                {
+                    "start_time": f"2026-08-20 {8 + index:02d}:00:00",
+                    "end_time": f"2026-08-20 {8 + index:02d}:20:00",
+                    "engaged_seconds": 1_200,
+                    "apps": ["ChatGPT.exe", "Obsidian", "sourceinsight4.exe"],
+                    "topic": f"工作片段 {index + 1}：很长的标题用于验证右侧信息不会重叠",
+                }
+                for index in range(episode_count)
+            ]
+        )
+
+        for width, height in ((1280, 720), (1600, 900), (1706, 910)):
+            window.resize(width, height)
+            app.processEvents()
+
+            rows = page.work_episode_widget._row_widgets
+            assert len(rows) == episode_count
+            assert all(row.height() == 72 for row in rows)
+            expected_height = episode_count * 72 + max(0, episode_count - 1) * 6
+            assert page.work_episode_widget.height() == expected_height
+            assert page.focus_axis.height() == 28
+            assert abs(
+                page.focus_timeline_card.geometry().bottom()
+                - page.daily_goals_card.geometry().bottom()
+            ) <= 2
+
+            for row in rows:
+                for object_name in ("workEpisodeTime", "workEpisodeDuration"):
+                    label = row.findChild(QLabel, object_name)
+                    assert label is not None
+                    assert label.geometry().right() <= row.contentsRect().right()
+                    assert label.textFormat() == Qt.PlainText
 
     window.dashboard_refresh.shutdown(timeout_ms=1_000)
     window.deleteLater()

@@ -407,7 +407,8 @@ class TodayOverviewPage(QWidget):
 
         self.session_top3_widget = WorkEpisodeListWidget()
         self.work_episode_widget = self.session_top3_widget
-        layout.addWidget(self.session_top3_widget, 1)
+        layout.addWidget(self.session_top3_widget, 0, Qt.AlignTop)
+        layout.addStretch(1)
         return card
 
     def apply_snapshot(self, snapshot: dict[str, object]) -> None:

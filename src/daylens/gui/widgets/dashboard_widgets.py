@@ -157,7 +157,7 @@ class FocusTimelineBarWidget(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._minute_colors = [COLORS["timeline_idle"]] * 1440
-        self.setFixedHeight(32)
+        self.setFixedHeight(28)
 
     def set_minutes(self, minute_colors: list[str]) -> None:
         if len(minute_colors) == 1440:
