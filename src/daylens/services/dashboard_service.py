@@ -28,6 +28,7 @@ THIRTY_DAY_METRIC_BREAK_NOTICE = (
 )
 
 RHYTHM_CONTINUITY_GAP_SECONDS = 30
+RHYTHM_HISTORY_START_DATE = date(2026, 8, 13)
 
 
 def _rolling_date_strings(end_date: date, days: int) -> list[str]:
@@ -230,6 +231,42 @@ def _trusted_work_seconds(row: dict | None) -> int | None:
     ):
         return None
     return parse_nonnegative_int(row.get("work_engaged_seconds"))
+
+
+def _rhythm_display_value(
+    row: dict | None,
+    day: date,
+    *,
+    history_start: date,
+) -> tuple[int | None, str]:
+    """Return a visible rhythm value without treating legacy data as trusted."""
+    if day < history_start or row is None or not _day_has_metric_data(row):
+        return None, "missing"
+    if any(
+        (parse_nonnegative_int(row.get(field)) or 0) > 0
+        for field in (
+            "session_anomaly_count",
+            "legacy_log_anomaly_count",
+            "anomaly_count",
+        )
+    ):
+        return None, "missing"
+    trusted = _trusted_work_seconds(row)
+    if trusted is not None:
+        return trusted, "current"
+    metric_versions = {
+        str(version or "")
+        for version in (row.get("metric_versions") or [])
+        if str(version or "")
+    }
+    if "legacy" not in metric_versions and (
+        parse_nonnegative_int(row.get("legacy_session_count")) or 0
+    ) <= 0:
+        return None, "missing"
+    legacy_value = parse_nonnegative_int(row.get("work_seconds"))
+    if legacy_value is None:
+        return None, "missing"
+    return legacy_value, "legacy"
 
 
 def _classification_versions(daily_rows: list[dict]) -> set[str]:
@@ -503,14 +540,34 @@ def _build_seven_day_rhythm(
     dates = [end - timedelta(days=offset) for offset in reversed(range(7))]
     prior = [dates[0] - timedelta(days=offset) for offset in reversed(range(1, 8))]
     row_map = _daily_row_map(daily_rows)
-    values = [_trusted_work_seconds(row_map.get(day.isoformat())) for day in dates]
+    history_start = (
+        RHYTHM_HISTORY_START_DATE
+        if captured_now.date() >= RHYTHM_HISTORY_START_DATE
+        else date.min
+    )
+    display_points = [
+        _rhythm_display_value(
+            row_map.get(day.isoformat()),
+            day,
+            history_start=history_start,
+        )
+        for day in dates
+    ]
+    values = [point[0] for point in display_points]
+    value_kinds = [point[1] for point in display_points]
     prior_values = [_trusted_work_seconds(row_map.get(day.isoformat())) for day in prior]
     weekday_order = sorted(range(len(dates)), key=lambda index: dates[index].weekday())
     display_dates = [dates[index] for index in weekday_order]
     display_values = [values[index] for index in weekday_order]
+    display_kinds = [value_kinds[index] for index in weekday_order]
     valid = [value for value in values if value is not None]
+    trusted_valid = [
+        int(value)
+        for value, kind in zip(values, value_kinds)
+        if value is not None and kind == "current"
+    ]
     valid_prior = [value for value in prior_values if value is not None]
-    comparable = comparison_allowed and len(valid) >= 3 and len(valid_prior) >= 3
+    comparable = comparison_allowed and len(trusted_valid) >= 3 and len(valid_prior) >= 3
     average = round(sum(valid) / len(valid)) if valid else 0
     prior_average = round(sum(valid_prior) / len(valid_prior)) if valid_prior else 0
     best_display_index = max(
@@ -536,6 +593,7 @@ def _build_seven_day_rhythm(
             "kind": "bars",
             "labels": [_weekday_label(day) for day in display_dates],
             "values": display_values,
+            "value_kinds": display_kinds,
             "average_seconds": average if valid else None,
         },
         "metrics": [
@@ -548,7 +606,16 @@ def _build_seven_day_rhythm(
 
 def _build_thirty_day_rhythm(captured_now: datetime, daily_rows: list[dict]) -> dict[str, object]:
     end = captured_now.date() - timedelta(days=1)
-    dates = [end - timedelta(days=offset) for offset in reversed(range(30))]
+    rolling_start = end - timedelta(days=29)
+    start = (
+        max(rolling_start, RHYTHM_HISTORY_START_DATE)
+        if captured_now.date() >= RHYTHM_HISTORY_START_DATE
+        else rolling_start
+    )
+    dates = [
+        start + timedelta(days=offset)
+        for offset in range(max(0, (end - start).days + 1))
+    ]
     row_map = _daily_row_map(daily_rows)
     weeks: list[list[date]] = []
     for day in dates:
@@ -557,11 +624,30 @@ def _build_thirty_day_rhythm(captured_now: datetime, daily_rows: list[dict]) -> 
         weeks[-1].append(day)
     labels: list[str] = []
     values: list[int | None] = []
+    value_kinds: list[str] = []
+    show_partial_weeks = captured_now.date() >= RHYTHM_HISTORY_START_DATE
     for week in weeks:
-        trusted = [_trusted_work_seconds(row_map.get(day.isoformat())) for day in week]
-        valid = [value for value in trusted if value is not None]
+        points = [
+            _rhythm_display_value(
+                row_map.get(day.isoformat()),
+                day,
+                history_start=start,
+            )
+            for day in week
+        ]
+        valid = [int(value) for value, _kind in points if value is not None]
+        kinds = [kind for value, kind in points if value is not None]
         labels.append(f"{week[0].month}/{week[0].day}-{week[-1].month}/{week[-1].day}")
-        values.append(round(sum(valid) / len(valid)) if len(valid) >= 4 else None)
+        visible = bool(valid) and (show_partial_weeks or len(valid) >= 4)
+        values.append(round(sum(valid) / len(valid)) if visible else None)
+        if not visible:
+            value_kinds.append("missing")
+        elif "legacy" in kinds:
+            value_kinds.append("legacy")
+        elif len(valid) < 4:
+            value_kinds.append("partial")
+        else:
+            value_kinds.append("current")
     valid_weeks = [(index, value) for index, value in enumerate(values) if value is not None]
     weekly_average = round(sum(int(value) for _, value in valid_weeks) / len(valid_weeks)) if valid_weeks else 0
     best = max(valid_weeks, key=lambda item: int(item[1])) if valid_weeks else None
@@ -580,7 +666,12 @@ def _build_thirty_day_rhythm(captured_now: datetime, daily_rows: list[dict]) -> 
         "status": {"label": "可比较" if recent_delta is not None else "数据积累中", "kind": "baseline" if recent_delta is not None else "waiting"},
         "conclusion": f"{dates[0]:%m月%d日}—{dates[-1]:%m月%d日}，完整周日均参与{_duration_short(weekly_average)}" if valid_weeks else "完整周数据仍在积累",
         "comparison": {"comparable": recent_delta is not None, "delta_seconds": recent_delta},
-        "chart": {"kind": "weekly", "labels": labels, "values": values},
+        "chart": {
+            "kind": "weekly",
+            "labels": labels,
+            "values": values,
+            "value_kinds": value_kinds,
+        },
         "metrics": [
             {"label": "周均参与", "value": _duration_short(weekly_average), "delta": ""},
             {"label": "最佳一周", "value": labels[best[0]] if best else "--", "delta": _duration_short(int(best[1])) if best else ""},
@@ -638,7 +729,7 @@ def build_rhythm_snapshot(
         len(classification_versions) > 1
         or has_session_classification_break
     )
-    if classification_break:
+    if classification_break and captured_now.date() < RHYTHM_HISTORY_START_DATE:
         latest_row = max(
             (row for row in daily_rows if _day_has_metric_data(row)),
             key=lambda row: str(row.get("date", "") or ""),
@@ -687,7 +778,19 @@ def build_rhythm_snapshot(
                 "comparable": False,
                 "delta_seconds": None,
             }
-        if classification_break:
+        if (
+            captured_now.date() >= RHYTHM_HISTORY_START_DATE
+            and (
+                _metric_break(daily_rows)
+                or has_session_metric_break
+                or classification_break
+            )
+        ):
+            for mode in ("7d", "30d"):
+                result[mode]["conclusion"] = (
+                    "8月13日起记录已显示，灰色为旧口径或不完整数据"
+                )
+        elif classification_break:
             for mode in ("7d", "30d"):
                 result[mode]["conclusion"] = "分类规则已变化，仅展示当前规则记录"
     return result

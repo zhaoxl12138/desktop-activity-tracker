@@ -86,6 +86,24 @@ def test_rhythm_comparison_card_switches_modes_without_category_legend():
     app.processEvents()
 
 
+def test_rhythm_canvas_marks_legacy_and_partial_values_gray():
+    _app()
+    canvas = dashboard_widgets._RhythmCanvas()
+    canvas.set_data(
+        {
+            "kind": "bars",
+            "values": [3_600, 2_400, 1_800],
+            "value_kinds": ["current", "legacy", "partial"],
+        }
+    )
+
+    assert canvas._value_color(0).name() == dashboard_widgets.QColor(
+        dashboard_widgets.COLORS["primary"]
+    ).name()
+    assert canvas._value_color(1).name() == dashboard_widgets.QColor("#7792ae").name()
+    assert canvas._value_color(2).name() == dashboard_widgets.QColor("#7792ae").name()
+
+
 def test_rhythm_comparison_card_falls_back_for_legacy_snapshot():
     app = _app()
     card_type = getattr(dashboard_widgets, "RhythmComparisonCard", None)

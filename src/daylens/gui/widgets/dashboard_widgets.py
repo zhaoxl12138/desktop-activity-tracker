@@ -1186,6 +1186,11 @@ class _RhythmCanvas(QWidget):
         self._state = "chart" if any(value is not None for value in (values or [])) else "empty"
         self.update()
 
+    def _value_color(self, index: int) -> QColor:
+        kinds = list(self._data.get("value_kinds", []) or [])
+        kind = str(kinds[index]) if index < len(kinds) else "current"
+        return QColor(COLORS["primary"] if kind == "current" else "#7792ae")
+
     @staticmethod
     def _segments(values: list) -> list[list[tuple[int, float]]]:
         result: list[list[tuple[int, float]]] = []
@@ -1259,10 +1264,10 @@ class _RhythmCanvas(QWidget):
         values = list(self._data.get("values", []))
         width = chart.width() / max(len(values), 1)
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(COLORS["primary"]))
         for index, value in enumerate(values):
             if value is None:
                 continue
+            painter.setBrush(self._value_color(index))
             height = float(value) / y_max * chart.height()
             painter.drawRoundedRect(QRectF(chart.left() + index * width + width * 0.2, chart.bottom() - height, width * 0.6, height), 3, 3)
         average = self._data.get("average_seconds")
@@ -1272,7 +1277,33 @@ class _RhythmCanvas(QWidget):
             painter.drawLine(QPointF(chart.left(), y), QPointF(chart.right(), y))
 
     def _draw_weekly(self, painter: QPainter, chart: QRectF, y_max: float) -> None:
-        self._draw_line(painter, chart, list(self._data.get("values", [])), y_max, QColor(COLORS["primary"]), Qt.SolidLine, 2.5)
+        values = list(self._data.get("values", []))
+        for index in range(1, len(values)):
+            previous = values[index - 1]
+            current = values[index]
+            if previous is None or current is None:
+                continue
+            color = (
+                QColor(COLORS["primary"])
+                if self._value_color(index - 1) == QColor(COLORS["primary"])
+                and self._value_color(index) == QColor(COLORS["primary"])
+                else QColor("#7792ae")
+            )
+            painter.setPen(QPen(color, 2.5, Qt.SolidLine))
+            painter.drawLine(
+                self._point(chart, index - 1, len(values), float(previous), y_max),
+                self._point(chart, index, len(values), float(current), y_max),
+            )
+        painter.setPen(Qt.NoPen)
+        for index, value in enumerate(values):
+            if value is None:
+                continue
+            painter.setBrush(self._value_color(index))
+            painter.drawEllipse(
+                self._point(chart, index, len(values), float(value), y_max),
+                3,
+                3,
+            )
 
     def _draw_line(self, painter: QPainter, chart: QRectF, values: list, y_max: float, color: QColor, style, width: float) -> None:
         for segment in self._segments(values):

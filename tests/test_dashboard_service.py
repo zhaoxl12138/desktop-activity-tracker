@@ -326,6 +326,54 @@ def test_rhythm_classification_break_only_keeps_latest_version_points():
     assert "仅展示当前规则记录" in rhythm["30d"]["conclusion"]
 
 
+def test_rhythm_keeps_all_recorded_values_visible_from_august_thirteenth():
+    captured = datetime(2026, 8, 20, 10, 0)
+    daily = []
+    for day_number in range(12, 20):
+        date_str = f"2026-08-{day_number:02d}"
+        row = _trusted_rhythm_day(date_str, day_number * 100)
+        row["work_seconds"] = day_number * 100
+        if day_number in {15, 19}:
+            row["work_engaged_seconds"] = 0
+            row["engaged_seconds"] = 0
+            row["metric_versions"] = ["legacy"]
+            row["classification_versions"] = ["legacy"]
+            row["legacy_session_count"] = 1
+        elif day_number == 16:
+            row["metric_versions"] = ["attention-v1", "legacy"]
+            row["classification_versions"] = ["rules-a", "legacy"]
+            row["legacy_session_count"] = 1
+        daily.append(row)
+
+    rhythm = dashboard_service.build_rhythm_snapshot(
+        captured_now=captured,
+        sessions=[],
+        daily_rows=daily,
+        query_failed=False,
+    )
+
+    seven = rhythm["7d"]
+    assert seven["chart"]["values"] == [1700, 1800, 1900, 1300, 1400, 1500, 1600]
+    assert seven["chart"]["value_kinds"] == [
+        "current",
+        "current",
+        "legacy",
+        "current",
+        "current",
+        "legacy",
+        "legacy",
+    ]
+    assert seven["comparison"]["comparable"] is False
+    assert seven["status"]["label"] == "口径已变化"
+
+    thirty = rhythm["30d"]
+    assert thirty["date_range"] == ["2026-08-13", "2026-08-19"]
+    assert thirty["chart"]["values"] == [1450, 1800]
+    assert thirty["chart"]["value_kinds"] == ["legacy", "legacy"]
+    assert thirty["comparison"]["comparable"] is False
+    assert "8月13日起" in thirty["conclusion"]
+
+
 def test_rhythm_today_baseline_is_clipped_to_the_same_time_of_day():
     today = date(2026, 8, 12)
     baseline_days = [
