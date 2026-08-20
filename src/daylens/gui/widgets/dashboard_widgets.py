@@ -2316,16 +2316,30 @@ class WorkEpisodeListWidget(QFrame):
 
     MAX_ROWS = 5
     MIN_DISPLAY_SECONDS = 5 * 60
+    ROW_HEIGHT = 72
+    ROW_SPACING = 6
+    EMPTY_HEIGHT = 34
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("workEpisodeList")
         self.setStyleSheet("QFrame#workEpisodeList { background: transparent; border: none; }")
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._episodes: list[dict] = []
         self._row_widgets: list[QWidget] = []
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
-        self._layout.setSpacing(4)
+        self._layout.setSpacing(self.ROW_SPACING)
+
+    def _set_content_height(self, row_count: int) -> None:
+        if row_count <= 0:
+            self.setFixedHeight(self.EMPTY_HEIGHT)
+            return
+        visible_rows = min(row_count, self.MAX_ROWS)
+        self.setFixedHeight(
+            visible_rows * self.ROW_HEIGHT
+            + max(0, visible_rows - 1) * self.ROW_SPACING
+        )
 
     def set_episodes(self, episodes: list[dict]) -> None:
         for row in self._row_widgets:
@@ -2351,36 +2365,60 @@ class WorkEpisodeListWidget(QFrame):
             empty.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']}; padding: 8px 0;")
             self._layout.addWidget(empty)
             self._row_widgets.append(empty)
+            self._set_content_height(0)
             return
         for episode in self._episodes[: self.MAX_ROWS]:
             row = self._build_row(episode)
             self._layout.addWidget(row)
             self._row_widgets.append(row)
+        self._set_content_height(len(self._row_widgets))
 
     def _build_row(self, episode: dict) -> QFrame:
         row = QFrame()
         row.setObjectName("workEpisodeRow")
+        row.setFixedHeight(self.ROW_HEIGHT)
         row.setStyleSheet(
             f"QFrame#workEpisodeRow {{ background: {COLORS['panel_bg_alt']}; "
-            f"border: 1px solid {COLORS['border']}; border-radius: 8px; }}"
+            f"border: 1px solid {COLORS['border']}; border-radius: 8px; }} "
+            f"QFrame#workEpisodeRow:hover {{ background: {COLORS['card_bg_alt']}; }}"
         )
         layout = QHBoxLayout(row)
-        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setContentsMargins(0, 7, 12, 7)
         layout.setSpacing(10)
+
+        accent = QFrame()
+        accent.setObjectName("workEpisodeAccent")
+        accent.setFixedWidth(3)
+        accent.setStyleSheet(
+            f"QFrame#workEpisodeAccent {{ background: {COLORS['coding_green']}; "
+            "border: none; border-radius: 1px; }"
+        )
+        layout.addWidget(accent)
 
         text_box = QWidget()
         text_layout = QVBoxLayout(text_box)
         text_layout.setContentsMargins(0, 0, 0, 0)
-        text_layout.setSpacing(1)
-        topic = ElidedLabel(str(episode.get("topic", "") or "未命名工作片段"))
+        text_layout.setSpacing(2)
+        topic_text = str(episode.get("topic", "") or "未命名工作片段")
+        topic = ElidedLabel(topic_text)
         topic.setObjectName("workEpisodeTopic")
         topic.setTextFormat(Qt.PlainText)
         topic.setStyleSheet(f"font-size: 13px; font-weight: 800; color: {COLORS['text']};")
-        apps = " / ".join(str(app) for app in episode.get("apps", []) if str(app))
-        app_label = ElidedLabel(apps)
+        app_names = [
+            str(app).strip()
+            for app in episode.get("apps", [])
+            if str(app).strip()
+        ]
+        apps_text = " / ".join(app_names)
+        app_label = ElidedLabel(apps_text)
         app_label.setObjectName("workEpisodeApps")
         app_label.setTextFormat(Qt.PlainText)
         app_label.setStyleSheet(f"font-size: 11px; color: {COLORS['text_secondary']};")
+        duplicate_single_app = (
+            len(app_names) == 1
+            and app_names[0].casefold() == topic_text.strip().casefold()
+        )
+        app_label.setVisible(bool(apps_text) and not duplicate_single_app)
         text_layout.addWidget(topic)
         text_layout.addWidget(app_label)
         layout.addWidget(text_box, 1)
@@ -2388,7 +2426,7 @@ class WorkEpisodeListWidget(QFrame):
         meta_box = QWidget()
         meta_layout = QVBoxLayout(meta_box)
         meta_layout.setContentsMargins(0, 0, 0, 0)
-        meta_layout.setSpacing(1)
+        meta_layout.setSpacing(2)
         start = str(episode.get("start_time", "") or "")
         end = str(episode.get("end_time", "") or "")
         time_label = QLabel(f"{start[11:16]}–{end[11:16]}")

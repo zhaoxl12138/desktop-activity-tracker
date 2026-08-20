@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtWidgets import QApplication, QFrame, QLabel
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -401,6 +401,62 @@ def test_work_episode_widget_renders_topic_apps_and_participation():
     assert "font-size: 12px" in duration_label.styleSheet()
     assert "font-weight: 800" in duration_label.styleSheet()
     assert dashboard_widgets.COLORS["primary"] in duration_label.styleSheet()
+    widget.deleteLater()
+    app.processEvents()
+
+
+def test_work_episode_widget_uses_compact_accented_rows_and_hides_duplicate_app():
+    app = _app()
+    widget = dashboard_widgets.WorkEpisodeListWidget()
+    widget.set_episodes(
+        [
+            {
+                "start_time": "2026-08-20 08:22:00",
+                "end_time": "2026-08-20 08:41:00",
+                "topic": "ChatGPT.exe",
+                "apps": ["ChatGPT.exe"],
+                "engaged_seconds": 615,
+            }
+        ]
+    )
+    widget.show()
+    app.processEvents()
+
+    row = widget._row_widgets[0]
+    accent = row.findChild(QFrame, "workEpisodeAccent")
+    apps = row.findChild(QLabel, "workEpisodeApps")
+    assert row.height() == 72
+    assert accent is not None and accent.width() == 3
+    assert dashboard_widgets.COLORS["coding_green"] in accent.styleSheet()
+    assert apps is not None and apps.isHidden()
+    assert widget.height() == 72
+
+    widget.deleteLater()
+    app.processEvents()
+
+
+def test_work_episode_widget_keeps_distinct_multi_app_chain():
+    app = _app()
+    widget = dashboard_widgets.WorkEpisodeListWidget()
+    widget.set_episodes(
+        [
+            {
+                "start_time": "2026-08-20 09:00:00",
+                "end_time": "2026-08-20 09:20:00",
+                "topic": "整理设计方案",
+                "apps": ["Obsidian", "ChatGPT.exe"],
+                "engaged_seconds": 900,
+            }
+        ]
+    )
+    widget.show()
+    app.processEvents()
+
+    apps = widget._row_widgets[0].findChild(QLabel, "workEpisodeApps")
+    assert apps is not None
+    assert apps.text() == "Obsidian / ChatGPT.exe"
+    assert apps.isVisible()
+
     widget.deleteLater()
     app.processEvents()
 
