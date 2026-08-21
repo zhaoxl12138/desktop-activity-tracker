@@ -34,12 +34,55 @@ def test_duplicate_launch_does_not_reactivate_already_foreground_window(monkeypa
         def SetForegroundWindow(self, hwnd):
             self.calls.append(("foreground", hwnd))
 
+        def BringWindowToTop(self, hwnd):
+            self.calls.append(("top", hwnd))
+
     fake_user32 = FakeUser32()
     monkeypatch.setattr(ctypes.windll, "user32", fake_user32, raising=False)
 
     gui_bootstrap._activate_existing_window()
 
     assert fake_user32.calls == []
+
+
+def test_duplicate_launch_raises_visible_background_window_without_focus_flash(monkeypatch):
+    from daylens.services import gui_bootstrap
+
+    class FindWindow:
+        restype = None
+
+        def __call__(self, _class_name, _window_title):
+            return 42
+
+    class FakeUser32:
+        def __init__(self):
+            self.FindWindowW = FindWindow()
+            self.calls = []
+
+        def IsWindowVisible(self, _hwnd):
+            return True
+
+        def IsIconic(self, _hwnd):
+            return False
+
+        def GetForegroundWindow(self):
+            return 99
+
+        def BringWindowToTop(self, hwnd):
+            self.calls.append(("top", hwnd))
+
+        def ShowWindow(self, hwnd, command):
+            self.calls.append(("show", hwnd, command))
+
+        def SetForegroundWindow(self, hwnd):
+            self.calls.append(("foreground", hwnd))
+
+    fake_user32 = FakeUser32()
+    monkeypatch.setattr(ctypes.windll, "user32", fake_user32, raising=False)
+
+    gui_bootstrap._activate_existing_window()
+
+    assert fake_user32.calls == [("top", 42)]
 
 
 def test_second_gui_launch_activates_existing_window(monkeypatch):

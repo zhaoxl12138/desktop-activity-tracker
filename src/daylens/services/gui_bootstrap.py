@@ -39,7 +39,7 @@ def auto_scan_and_save_rules(config: dict, db_path: str) -> None:
 
 
 def _activate_existing_window() -> None:
-    """Bring the existing DayLens window to the foreground on duplicate launch."""
+    """Surface an existing DayLens window without forcing a focus flash."""
     import ctypes
     from ctypes import wintypes
 
@@ -51,8 +51,9 @@ def _activate_existing_window() -> None:
         minimized = bool(user32.IsIconic(hwnd))
         if minimized or not visible:
             user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-        if user32.GetForegroundWindow() != hwnd:
             user32.SetForegroundWindow(hwnd)
+        elif user32.GetForegroundWindow() != hwnd:
+            user32.BringWindowToTop(hwnd)
     else:
         user32.MessageBoxW(0, DUPLICATE_INSTANCE_MESSAGE, "DayLens", 0x40)
 
