@@ -47,8 +47,12 @@ def _activate_existing_window() -> None:
     user32.FindWindowW.restype = wintypes.HWND
     hwnd = user32.FindWindowW(None, "DayLens")
     if hwnd:
-        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-        user32.SetForegroundWindow(hwnd)
+        visible = bool(user32.IsWindowVisible(hwnd))
+        minimized = bool(user32.IsIconic(hwnd))
+        if minimized or not visible:
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        if user32.GetForegroundWindow() != hwnd:
+            user32.SetForegroundWindow(hwnd)
     else:
         user32.MessageBoxW(0, DUPLICATE_INSTANCE_MESSAGE, "DayLens", 0x40)
 
