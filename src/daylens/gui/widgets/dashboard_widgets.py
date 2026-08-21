@@ -2456,41 +2456,113 @@ class WorkEpisodeListWidget(QFrame):
 class DistributionLegend(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
+        # The legend is redrawn while the main window is being restored and
+        # resized.  Keep its child surfaces transparent so the global QWidget
+        # background cannot flash through the card's backing store.
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAutoFillBackground(False)
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(10)
         self._rows: list[QWidget] = []
+        self._row_parts: list[dict[str, QWidget]] = []
+        self._items_signature: tuple[tuple[tuple[str, int, str], ...], int] | None = None
 
     def set_items(self, items: list[tuple[str, int, str]], total_seconds: int) -> None:
-        while self._rows:
-            row = self._rows.pop()
-            self.layout.removeWidget(row)
-            row.deleteLater()
-
         total = max(1, total_seconds)
-        for name, seconds, color in items:
-            row = QWidget()
-            row_layout = QHBoxLayout(row)
-            row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setSpacing(8)
+        normalized = tuple(
+            (str(name), max(0, int(seconds)), str(color))
+            for name, seconds, color in items
+        )
+        signature = (normalized, total)
+        if signature == self._items_signature:
+            return
+        self._items_signature = signature
 
-            icon = QLabel("●")
-            icon.setFixedWidth(16)
-            icon.setStyleSheet(f"color: {color}; font-size: 14px; font-weight: 700;")
-            row_layout.addWidget(icon)
+        # Batch structural changes.  In particular, do not expose the empty
+        # intermediate layout while the window is being restored from the
+        # taskbar or rapidly resized.
+        self.setUpdatesEnabled(False)
+        try:
+            while len(self._rows) > len(normalized):
+                row = self._rows.pop()
+                self._row_parts.pop()
+                self.layout.removeWidget(row)
+                row.deleteLater()
 
-            name_label = ElidedLabel(name)
-            name_label.setMinimumWidth(72)
-            name_label.setStyleSheet(
-                f"font-size: 14px; font-weight: 700; color: {COLORS['text']};"
-            )
-            row_layout.addWidget(name_label)
+            while len(self._rows) < len(normalized):
+                row, parts = self._build_row()
+                self.layout.addWidget(row)
+                self._rows.append(row)
+                self._row_parts.append(parts)
 
-            bar = QProgressBar()
-            bar.setTextVisible(False)
-            bar.setRange(0, 100)
-            bar.setValue(int(round(seconds / total * 100)))
-            bar.setFixedHeight(8)
+            for parts, (name, seconds, color) in zip(self._row_parts, normalized):
+                self._update_row(parts, name, seconds, color, total)
+        finally:
+            self.setUpdatesEnabled(True)
+            self.update()
+
+    def _build_row(self) -> tuple[QWidget, dict[str, QWidget]]:
+        row = QWidget()
+        row.setAttribute(Qt.WA_TranslucentBackground)
+        row.setStyleSheet("background: transparent;")
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(8)
+
+        icon = QLabel("●")
+        icon.setFixedWidth(16)
+        row_layout.addWidget(icon)
+
+        name_label = ElidedLabel()
+        name_label.setMinimumWidth(72)
+        row_layout.addWidget(name_label)
+
+        bar = QProgressBar()
+        bar.setTextVisible(False)
+        bar.setRange(0, 100)
+        bar.setFixedHeight(8)
+        bar.setFocusPolicy(Qt.NoFocus)
+        bar.setProperty("_daylens_distribution_color", "")
+        row_layout.addWidget(bar, 1)
+
+        time_label = QLabel()
+        time_label.setFixedWidth(60)
+        time_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        row_layout.addWidget(time_label)
+
+        pct_label = QLabel()
+        pct_label.setFixedWidth(36)
+        pct_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        row_layout.addWidget(pct_label)
+
+        return row, {
+            "icon": icon,
+            "name": name_label,
+            "bar": bar,
+            "time": time_label,
+            "pct": pct_label,
+        }
+
+    @staticmethod
+    def _update_row(
+        parts: dict[str, QWidget],
+        name: str,
+        seconds: int,
+        color: str,
+        total: int,
+    ) -> None:
+        pct = int(round(seconds / total * 100))
+        icon = parts["icon"]
+        icon.setStyleSheet(f"color: {color}; font-size: 14px; font-weight: 700;")
+        name_label = parts["name"]
+        name_label.setText(name)
+        name_label.setStyleSheet(
+            f"font-size: 14px; font-weight: 700; color: {COLORS['text']};"
+        )
+        bar = parts["bar"]
+        bar.setValue(pct)
+        if bar.property("_daylens_distribution_color") != color:
             bar.setStyleSheet(f"""
                 QProgressBar {{
                     background: {COLORS['panel_bg_alt']};
@@ -2502,26 +2574,18 @@ class DistributionLegend(QWidget):
                     border-radius: 4px;
                 }}
             """)
-            row_layout.addWidget(bar, 1)
+            bar.setProperty("_daylens_distribution_color", color)
+        time_label = parts["time"]
+        time_label.setText(fmt_seconds(seconds))
+        time_label.setStyleSheet(
+            f"font-size: 14px; color: {COLORS['text']}; font-weight: 700;"
+        )
+        pct_label = parts["pct"]
+        pct_label.setText(f"{pct}%")
+        pct_label.setStyleSheet(
+            f"font-size: 13px; color: {COLORS['text_secondary']}; font-weight: 600;"
+        )
 
-            time_label = QLabel(fmt_seconds(seconds))
-            time_label.setFixedWidth(60)
-            time_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            time_label.setStyleSheet(
-                f"font-size: 14px; color: {COLORS['text']}; font-weight: 700;"
-            )
-            row_layout.addWidget(time_label)
-
-            pct_label = QLabel(f"{int(round(seconds / total * 100))}%")
-            pct_label.setFixedWidth(36)
-            pct_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            pct_label.setStyleSheet(
-                f"font-size: 13px; color: {COLORS['text_secondary']}; font-weight: 600;"
-            )
-            row_layout.addWidget(pct_label)
-
-            self.layout.addWidget(row)
-            self._rows.append(row)
 
 def _timeline_duration_text(session: dict) -> str:
     seconds = (

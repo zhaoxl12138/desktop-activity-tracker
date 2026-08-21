@@ -131,6 +131,42 @@ def test_rhythm_comparison_card_falls_back_for_legacy_snapshot():
     app.processEvents()
 
 
+def test_distribution_legend_updates_rows_in_place_without_focusable_flash_widgets():
+    app = _app()
+    legend = dashboard_widgets.DistributionLegend()
+    items = [
+        ("工作学习", 120, dashboard_widgets.COLORS["coding_green"]),
+        ("娱乐休闲", 60, dashboard_widgets.COLORS["video_orange"]),
+    ]
+
+    legend.set_items(items, 180)
+    app.processEvents()
+    first_rows = list(legend._rows)
+
+    legend.set_items(items, 180)
+    app.processEvents()
+
+    assert legend._rows == first_rows
+    legend.set_items(
+        [
+            ("工作学习", 121, dashboard_widgets.COLORS["coding_green"]),
+            ("娱乐休闲", 60, dashboard_widgets.COLORS["video_orange"]),
+        ],
+        181,
+    )
+    app.processEvents()
+
+    assert legend._rows == first_rows
+    assert all("background: transparent" in row.styleSheet() for row in legend._rows)
+    assert all(
+        bar.focusPolicy() == Qt.NoFocus
+        for bar in legend.findChildren(dashboard_widgets.QProgressBar)
+    )
+
+    legend.deleteLater()
+    app.processEvents()
+
+
 def test_timeline_widget_expand_and_collapse():
     app = _app()
     widget = TimelineWidget(max_rows=2)
