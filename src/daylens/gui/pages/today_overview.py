@@ -413,6 +413,19 @@ class TodayOverviewPage(QWidget):
 
     def apply_snapshot(self, snapshot: dict[str, object]) -> None:
         """Render an already-loaded dashboard snapshot on the GUI thread."""
+        # The first snapshot normally arrives about one second after the
+        # window is shown.  Commit the whole page as one paint transaction so
+        # layout changes from the initial data load cannot flash through the
+        # card backing store.
+        self.setUpdatesEnabled(False)
+        try:
+            self._apply_snapshot(snapshot)
+        finally:
+            self.setUpdatesEnabled(True)
+            self.update()
+
+    def _apply_snapshot(self, snapshot: dict[str, object]) -> None:
+        """Apply snapshot values while page updates are suspended."""
         self.last_stats_date = str(snapshot.get("today", ""))
         self.last_stats = dict(snapshot.get("stats", {}) or {})
         totals = dict(snapshot.get("totals", {}) or {})

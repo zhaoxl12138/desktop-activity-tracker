@@ -264,9 +264,19 @@ def test_today_overview_applies_old_and_trusted_snapshots_safely():
         assert window.dashboard_refresh.shutdown(timeout_ms=1_000) is True
         page = window.pages["today"]
 
+        observed_update_states = []
+        original_apply_snapshot = page._apply_snapshot
+
+        def observe_apply_snapshot(payload):
+            observed_update_states.append(page.updatesEnabled())
+            return original_apply_snapshot(payload)
+
+        page._apply_snapshot = observe_apply_snapshot
         page.apply_snapshot(_dashboard_snapshot())
         app.processEvents()
 
+        assert observed_update_states == [False]
+        assert page.updatesEnabled() is True
         assert page.active_status_label.text().startswith("有效 ")
         assert page.passive_status_label.text() == "被动媒体 --"
         assert page.donut_widget._primary_label == "有效时长"
