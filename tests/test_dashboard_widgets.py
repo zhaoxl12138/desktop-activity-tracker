@@ -497,6 +497,47 @@ def test_work_episode_widget_keeps_distinct_multi_app_chain():
     app.processEvents()
 
 
+def test_work_episode_app_label_is_parented_before_visibility_change(monkeypatch):
+    app = _app()
+    visibility_states = []
+    original_set_visible = dashboard_widgets.ElidedLabel.setVisible
+
+    def capture_visibility(label, visible):
+        if label.objectName() == "workEpisodeApps":
+            visibility_states.append(
+                {
+                    "visible": visible,
+                    "parent": label.parent(),
+                    "is_window": label.isWindow(),
+                }
+            )
+        return original_set_visible(label, visible)
+
+    monkeypatch.setattr(
+        dashboard_widgets.ElidedLabel,
+        "setVisible",
+        capture_visibility,
+    )
+    widget = dashboard_widgets.WorkEpisodeListWidget()
+    widget.set_episodes(
+        [
+            {
+                "start_time": "2026-08-24 09:00:00",
+                "end_time": "2026-08-24 09:10:00",
+                "topic": "排查界面闪烁",
+                "apps": ["Codex", "Chrome"],
+                "engaged_seconds": 600,
+            }
+        ]
+    )
+
+    assert visibility_states
+    assert all(state["parent"] is not None for state in visibility_states)
+    assert all(state["is_window"] is False for state in visibility_states)
+    widget.deleteLater()
+    app.processEvents()
+
+
 def test_work_episode_widget_hides_episodes_at_or_below_five_minutes():
     app = _app()
     widget = dashboard_widgets.WorkEpisodeListWidget()

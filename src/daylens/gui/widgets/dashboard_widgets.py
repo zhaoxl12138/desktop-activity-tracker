@@ -2418,9 +2418,12 @@ class WorkEpisodeListWidget(QFrame):
             len(app_names) == 1
             and app_names[0].casefold() == topic_text.strip().casefold()
         )
-        app_label.setVisible(bool(apps_text) and not duplicate_single_app)
         text_layout.addWidget(topic)
         text_layout.addWidget(app_label)
+        # QLayout reparents the label to text_box. Change visibility only
+        # afterwards, otherwise Qt briefly treats the parentless label as a
+        # standalone window during each dashboard refresh.
+        app_label.setVisible(bool(apps_text) and not duplicate_single_app)
         layout.addWidget(text_box, 1)
 
         meta_box = QWidget()
