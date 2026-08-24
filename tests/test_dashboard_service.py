@@ -210,12 +210,15 @@ def test_rhythm_complete_day_and_week_views_preserve_unknown_gaps():
         "8/5", "8/6", "8/7", "8/8", "8/9", "8/10", "8/11"
     ]
     assert seven["chart"]["values"][3] is None  # 2026-08-08 is unknown.
-    assert seven["metrics"][2]["value"] == "6天"
+    assert seven["metrics"][2]["label"] == "总时间"
+    assert seven["metrics"][2]["value"] == "6小时18分钟"
     thirty = rhythm["30d"]
     assert thirty["date_range"] == ["2026-07-13", "2026-08-11"]
     assert thirty["chart"]["kind"] == "bars"
     assert len(thirty["chart"]["labels"]) == 30
     assert thirty["chart"]["values"][26] is None
+    assert thirty["metrics"][2]["label"] == "总时间"
+    assert thirty["metrics"][2]["value"] == "36小时12分钟"
 
 
 def test_rhythm_seven_day_best_day_uses_chronological_date_value():

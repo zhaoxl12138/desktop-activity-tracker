@@ -609,7 +609,7 @@ def _build_seven_day_rhythm(
                     else ""
                 ),
             },
-            {"label": "有效数据", "value": f"{len(valid)}天", "delta": ""},
+            {"label": "总时间", "value": _duration_short(sum(valid)), "delta": ""},
         ],
     }
 
@@ -694,7 +694,7 @@ def _build_thirty_day_rhythm(captured_now: datetime, daily_rows: list[dict]) -> 
                     else ""
                 ),
             },
-            {"label": "记录数据", "value": f"{len(valid)}天", "delta": ""},
+            {"label": "总时间", "value": _duration_short(sum(valid)), "delta": ""},
         ],
     }
 
