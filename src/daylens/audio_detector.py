@@ -11,7 +11,16 @@ import time
 from ctypes import byref, c_float, c_uint32, create_unicode_buffer, POINTER
 
 import psutil
-from comtypes import CLSCTX_ALL, COMMETHOD, GUID, HRESULT, IUnknown
+from comtypes import (
+    CLSCTX_ALL,
+    COINIT_MULTITHREADED,
+    COMMETHOD,
+    CoInitializeEx,
+    CoUninitialize,
+    GUID,
+    HRESULT,
+    IUnknown,
+)
 from pycaw.pycaw import AudioUtilities
 
 try:
@@ -31,6 +40,16 @@ class IAudioMeterInformation(IUnknown):
 _PEAK_THRESHOLD = 0.001  # below this → effectively silent
 
 
+def initialize_audio_com() -> None:
+    """Own a COM apartment on the recording thread."""
+    CoInitializeEx(COINIT_MULTITHREADED)
+
+
+def uninitialize_audio_com() -> None:
+    """Release the recording thread's COM apartment."""
+    CoUninitialize()
+
+
 class AudioDetector:
     """Audio detector using peak meter (actual signal, not session state)."""
 
@@ -42,6 +61,8 @@ class AudioDetector:
         self._voice_last_check: float = 0.0
         self._voice_last_key: tuple[int | None, str] | None = None
         self._voice_cached: bool = False
+        self._microphone_device = None
+        self._microphone_meter = None
 
     @staticmethod
     def _process_tree_pids(pid: int) -> set[int]:
@@ -156,19 +177,45 @@ class AudioDetector:
             return False
         return self._target_owns_microphone(pid, exe_path)
 
-    @staticmethod
-    def _microphone_has_signal() -> bool:
+    def _microphone_has_signal(self) -> bool:
         try:
-            device = AudioUtilities.GetMicrophone()
-            interface = device.Activate(
-                IAudioMeterInformation._iid_,
-                CLSCTX_ALL,
-                None,
-            )
-            meter = ctypes.cast(interface, POINTER(IAudioMeterInformation))
+            meter = self._get_microphone_meter()
             return meter.GetPeakValue() > _PEAK_THRESHOLD
         except Exception:
+            self._release_microphone_meter()
             return False
+
+    def _get_microphone_meter(self):
+        if self._microphone_meter is not None:
+            return self._microphone_meter
+        device = AudioUtilities.GetMicrophone()
+        unknown = device.Activate(
+            IAudioMeterInformation._iid_,
+            CLSCTX_ALL,
+            None,
+        )
+        # QueryInterface owns an independent reference. Avoid ctypes.cast:
+        # two Python COM pointer wrappers around the same unowned reference
+        # can both call Release and crash in _ctypes during collection.
+        meter = unknown.QueryInterface(IAudioMeterInformation)
+        self._microphone_device = device
+        self._microphone_meter = meter
+        return meter
+
+    def _release_microphone_meter(self) -> None:
+        meter = self._microphone_meter
+        device = self._microphone_device
+        self._microphone_meter = None
+        self._microphone_device = None
+        # CPython decrements these COM references immediately on the calling
+        # thread, while its COM apartment is still initialized.
+        del meter
+        del device
+
+    def close(self) -> None:
+        self._release_microphone_meter()
+        self._voice_cached = False
+        self._voice_last_key = None
 
     @classmethod
     def _target_owns_microphone(

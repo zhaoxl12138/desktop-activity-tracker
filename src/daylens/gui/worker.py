@@ -19,9 +19,15 @@ from ..services.session_runtime_service import SessionRuntimeStore
 from ..session_tracker import SessionTracker
 
 try:
-    from ..audio_detector import AudioDetector
+    from ..audio_detector import (
+        AudioDetector,
+        initialize_audio_com,
+        uninitialize_audio_com,
+    )
 except Exception:  # Optional dependency; startup must not fail without it.
     AudioDetector = None
+    initialize_audio_com = None
+    uninitialize_audio_com = None
 
 
 @dataclass(frozen=True)
@@ -274,7 +280,22 @@ class RecordingWorker(QThread):
 
     def run(self):
         self._set_health("starting", error="")
+        audio_detector = None
+        audio_com_initialized = False
         try:
+            if AudioDetector is not None and initialize_audio_com is not None:
+                try:
+                    initialize_audio_com()
+                    audio_com_initialized = True
+                    audio_detector = AudioDetector(
+                        check_interval=self.config.get("tracker", {}).get(
+                            "audio_check_interval_seconds", 3.0
+                        )
+                    )
+                except Exception:
+                    # Recording remains available when Windows audio/COM is
+                    # unavailable; only voice/passive detection is disabled.
+                    audio_detector = None
             clf = classifier.Classifier(self.config_path, self.db_path)
             self._store = SessionRuntimeStore(self.db_path)
             try:
@@ -298,15 +319,7 @@ class RecordingWorker(QThread):
                 on_session_end=self._persist_or_queue,
                 on_flush=self._persist_or_queue,
                 on_session_rewrite=self._rewrite_or_queue,
-                audio_detector=(
-                    AudioDetector(
-                        check_interval=self.config.get("tracker", {}).get(
-                            "audio_check_interval_seconds", 3.0
-                        )
-                    )
-                    if AudioDetector is not None
-                    else None
-                ),
+                audio_detector=audio_detector,
             )
             # Keep the public interval values sourced from the exact tracker config.
             self.sample_interval = tracker_options["sample_interval_seconds"]
@@ -353,7 +366,19 @@ class RecordingWorker(QThread):
             # transferred every unresolved session to the recovery spool.
             self._mark_fatal(error, recoverable=self._recoverable_fatal)
         finally:
-            self._cleanup()
+            try:
+                self._cleanup()
+            finally:
+                if audio_detector is not None:
+                    try:
+                        audio_detector.close()
+                    except Exception:
+                        pass
+                if audio_com_initialized and uninitialize_audio_com is not None:
+                    try:
+                        uninitialize_audio_com()
+                    except Exception:
+                        pass
 
     def _cleanup(self) -> None:
         self._shutdown_deadline = (

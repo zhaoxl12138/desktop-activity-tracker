@@ -228,6 +228,48 @@ def test_worker_sleeps_only_for_remaining_sampling_interval(monkeypatch):
     assert sleeps == [940]
 
 
+def test_worker_owns_audio_com_for_detector_lifetime(monkeypatch):
+    events = []
+    store = FakeStore()
+    _patch_run_dependencies(monkeypatch, store)
+
+    class FakeAudioDetector:
+        def __init__(self, check_interval):
+            events.append(("detector_init", check_interval))
+
+        def close(self):
+            events.append(("detector_close", None))
+
+        def is_playing(self, _pid):
+            return False
+
+        def is_voice_active(self, _pid, _exe_path=""):
+            return False
+
+    monkeypatch.setattr(worker_module, "AudioDetector", FakeAudioDetector)
+    monkeypatch.setattr(
+        worker_module,
+        "initialize_audio_com",
+        lambda: events.append(("com_init", None)),
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "uninitialize_audio_com",
+        lambda: events.append(("com_uninit", None)),
+    )
+    worker = worker_module.RecordingWorker("config.yaml", "usage.db", {})
+    worker._sleep_check = lambda _milliseconds: worker.stop()
+
+    worker.run()
+
+    assert events == [
+        ("com_init", None),
+        ("detector_init", 3.0),
+        ("detector_close", None),
+        ("com_uninit", None),
+    ]
+
+
 def test_worker_rebases_after_full_missed_interval_without_catch_up_loop(
     monkeypatch,
 ):

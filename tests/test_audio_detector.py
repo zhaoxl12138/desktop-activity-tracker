@@ -34,6 +34,19 @@ class _Proc:
         return list(self._children)
 
 
+class _MicrophoneDevice:
+    def __init__(self, meter):
+        self.meter = meter
+        self.activations = 0
+
+    def Activate(self, *_args):
+        self.activations += 1
+        return self
+
+    def QueryInterface(self, _interface):
+        return self.meter
+
+
 def test_missing_target_audio_session_uses_other_process_audio(monkeypatch):
     detector = AudioDetector(check_interval=0)
     monkeypatch.setattr(
@@ -143,3 +156,22 @@ def test_microphone_requires_both_target_ownership_and_input_peak(monkeypatch):
 
     monkeypatch.setattr(detector, "_microphone_has_signal", lambda: False)
     assert detector._microphone_input_active(111, r"C:\\Apps\\WorkVoice.exe") is False
+
+
+def test_microphone_meter_is_reused_and_released_on_close(monkeypatch):
+    detector = AudioDetector(check_interval=0)
+    device = _MicrophoneDevice(_Meter(0.25))
+    monkeypatch.setattr(
+        "daylens.audio_detector.AudioUtilities.GetMicrophone",
+        lambda: device,
+    )
+
+    assert detector._microphone_has_signal() is True
+    assert detector._microphone_has_signal() is True
+    assert device.activations == 1
+    assert detector._microphone_meter is device.meter
+
+    detector.close()
+
+    assert detector._microphone_meter is None
+    assert detector._microphone_device is None
