@@ -395,8 +395,15 @@ class SessionTracker:
         self._provisional_attention.clear()
         self._refresh_rewrite_capacity()
 
-    def _attention_bucket(self, category_key: str, audio_playing: bool) -> str:
+    def _attention_bucket(
+        self,
+        category_key: str,
+        audio_playing: bool,
+        work_voice_active: bool = False,
+    ) -> str:
         if self._persistent_idle <= self.idle_threshold:
+            return "engaged"
+        if _get_domain(category_key) == "work_study" and work_voice_active:
             return "engaged"
         if category_key == "video" and audio_playing:
             return "passive"
@@ -1037,16 +1044,25 @@ class SessionTracker:
             p.get("cat_key", ""),
             p.get("pid", self._last_pid),
         )
+        work_voice_active = self._is_work_voice_active(
+            p.get("cat_key", ""),
+            p.get("pid", self._last_pid),
+            p.get("exe_path", ""),
+        )
         if active:
             self._reset_idle_epoch()
             p["idle_corrected"] = False
         else:
             self._persistent_idle += self.sample_interval
 
-        bucket = self._attention_bucket(p.get("cat_key", ""), audio_playing)
+        bucket = self._attention_bucket(
+            p.get("cat_key", ""),
+            audio_playing,
+            work_voice_active,
+        )
         self._last_attention_state = bucket
         p[f"{bucket}_during_grace"] += self.sample_interval
-        if not active and bucket == "engaged":
+        if not active and bucket == "engaged" and not work_voice_active:
             self._record_provisional_attention(
                 p,
                 p.get("cat_key", ""),
@@ -1084,6 +1100,18 @@ class SessionTracker:
             and self._audio_detector.is_playing(pid)
         )
 
+    def _is_work_voice_active(self, category_key, pid, exe_path) -> bool:
+        if _get_domain(category_key) != "work_study":
+            return False
+        detector = self._audio_detector
+        check_voice = getattr(detector, "is_voice_active", None)
+        if not callable(check_voice):
+            return False
+        try:
+            return bool(check_voice(pid, exe_path or ""))
+        except Exception:
+            return False
+
     def _tick_current(self, idle_seconds, now, hwnd=None):
         if self._current is None:
             return
@@ -1120,9 +1148,15 @@ class SessionTracker:
             self._current.category_key,
             self._last_pid,
         )
+        work_voice_active = self._is_work_voice_active(
+            self._current.category_key,
+            self._last_pid,
+            self._current.exe_path,
+        )
         bucket = self._attention_bucket(
             self._current.category_key,
             audio_playing,
+            work_voice_active,
         )
         self._last_attention_state = bucket
         if bucket == "engaged":
@@ -1131,7 +1165,7 @@ class SessionTracker:
             self._current.passive_seconds += self.sample_interval
         else:
             self._current.idle_seconds += self.sample_interval
-        if not active and bucket == "engaged":
+        if not active and bucket == "engaged" and not work_voice_active:
             self._record_provisional_attention(
                 self._current,
                 self._current.category_key,

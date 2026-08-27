@@ -5,12 +5,19 @@ level. Unlike GetState(), this returns 0.0 when playback is paused even
 if the audio session stays open.
 """
 
+import ctypes
+import os
 import time
-from ctypes import c_float, POINTER
+from ctypes import byref, c_float, c_uint32, create_unicode_buffer, POINTER
 
 import psutil
-from comtypes import COMMETHOD, GUID, HRESULT, IUnknown
+from comtypes import CLSCTX_ALL, COMMETHOD, GUID, HRESULT, IUnknown
 from pycaw.pycaw import AudioUtilities
+
+try:
+    import winreg
+except ImportError:  # pragma: no cover - Windows-only application
+    winreg = None
 
 
 class IAudioMeterInformation(IUnknown):
@@ -32,6 +39,9 @@ class AudioDetector:
         self._last_check: float = 0.0
         self._last_pid: int | None = None
         self._cached: bool = True
+        self._voice_last_check: float = 0.0
+        self._voice_last_key: tuple[int | None, str] | None = None
+        self._voice_cached: bool = False
 
     @staticmethod
     def _process_tree_pids(pid: int) -> set[int]:
@@ -95,3 +105,142 @@ class AudioDetector:
         except Exception:
             return True
         return False
+
+    def is_voice_active(self, pid: int | None, exe_path: str = "") -> bool:
+        """Return whether the target work app is sending or receiving speech.
+
+        Unlike the video detector, this deliberately has no global-audio
+        fallback: background music or a notification must not turn idle work
+        into engaged time.
+        """
+        key = (pid, os.path.normcase(exe_path or ""))
+        now = time.time()
+        if (
+            key == self._voice_last_key
+            and now - self._voice_last_check < self._interval
+        ):
+            return self._voice_cached
+
+        self._voice_last_key = key
+        self._voice_last_check = now
+        self._voice_cached = (
+            self._process_output_active(pid)
+            or self._microphone_input_active(pid, exe_path)
+        )
+        return self._voice_cached
+
+    def _process_output_active(self, pid: int | None) -> bool:
+        if pid is None:
+            return False
+        try:
+            target_pids = self._process_tree_pids(pid)
+            for session in AudioUtilities.GetAllSessions():
+                if session.ProcessId not in target_pids:
+                    continue
+                try:
+                    meter = session._ctl.QueryInterface(IAudioMeterInformation)
+                    if meter.GetPeakValue() > _PEAK_THRESHOLD:
+                        return True
+                except Exception:
+                    continue
+        except Exception:
+            return False
+        return False
+
+    def _microphone_input_active(
+        self,
+        pid: int | None,
+        exe_path: str,
+    ) -> bool:
+        if not self._microphone_has_signal():
+            return False
+        return self._target_owns_microphone(pid, exe_path)
+
+    @staticmethod
+    def _microphone_has_signal() -> bool:
+        try:
+            device = AudioUtilities.GetMicrophone()
+            interface = device.Activate(
+                IAudioMeterInformation._iid_,
+                CLSCTX_ALL,
+                None,
+            )
+            meter = ctypes.cast(interface, POINTER(IAudioMeterInformation))
+            return meter.GetPeakValue() > _PEAK_THRESHOLD
+        except Exception:
+            return False
+
+    @classmethod
+    def _target_owns_microphone(
+        cls,
+        pid: int | None,
+        exe_path: str,
+    ) -> bool:
+        if winreg is None:
+            return False
+
+        identities: set[str] = set()
+        paths: set[str] = set()
+        if exe_path:
+            paths.add(os.path.normcase(os.path.abspath(exe_path)))
+        if pid is not None:
+            for target_pid in cls._process_tree_pids(pid):
+                try:
+                    process = psutil.Process(target_pid)
+                    paths.add(os.path.normcase(process.exe()))
+                except (psutil.Error, OSError, ValueError, TypeError):
+                    pass
+                family = cls._package_family_name(target_pid)
+                if family:
+                    identities.add(family.casefold())
+
+        root_path = (
+            r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager"
+            r"\ConsentStore\microphone"
+        )
+        for family in identities:
+            if cls._microphone_registry_entry_active(root_path, family):
+                return True
+
+        nonpackaged_root = root_path + r"\NonPackaged"
+        for path in paths:
+            encoded = path.replace("\\", "#")
+            if cls._microphone_registry_entry_active(nonpackaged_root, encoded):
+                return True
+        return False
+
+    @staticmethod
+    def _microphone_registry_entry_active(root_path: str, name: str) -> bool:
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, root_path + "\\" + name) as key:
+                start = int(winreg.QueryValueEx(key, "LastUsedTimeStart")[0] or 0)
+                stop = int(winreg.QueryValueEx(key, "LastUsedTimeStop")[0] or 0)
+                return start > 0 and (stop == 0 or start > stop)
+        except (OSError, TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _package_family_name(pid: int) -> str:
+        if os.name != "nt":
+            return ""
+        process = ctypes.windll.kernel32.OpenProcess(0x1000, False, int(pid))
+        if not process:
+            return ""
+        try:
+            length = c_uint32(0)
+            ctypes.windll.kernel32.GetPackageFamilyName(
+                process,
+                byref(length),
+                None,
+            )
+            if not length.value:
+                return ""
+            buffer = create_unicode_buffer(length.value)
+            result = ctypes.windll.kernel32.GetPackageFamilyName(
+                process,
+                byref(length),
+                buffer,
+            )
+            return buffer.value if result == 0 else ""
+        finally:
+            ctypes.windll.kernel32.CloseHandle(process)

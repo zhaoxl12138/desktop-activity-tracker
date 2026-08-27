@@ -52,6 +52,17 @@ class AudioForPid:
         return pid == self.playing_pid
 
 
+class WorkVoiceForPid(AudioForPid):
+    def __init__(self, voice_pid):
+        super().__init__(playing_pid=None)
+        self.voice_pid = voice_pid
+        self.voice_checks = []
+
+    def is_voice_active(self, pid, exe_path=""):
+        self.voice_checks.append((pid, exe_path))
+        return pid == self.voice_pid
+
+
 def _assert_attention_conserved(session):
     assert session.duration_seconds == (
         session.engaged_seconds
@@ -120,6 +131,56 @@ def test_non_video_passive_rule_uses_normal_idle_threshold():
     assert snapshot["attention_state"] == "idle"
     assert snapshot["is_effective"] is False
     assert snapshot["is_user_active"] is False
+
+
+def test_idle_work_voice_counts_as_engaged_without_keyboard_or_mouse():
+    audio = WorkVoiceForPid(10)
+    tracker = _tracker(idle_threshold=1, audio_detector=audio)
+    window = {
+        "process_name": "Code.exe",
+        "window_title": "Voice coding",
+        "exe_path": r"C:\\Apps\\Code.exe",
+        "pid": 10,
+    }
+
+    tracker.tick(0, window)
+    tracker.tick(0, window)
+    snapshot = tracker.tick(0, window)
+    session = tracker.current_session
+
+    assert session.engaged_seconds == 3
+    assert session.passive_seconds == 0
+    assert session.idle_seconds == 0
+    assert session.effective_seconds == 3
+    assert snapshot["attention_state"] == "engaged"
+    assert snapshot["is_effective"] is True
+    assert audio.voice_checks[-1] == (10, r"C:\\Apps\\Code.exe")
+    _assert_attention_conserved(session)
+
+
+def test_background_audio_does_not_keep_idle_work_effective():
+    tracker = _tracker(
+        idle_threshold=1,
+        audio_detector=WorkVoiceForPid(999),
+    )
+    window = {
+        "process_name": "Code.exe",
+        "window_title": "Paused voice coding",
+        "exe_path": r"C:\\Apps\\Code.exe",
+        "pid": 10,
+    }
+
+    tracker.tick(0, window)
+    tracker.tick(0, window)
+    snapshot = tracker.tick(0, window)
+    session = tracker.current_session
+
+    assert session.engaged_seconds == 0
+    assert session.passive_seconds == 0
+    assert session.idle_seconds == 3
+    assert snapshot["attention_state"] == "idle"
+    assert snapshot["is_effective"] is False
+    _assert_attention_conserved(session)
 
 
 def test_active_video_counts_as_engaged_and_snapshot_exposes_versions():
