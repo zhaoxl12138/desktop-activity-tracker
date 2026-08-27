@@ -17,6 +17,35 @@ RELEASE_PREVIOUS_DIR = ROOT / "release_previous"
 SPEC_PATH = ROOT / "DayLens.spec"
 DIST_APP_DIR = DIST_DIR / "DayLens"
 RELEASE_EXE = RELEASE_DIR / "DayLens.exe"
+_QT_SMOKE_ENV = "DAYLENS_QT_SMOKE"
+
+
+def _sanitized_build_environment(source: dict[str, str] | None = None) -> dict[str, str]:
+    """Remove host-agent dependency directories from the PyInstaller PATH."""
+    env = dict(os.environ if source is None else source)
+    path_entries = env.get("PATH", "").split(os.pathsep)
+    env["PATH"] = os.pathsep.join(
+        entry
+        for entry in path_entries
+        if "codex-runtimes" not in entry.casefold()
+    )
+    return env
+
+
+def _validate_dist_runtime() -> None:
+    """Reject app-local Windows UCRT/API-set DLLs that can shadow the OS."""
+    internal = DIST_APP_DIR / "_internal"
+    contaminated = sorted(
+        path.name
+        for path in internal.glob("*.dll")
+        if path.name.casefold() == "ucrtbase.dll"
+        or path.name.casefold().startswith("api-ms-win-")
+    )
+    if contaminated:
+        raise RuntimeError(
+            "Contaminated Windows runtime DLLs in bundle: "
+            + ", ".join(contaminated)
+        )
 
 
 def _stop_running_gracefully() -> None:
@@ -48,20 +77,38 @@ def _stop_running_gracefully() -> None:
 
 
 def _smoke_test(exe_path: Path) -> None:
-    """Start the freshly built executable through its parser and require exit 0."""
+    """Import Qt and initialize its platform plugin in the bundled runtime."""
+    env = dict(os.environ)
+    env[_QT_SMOKE_ENV] = "1"
     subprocess.run(
-        [str(exe_path), "--help"],
+        [str(exe_path)],
         cwd=exe_path.parent,
         capture_output=True,
         timeout=20,
         check=True,
+        env=env,
     )
+
+
+def _remove_directory(path: Path, *, required: bool) -> bool:
+    for _ in range(8):
+        if not path.exists():
+            return True
+        try:
+            shutil.rmtree(path)
+            return True
+        except OSError:
+            time.sleep(0.5)
+    if required:
+        raise OSError(f"Unable to remove release directory: {path}")
+    print(f"[WARN] Old rollback directory retained: {path}")
+    return False
 
 
 def _publish_staging() -> None:
     """Atomically swap the prepared release, retaining the old version for rollback."""
     if RELEASE_PREVIOUS_DIR.exists():
-        shutil.rmtree(RELEASE_PREVIOUS_DIR)
+        _remove_directory(RELEASE_PREVIOUS_DIR, required=True)
     if RELEASE_DIR.exists():
         os.replace(RELEASE_DIR, RELEASE_PREVIOUS_DIR)
     try:
@@ -71,7 +118,7 @@ def _publish_staging() -> None:
             os.replace(RELEASE_PREVIOUS_DIR, RELEASE_DIR)
         raise
     if RELEASE_PREVIOUS_DIR.exists():
-        shutil.rmtree(RELEASE_PREVIOUS_DIR)
+        _remove_directory(RELEASE_PREVIOUS_DIR, required=False)
 
 
 def _copy_dist_to_staging() -> None:
@@ -114,6 +161,7 @@ def build_release() -> None:
         ],
         cwd=ROOT,
         check=True,
+        env=_sanitized_build_environment(),
     )
 
     if not DIST_APP_DIR.exists():
@@ -121,6 +169,8 @@ def build_release() -> None:
 
     if not (DIST_APP_DIR / "DayLens.exe").exists():
         raise FileNotFoundError(f"Missing bundled executable: {DIST_APP_DIR / 'DayLens.exe'}")
+
+    _validate_dist_runtime()
 
     _copy_dist_to_staging()
     staging_exe = RELEASE_STAGING_DIR / "DayLens.exe"

@@ -41,6 +41,17 @@ else:
 configure_console_encoding()
 
 
+def _run_qt_smoke() -> bool:
+    """Exercise the bundled Qt DLLs and platform plugin without app data."""
+    from PySide6.QtGui import QPixmap
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    pixmap = QPixmap(1, 1)
+    app.processEvents()
+    return not pixmap.isNull()
+
+
 def main():
     parser = build_parser()
     args = parser.parse_args()
@@ -67,4 +78,6 @@ def main():
 
 
 if __name__ == "__main__":
+    if os.environ.get("DAYLENS_QT_SMOKE") == "1":
+        raise SystemExit(0 if _run_qt_smoke() else 1)
     main()
