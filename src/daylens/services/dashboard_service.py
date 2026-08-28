@@ -11,7 +11,12 @@ import unicodedata
 
 from .. import database, timeline
 from ..repositories.stats_repository import session_row_is_anomalous
-from ..utils import fmt_seconds, parse_nonnegative_int
+from ..utils import (
+    BROWSER_CATEGORY_KEYS,
+    TOOLS_CATEGORY_KEYS,
+    fmt_seconds,
+    parse_nonnegative_int,
+)
 from .insights_service import select_primary_insight
 from .trusted_metrics_service import (
     REASON_FORMAT_INVALID,
@@ -1167,7 +1172,13 @@ def resolve_display_name(
 
 
 def category_seconds(stats: dict) -> dict[str, int]:
-    totals = {"work": 0, "social": 0, "entertainment": 0, "tools": 0}
+    totals = {
+        "work": 0,
+        "social": 0,
+        "entertainment": 0,
+        "browser": 0,
+        "tools": 0,
+    }
     for item in stats.get("by_category", []):
         seconds = parse_nonnegative_int(item.get("effective_seconds")) or 0
         category_key = item.get("category_key")
@@ -1177,27 +1188,43 @@ def category_seconds(stats: dict) -> dict[str, int]:
             totals["social"] += seconds
         elif category_key in ENTERTAINMENT_KEYS:
             totals["entertainment"] += seconds
-        elif category_key == "tools":
+        elif category_key in BROWSER_CATEGORY_KEYS:
+            totals["browser"] += seconds
+        elif category_key in TOOLS_CATEGORY_KEYS:
             totals["tools"] += seconds
     return totals
 
 
 def build_distribution_sections(stats: dict, effective_seconds: int) -> list[dict[str, object]]:
     category_totals = category_seconds(stats)
-    other_seconds = max(
-        (parse_nonnegative_int(effective_seconds) or 0)
-        - category_totals["work"]
-        - category_totals["social"]
-        - category_totals["entertainment"],
-        0,
-    )
     sections = [
         {"category_key": "work", "label": "工作学习", "seconds": category_totals["work"]},
         {"category_key": "video", "label": "娱乐休闲", "seconds": category_totals["entertainment"]},
         {"category_key": "social", "label": "社交通讯", "seconds": category_totals["social"]},
     ]
-    if other_seconds > 0:
-        sections.append({"category_key": "other", "label": "其他", "seconds": other_seconds})
+    # The fourth row is intentionally dynamic: show the day's leading useful
+    # residual category instead of presenting browser, tools and the true
+    # fallback bucket as one misleading "其他" value.  Dashboard snapshots are
+    # refreshed every five seconds, so this switches naturally whenever the
+    # cumulative leader changes without an additional database query or timer.
+    dynamic_candidates = [
+        {
+            "category_key": "browser_general",
+            "label": "浏览器",
+            "seconds": category_totals["browser"],
+        },
+        {
+            "category_key": "tools",
+            "label": "系统工具",
+            "seconds": category_totals["tools"],
+        },
+    ]
+    dynamic_section = max(
+        dynamic_candidates,
+        key=lambda item: int(item["seconds"]),
+    )
+    if int(dynamic_section["seconds"]) > 0:
+        sections.append(dynamic_section)
     return sections
 
 

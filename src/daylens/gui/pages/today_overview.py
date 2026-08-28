@@ -565,6 +565,8 @@ class TodayOverviewPage(QWidget):
             "work": ui_style.COLORS["coding_green"],
             "video": ui_style.COLORS["video_orange"],
             "social": ui_style.COLORS["social_purple"],
+            "browser_general": ui_style.COLORS["browser_amber"],
+            "tools": ui_style.COLORS["tools_cyan"],
             "other": ui_style.get_category_color("other"),
         }.get(category_key, ui_style.get_category_color("other"))
 

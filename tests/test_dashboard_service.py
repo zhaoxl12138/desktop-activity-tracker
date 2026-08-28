@@ -509,20 +509,62 @@ def test_rhythm_interruption_metric_formats_count_delta():
     assert dashboard_service._count_delta_text(0) == "与平时接近"
 
 
-def test_distribution_sections_exclude_tools_from_primary_breakdown():
+def test_distribution_sections_show_browser_when_it_leads_dynamic_slot():
     stats = {
         "by_category": [
             {"category_key": "coding", "effective_seconds": 7200},
             {"category_key": "social", "effective_seconds": 1200},
             {"category_key": "video", "effective_seconds": 1800},
             {"category_key": "tools", "effective_seconds": 900},
+            {"category_key": "browser_general", "effective_seconds": 1500},
+            {"category_key": "other", "effective_seconds": 600},
         ]
     }
 
-    sections = build_distribution_sections(stats, effective_seconds=11100)
+    sections = build_distribution_sections(stats, effective_seconds=13200)
 
-    assert [item["category_key"] for item in sections] == ["work", "video", "social", "other"]
-    assert sections[-1]["seconds"] == 900
+    assert [item["category_key"] for item in sections] == [
+        "work",
+        "video",
+        "social",
+        "browser_general",
+    ]
+    assert sections[-1] == {
+        "category_key": "browser_general",
+        "label": "浏览器",
+        "seconds": 1500,
+    }
+
+
+def test_distribution_sections_show_tools_when_it_leads_dynamic_slot():
+    stats = {
+        "by_category": [
+            {"category_key": "coding", "effective_seconds": 600},
+            {"category_key": "browser_other", "effective_seconds": 240},
+            {"category_key": "system_tools", "effective_seconds": 720},
+        ]
+    }
+
+    sections = build_distribution_sections(stats, effective_seconds=1560)
+
+    assert sections[-1] == {
+        "category_key": "tools",
+        "label": "系统工具",
+        "seconds": 720,
+    }
+
+
+def test_distribution_sections_do_not_restore_fixed_other_without_candidates():
+    stats = {
+        "by_category": [
+            {"category_key": "coding", "effective_seconds": 600},
+            {"category_key": "other", "effective_seconds": 300},
+        ]
+    }
+
+    sections = build_distribution_sections(stats, effective_seconds=900)
+
+    assert [item["category_key"] for item in sections] == ["work", "video", "social"]
 
 
 def test_day_over_day_comparison_encodes_trend_direction():

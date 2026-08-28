@@ -191,6 +191,8 @@ def test_homepage_shell_matches_reference_structure():
         assert "较昨日" not in distribution_texts
         assert ui_style.get_category_color("other") != ui_style.COLORS["social_purple"]
         assert window.pages["today"]._distribution_color("other") == ui_style.get_category_color("other")
+        assert window.pages["today"]._distribution_color("browser_general") == ui_style.COLORS["browser_amber"]
+        assert window.pages["today"]._distribution_color("tools") == ui_style.COLORS["tools_cyan"]
         assert window.pages["today"]._color_for_category("other") == ui_style.get_category_color("other")
         assert window.pages["today"]._color_for_category("idle") == ui_style.COLORS["timeline_idle"]
         assert window.pages["today"]._color_for_category("idle_leave") == ui_style.COLORS["timeline_idle"]
