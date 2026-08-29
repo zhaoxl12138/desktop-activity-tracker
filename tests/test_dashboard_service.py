@@ -531,9 +531,10 @@ def test_distribution_sections_show_browser_when_it_leads_dynamic_slot():
     ]
     assert sections[-1] == {
         "category_key": "browser_general",
-        "label": "浏览器",
-        "seconds": 1500,
+        "label": "浏览器等",
+        "seconds": 3000,
     }
+    assert sum(item["seconds"] for item in sections) == 13200
 
 
 def test_distribution_sections_show_tools_when_it_leads_dynamic_slot():
@@ -549,12 +550,13 @@ def test_distribution_sections_show_tools_when_it_leads_dynamic_slot():
 
     assert sections[-1] == {
         "category_key": "tools",
-        "label": "系统工具",
-        "seconds": 720,
+        "label": "系统工具等",
+        "seconds": 960,
     }
+    assert sum(item["seconds"] for item in sections) == 1560
 
 
-def test_distribution_sections_do_not_restore_fixed_other_without_candidates():
+def test_distribution_sections_show_true_other_when_it_is_only_residual():
     stats = {
         "by_category": [
             {"category_key": "coding", "effective_seconds": 600},
@@ -564,7 +566,35 @@ def test_distribution_sections_do_not_restore_fixed_other_without_candidates():
 
     sections = build_distribution_sections(stats, effective_seconds=900)
 
-    assert [item["category_key"] for item in sections] == ["work", "video", "social"]
+    assert [item["category_key"] for item in sections] == [
+        "work",
+        "video",
+        "social",
+        "other",
+    ]
+    assert sections[-1] == {
+        "category_key": "other",
+        "label": "其他",
+        "seconds": 300,
+    }
+    assert sum(item["seconds"] for item in sections) == 900
+
+
+def test_distribution_sections_assign_unallocated_effective_time_to_other():
+    stats = {
+        "by_category": [
+            {"category_key": "coding", "effective_seconds": 600},
+        ]
+    }
+
+    sections = build_distribution_sections(stats, effective_seconds=607)
+
+    assert sections[-1] == {
+        "category_key": "other",
+        "label": "其他",
+        "seconds": 7,
+    }
+    assert sum(item["seconds"] for item in sections) == 607
 
 
 def test_day_over_day_comparison_encodes_trend_direction():

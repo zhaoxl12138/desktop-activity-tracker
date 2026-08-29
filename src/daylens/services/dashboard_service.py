@@ -1178,6 +1178,7 @@ def category_seconds(stats: dict) -> dict[str, int]:
         "entertainment": 0,
         "browser": 0,
         "tools": 0,
+        "other": 0,
     }
     for item in stats.get("by_category", []):
         seconds = parse_nonnegative_int(item.get("effective_seconds")) or 0
@@ -1192,11 +1193,18 @@ def category_seconds(stats: dict) -> dict[str, int]:
             totals["browser"] += seconds
         elif category_key in TOOLS_CATEGORY_KEYS:
             totals["tools"] += seconds
+        else:
+            totals["other"] += seconds
     return totals
 
 
 def build_distribution_sections(stats: dict, effective_seconds: int) -> list[dict[str, object]]:
     category_totals = category_seconds(stats)
+    allocated_seconds = sum(category_totals.values())
+    category_totals["other"] += max(
+        0,
+        int(effective_seconds) - allocated_seconds,
+    )
     sections = [
         {"category_key": "work", "label": "工作学习", "seconds": category_totals["work"]},
         {"category_key": "video", "label": "娱乐休闲", "seconds": category_totals["entertainment"]},
@@ -1218,12 +1226,26 @@ def build_distribution_sections(stats: dict, effective_seconds: int) -> list[dic
             "label": "系统工具",
             "seconds": category_totals["tools"],
         },
+        {
+            "category_key": "other",
+            "label": "其他",
+            "seconds": category_totals["other"],
+        },
     ]
     dynamic_section = max(
         dynamic_candidates,
         key=lambda item: int(item["seconds"]),
     )
-    if int(dynamic_section["seconds"]) > 0:
+    nonzero_dynamic = [
+        item for item in dynamic_candidates if int(item["seconds"]) > 0
+    ]
+    if nonzero_dynamic:
+        dynamic_section = dict(dynamic_section)
+        dynamic_section["seconds"] = sum(
+            int(item["seconds"]) for item in nonzero_dynamic
+        )
+        if len(nonzero_dynamic) > 1:
+            dynamic_section["label"] = f"{dynamic_section['label']}等"
         sections.append(dynamic_section)
     return sections
 
