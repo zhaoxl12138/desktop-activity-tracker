@@ -140,6 +140,50 @@ def test_daily_markdown_appends_high_trust_attention_fields_once(tmp_path: Path)
     assert "- 数据可信度：高（" not in report
 
 
+def test_daily_markdown_merges_work_rows_and_uses_process_for_top_software(
+    tmp_path: Path,
+):
+    db_path = _new_database(tmp_path)
+    _insert_session(
+        db_path,
+        session_id="ai",
+        start="09:00:00",
+        end="09:02:00",
+        duration=120,
+        effective=120,
+        engaged=120,
+        passive=0,
+        idle=0,
+        process_name="ChatGPT.exe",
+        title="A deliberately long ChatGPT window title",
+        category_key="ai_tools",
+        category_name="AI工具",
+    )
+    _insert_session(
+        db_path,
+        session_id="reading",
+        start="09:02:00",
+        end="09:03:00",
+        duration=60,
+        effective=60,
+        engaged=60,
+        passive=0,
+        idle=0,
+        process_name="Obsidian.exe",
+        title="Reading notes",
+        category_key="reading",
+        category_name="阅读学习",
+    )
+
+    report = _export_markdown(db_path, tmp_path)
+    category_table = report.split("## 分类统计", 1)[1].split("## 软件排行", 1)[0]
+
+    assert category_table.count("| 工作学习 |") == 1
+    assert "| 工作学习 | 3分0秒 | 100% |" in category_table
+    assert "- 最长使用软件：ChatGPT.exe" in report
+    assert "- 最长使用软件：A deliberately long ChatGPT window title" not in report
+
+
 @pytest.mark.parametrize(
     ("arrange", "expected_level", "expected_reason"),
     [

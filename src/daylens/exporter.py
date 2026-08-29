@@ -11,7 +11,14 @@ from datetime import datetime, timedelta
 from . import database
 from . import timeline
 from .services.trusted_metrics_service import assess_range
-from .utils import fmt_seconds, normalize_category_display_name
+from .utils import (
+    BROWSER_CATEGORY_KEYS,
+    ENTERTAINMENT_CATEGORY_KEYS,
+    TOOLS_CATEGORY_KEYS,
+    WORK_CATEGORY_KEYS,
+    fmt_seconds,
+    normalize_category_display_name,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -54,6 +61,51 @@ def daily_report_path(output_dir: str, date_str: str) -> str:
 def _top_titles_by_category(db_path, date_str, limit=3):
     """Return {category_key: [title1, title2, title3]} of top window titles."""
     return database.query_top_titles_by_category(db_path, date_str, limit)
+
+
+def _report_category_group(
+    category_key: str,
+    category_name: str = "",
+) -> tuple[str, str]:
+    key = str(category_key or "")
+    if key in WORK_CATEGORY_KEYS:
+        return "work", "工作学习"
+    if key in ENTERTAINMENT_CATEGORY_KEYS:
+        return "entertainment", "娱乐休闲"
+    if key == "social":
+        return "social", "社交通讯"
+    if key in BROWSER_CATEGORY_KEYS:
+        return "browser", "浏览器"
+    if key in TOOLS_CATEGORY_KEYS:
+        return "tools", "系统工具"
+    return key or "other", normalize_category_display_name(key, category_name or "其他")
+
+
+def _aggregate_report_categories(rows: list[dict]) -> list[dict]:
+    grouped: dict[str, dict] = {}
+    for row in rows:
+        group_key, label = _report_category_group(
+            row.get("category_key", ""),
+            row.get("category_name", ""),
+        )
+        group = grouped.setdefault(
+            group_key,
+            {
+                "category_key": group_key,
+                "category_name": label,
+                "effective_seconds": 0,
+                "source_keys": [],
+            },
+        )
+        group["effective_seconds"] += int(row.get("effective_seconds", 0) or 0)
+        source_key = str(row.get("category_key", "") or "")
+        if source_key and source_key not in group["source_keys"]:
+            group["source_keys"].append(source_key)
+    return sorted(
+        grouped.values(),
+        key=lambda row: int(row["effective_seconds"]),
+        reverse=True,
+    )
 
 
 def _safe_attention_counter(value) -> int:
@@ -249,7 +301,6 @@ def export_markdown(db_path, date_str, output_dir):
     efficiency = _calculate_efficiency_score(work_sec, video_sec, effective_sec)
 
     top_app = stats["by_app_detail"][0]["process_name"] if stats["by_app_detail"] else "-"
-    top_app_title = stats["by_app_detail"][0]["window_title"] if stats["by_app_detail"] else ""
 
     lines = []
     lines.append(f"# {date_str} 个人数字行为日报")
@@ -262,7 +313,7 @@ def export_markdown(db_path, date_str, output_dir):
     lines.append(f"- 活跃时间：{fmt_seconds(effective_sec)}")
     lines.append(f"- 挂机/空闲时间：{fmt_seconds(idle_sec)}")
     lines.append(f"- 娱乐休闲时间：{fmt_seconds(entertain_sec)}")
-    lines.append(f"- 最长使用软件：{top_app_title or top_app}")
+    lines.append(f"- 最长使用软件：{top_app}")
     lines.append(f"- 工作学习占比：{work_pct}%")
     lines.append(f"- 娱乐休闲占比：{entertain_pct}%")
     lines.append(f"- 参与时间：{fmt_seconds(attention['engaged_seconds'])}")
@@ -288,12 +339,17 @@ def export_markdown(db_path, date_str, output_dir):
     yesterday_stats = database.query_date_stats(db_path, yesterday)
     yesterday_by_cat = {
         item["category_key"]: item.get("effective_seconds", 0) or 0
-        for item in yesterday_stats.get("by_category", [])
+        for item in _aggregate_report_categories(
+            yesterday_stats.get("by_category", [])
+        )
     }
     # Build top app per category from by_app
     top_app_by_cat = {}
     for app in stats.get("by_app", []):
-        ck = app.get("category_key")
+        ck, _label = _report_category_group(
+            app.get("category_key", ""),
+            app.get("category_name", ""),
+        )
         if ck not in top_app_by_cat or (app.get("effective_seconds", 0) or 0) > top_app_by_cat[ck][1]:
             top_app_by_cat[ck] = (app.get("process_name") or "", app.get("effective_seconds", 0) or 0)
 
@@ -310,14 +366,19 @@ def export_markdown(db_path, date_str, output_dir):
 
     lines.append("| 分类 | 时长 | 占比 | 环比昨日 | Top应用 | Top 内容 |")
     lines.append("|---|---:|---:|---|---|---|")
-    for cat in stats["by_category"]:
-        name = normalize_category_display_name(cat.get("category_key", ""), cat["category_name"])
+    for cat in _aggregate_report_categories(stats["by_category"]):
+        name = cat["category_name"]
         sec = cat.get("effective_seconds", 0) or 0
         pct = round(sec / effective_sec * 100) if effective_sec else 0
         delta = _delta_text(sec, yesterday_by_cat.get(cat["category_key"], 0))
         top = top_app_by_cat.get(cat["category_key"])
         top_label = top[0] if top else "-"
-        titles = top_titles.get(cat["category_key"], [])
+        titles = []
+        for source_key in cat["source_keys"]:
+            for title in top_titles.get(source_key, []):
+                if title not in titles:
+                    titles.append(title)
+        titles = titles[:3]
         titles_text = "、".join(titles) if titles else "-"
         lines.append(f"| {name} | {fmt_seconds(sec)} | {pct}% | {delta} | {top_label} | {titles_text} |")
     lines.append("")
