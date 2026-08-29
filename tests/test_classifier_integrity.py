@@ -108,6 +108,36 @@ def test_production_obs_is_creative_not_passive_video():
     assert result["active_rule"] == "interactive_required"
 
 
+@pytest.mark.parametrize(
+    ("process_name", "title"),
+    [
+        ("chrome.exe", "BOSS直聘 - 招聘求职找工作 - Google Chrome"),
+        ("360ChromeX.exe", "职位详情 | zhipin.com - 360极速浏览器X"),
+    ],
+)
+def test_production_boss_recruitment_browser_pages_are_office(
+    process_name,
+    title,
+):
+    config_path = Path(__file__).resolve().parents[1] / "config" / "config.yaml"
+
+    result = Classifier(str(config_path)).classify(process_name, title)
+
+    assert result["category_key"] == "office"
+    assert result["active_rule"] == "interactive_required"
+
+
+def test_production_generic_recruitment_article_is_not_forced_into_office():
+    config_path = Path(__file__).resolve().parents[1] / "config" / "config.yaml"
+
+    result = Classifier(str(config_path)).classify(
+        "chrome.exe",
+        "招聘行业观察 - 普通资讯页面 - Google Chrome",
+    )
+
+    assert result["category_key"] != "office"
+
+
 def test_chrome_github_uses_coding_content_rule(tmp_path: Path):
     config_path = tmp_path / "config.yaml"
     _write_config(config_path)

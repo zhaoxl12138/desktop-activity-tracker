@@ -68,6 +68,7 @@ git commit -m "feat: count BOSS recruitment pages as work"
 ### Task 2: 发布验证
 
 **Files:**
+- Update settings only: `data/usage.db`
 - Build: `release/DayLens.exe`
 
 - [ ] **Step 1: 完整验证**
@@ -83,17 +84,21 @@ git diff --check
 
 Expected: 全部命令退出码为 0。
 
-- [ ] **Step 2: 构建并启动发布版**
+- [ ] **Step 2: 同步当前唯一数据库的自定义办公关键词**
+
+读取 `office` 自定义规则；仅在缺失时追加 `BOSS直聘`、`zhipin.com`，通过既有设置仓库保存，并确认没有修改 `activity_sessions`。
+
+- [ ] **Step 3: 构建并启动发布版**
 
 Run: `python tools/build_release.py`
 
 Expected: Qt smoke 成功，`release/DayLens.exe` 被更新。
 
-- [ ] **Step 3: 验证唯一运行路径**
+- [ ] **Step 4: 验证唯一运行路径**
 
 启动发布版，确认仅一个 DayLens 进程、规范数据库仍为 `data/usage.db`，持久日志没有新的 ERROR/CRITICAL。
 
-- [ ] **Step 4: 推送**
+- [ ] **Step 5: 推送**
 
 Run: `git push origin main`
 
