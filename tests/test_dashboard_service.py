@@ -205,13 +205,14 @@ def test_rhythm_complete_day_and_week_views_preserve_unknown_gaps():
     )
 
     seven = rhythm["7d"]
-    assert seven["date_range"] == ["2026-08-05", "2026-08-11"]
+    assert seven["date_range"] == ["2026-08-06", "2026-08-12"]
     assert seven["chart"]["labels"] == [
-        "8/5", "8/6", "8/7", "8/8", "8/9", "8/10", "8/11"
+        "8/6", "8/7", "8/8", "8/9", "8/10", "8/11", "8/12"
     ]
-    assert seven["chart"]["values"][3] is None  # 2026-08-08 is unknown.
+    assert seven["chart"]["values"][2] is None  # 2026-08-08 is unknown.
+    assert seven["chart"]["values"][-1] is None  # Today is not recorded yet.
     assert seven["metrics"][2]["label"] == "总时间"
-    assert seven["metrics"][2]["value"] == "6小时18分钟"
+    assert seven["metrics"][2]["value"] == "5小时12分钟"
     thirty = rhythm["30d"]
     assert thirty["date_range"] == ["2026-07-13", "2026-08-11"]
     assert thirty["chart"]["kind"] == "bars"
@@ -239,7 +240,7 @@ def test_rhythm_seven_day_best_day_uses_chronological_date_value():
     )
 
     assert rhythm["7d"]["chart"]["labels"] == [
-        "8/7", "8/8", "8/9", "8/10", "8/11", "8/12", "8/13"
+        "8/8", "8/9", "8/10", "8/11", "8/12", "8/13", "8/14"
     ]
     assert rhythm["7d"]["metrics"][1]["value"] == "8/13 周四"
     assert rhythm["7d"]["metrics"][1]["delta"] == "2分钟"
@@ -328,10 +329,10 @@ def test_rhythm_classification_break_only_keeps_latest_version_points():
     )
 
     assert rhythm["7d"]["chart"]["labels"] == [
-        "8/5", "8/6", "8/7", "8/8", "8/9", "8/10", "8/11"
+        "8/6", "8/7", "8/8", "8/9", "8/10", "8/11", "8/12"
     ]
     assert rhythm["7d"]["chart"]["values"] == [
-        None, None, 3_600, 3_600, 3_600, 3_600, 3_600
+        None, 3_600, 3_600, 3_600, 3_600, 3_600, 3_600
     ]
     assert "仅展示当前规则记录" in rhythm["7d"]["conclusion"]
     assert "日均" not in rhythm["7d"]["conclusion"]
@@ -366,17 +367,17 @@ def test_rhythm_keeps_all_recorded_values_visible_from_august_thirteenth():
 
     seven = rhythm["7d"]
     assert seven["chart"]["labels"] == [
-        "8/13", "8/14", "8/15", "8/16", "8/17", "8/18", "8/19"
+        "8/14", "8/15", "8/16", "8/17", "8/18", "8/19", "8/20"
     ]
-    assert seven["chart"]["values"] == [1300, 1400, 1500, 1600, 1700, 1800, 1900]
+    assert seven["chart"]["values"] == [1400, 1500, 1600, 1700, 1800, 1900, None]
     assert seven["chart"]["value_kinds"] == [
         "current",
-        "current",
         "legacy",
         "legacy",
         "current",
         "current",
         "legacy",
+        "missing",
     ]
     assert seven["comparison"]["comparable"] is False
     assert seven["status"]["label"] == "口径已变化"
@@ -384,9 +385,21 @@ def test_rhythm_keeps_all_recorded_values_visible_from_august_thirteenth():
     thirty = rhythm["30d"]
     assert thirty["date_range"] == ["2026-08-13", "2026-08-19"]
     assert thirty["chart"]["kind"] == "bars"
-    assert thirty["chart"]["labels"] == seven["chart"]["labels"]
-    assert thirty["chart"]["values"] == seven["chart"]["values"]
-    assert thirty["chart"]["value_kinds"] == seven["chart"]["value_kinds"]
+    assert thirty["chart"]["labels"] == [
+        "8/13", "8/14", "8/15", "8/16", "8/17", "8/18", "8/19"
+    ]
+    assert thirty["chart"]["values"] == [
+        1300, 1400, 1500, 1600, 1700, 1800, 1900
+    ]
+    assert thirty["chart"]["value_kinds"] == [
+        "current",
+        "current",
+        "legacy",
+        "legacy",
+        "current",
+        "current",
+        "legacy",
+    ]
     assert thirty["comparison"]["comparable"] is False
     assert thirty["conclusion"] == "8/13–8/19"
 
@@ -463,7 +476,7 @@ def test_rhythm_today_baseline_clips_each_session_at_exact_clock_time():
     assert rhythm["today"]["chart"]["baseline_median"][29] == 1_200
 
 
-def test_rhythm_version_break_filters_sessions_to_latest_versions():
+def test_rhythm_metric_break_filters_sessions_to_latest_metric_version():
     today = date(2026, 8, 12)
     daily = [_trusted_rhythm_day(today.isoformat(), 600)]
     daily[0]["classification_versions"] = ["rules-old", "rules-new"]
@@ -501,6 +514,50 @@ def test_rhythm_version_break_filters_sessions_to_latest_versions():
 
     assert rhythm["today"]["chart"]["current"][28] == 600
     assert rhythm["today"]["metrics"][0]["value"] == "10:00"
+
+
+def test_rhythm_classification_break_keeps_same_metric_today_sessions():
+    today = date(2026, 8, 12)
+    daily = [_trusted_rhythm_day(today.isoformat(), 4_200)]
+    daily[0]["classification_versions"] = ["rules-old", "rules-new"]
+    sessions = [
+        {
+            **_rhythm_session(
+                today.isoformat(),
+                "09:00:00",
+                "10:00:00",
+                3_600,
+                session_id="old-rules",
+            ),
+            "classification_version": "rules-old",
+        },
+        {
+            **_rhythm_session(
+                today.isoformat(),
+                "10:00:00",
+                "10:10:00",
+                600,
+                session_id="new-rules",
+            ),
+            "classification_version": "rules-new",
+        },
+    ]
+
+    rhythm = dashboard_service.build_rhythm_snapshot(
+        captured_now=datetime(2026, 8, 12, 14, 0),
+        sessions=sessions,
+        daily_rows=daily,
+        query_failed=False,
+    )
+
+    current = [
+        value
+        for value in rhythm["today"]["chart"]["current"]
+        if value is not None
+    ]
+    assert current[-1] == 4_200
+    assert rhythm["today"]["metrics"][0]["value"] == "09:00"
+    assert rhythm["today"]["status"]["label"] == "口径已变化"
 
 
 def test_rhythm_interruption_metric_formats_count_delta():
@@ -1713,8 +1770,8 @@ def test_snapshot_builds_exact_trusted_insight_payload_without_daily_session_que
     assert snapshot["rhythm"]["primary_metric"] == "work_engaged_seconds"
     assert snapshot["rhythm"]["today"]["chart"]["kind"] == "cumulative"
     assert snapshot["rhythm"]["7d"]["date_range"] == [
-        "2026-08-04",
-        "2026-08-10",
+        "2026-08-05",
+        "2026-08-11",
     ]
     assert snapshot["totals"] == {
         "effective_seconds": 80,

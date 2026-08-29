@@ -541,7 +541,7 @@ def _build_seven_day_rhythm(
     *,
     comparison_allowed: bool,
 ) -> dict[str, object]:
-    end = captured_now.date() - timedelta(days=1)
+    end = captured_now.date()
     dates = [end - timedelta(days=offset) for offset in reversed(range(7))]
     prior = [dates[0] - timedelta(days=offset) for offset in reversed(range(1, 8))]
     row_map = _daily_row_map(daily_rows)
@@ -741,11 +741,6 @@ def build_rhythm_snapshot(
         session
         for session in sessions
         if str(session.get("metric_version", "") or "") == current_metric_version
-        and (
-            not current_classification_version
-            or str(session.get("classification_version", "") or "")
-            == current_classification_version
-        )
     ]
     effective_daily_rows = list(daily_rows)
     classification_versions = _classification_versions(daily_rows)
@@ -793,7 +788,7 @@ def build_rhythm_snapshot(
     elif _metric_break(daily_rows) or has_session_metric_break:
         unavailable_status = {"label": "口径已变化", "kind": "break"}
     elif classification_break:
-        unavailable_status = {"label": "暂不可比较", "kind": "break"}
+        unavailable_status = {"label": "口径已变化", "kind": "break"}
     if unavailable_status is not None:
         for mode in ("today", "7d", "30d"):
             result[mode]["status"] = dict(unavailable_status)
