@@ -109,6 +109,18 @@ def test_gui_bootstrap_avoids_direct_database_calls():
     assert "database." not in GUI_BOOTSTRAP_SOURCE
 
 
+def test_gui_bootstrap_installs_persistent_logging_before_qt_application():
+    configure_at = GUI_BOOTSTRAP_SOURCE.index("configure_app_logging(db_path)")
+    qt_import_at = GUI_BOOTSTRAP_SOURCE.index("from PySide6.QtGui import QFont")
+    assert configure_at < qt_import_at
+    assert "install_qt_message_handler()" in GUI_BOOTSTRAP_SOURCE
+
+
+def test_recording_worker_persists_reported_failures():
+    assert '"Recording worker %s: %s"' in WORKER_SOURCE
+    assert "exc_info=(error.__class__, error, error.__traceback__)" in WORKER_SOURCE
+
+
 def test_main_delegates_command_handlers_and_gui_bootstrap():
     assert COMMAND_HANDLERS_SOURCE_PATH.exists()
     assert GUI_BOOTSTRAP_SOURCE_PATH.exists()

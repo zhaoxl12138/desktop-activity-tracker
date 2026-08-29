@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 import queue
 import threading
 import time
@@ -17,6 +18,9 @@ from .. import activity_detector, classifier, window_detector
 from ..services.session_recovery_service import SessionRecoverySpool
 from ..services.session_runtime_service import SessionRuntimeStore
 from ..session_tracker import SessionTracker
+
+
+LOGGER = logging.getLogger(__name__)
 
 try:
     from ..audio_detector import (
@@ -239,6 +243,12 @@ class RecordingWorker(QThread):
 
     def _report_error(self, error, status: str) -> None:
         message = str(error) or error.__class__.__name__
+        LOGGER.error(
+            "Recording worker %s: %s",
+            status,
+            message,
+            exc_info=(error.__class__, error, error.__traceback__),
+        )
         if message != self._last_error:
             self._last_error = message
             self.error_occurred.emit(message)

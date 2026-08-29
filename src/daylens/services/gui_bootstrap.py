@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import logging
 import sys
 
 from .. import get_app_root
@@ -19,9 +20,11 @@ from .gui_shutdown_service import (
     stop_recording_worker_safely,
 )
 from .instance_lock import acquire_recording_lock
+from .logging_service import configure_app_logging, install_qt_message_handler
 
 
 DUPLICATE_INSTANCE_MESSAGE = "程序已在运行中，请查看系统托盘图标。"
+LOGGER = logging.getLogger(__name__)
 
 
 def auto_scan_and_save_rules(config: dict, db_path: str) -> None:
@@ -80,16 +83,20 @@ def launch_gui() -> None:
     if not is_first:
         sys.exit(0)
 
+    config_path = resolve_config_path()
+    config = load_config(config_path)
+    config, db_path = prepare_runtime_config(config)
+    log_path = configure_app_logging(db_path)
+    LOGGER.info("DayLens GUI starting; database=%s log=%s", db_path, log_path)
+
     from PySide6.QtGui import QFont
     from PySide6.QtWidgets import QApplication
+
+    install_qt_message_handler()
 
     from ..gui.main_window import MainWindow
     from ..gui.tray_manager import TrayManager
     from ..gui.worker import RecordingWorker
-
-    config_path = resolve_config_path()
-    config = load_config(config_path)
-    config, db_path = prepare_runtime_config(config)
 
     # Resolve reports_dir from the persistent data directory (alongside DB)
     reports_dir = os.path.join(os.path.dirname(db_path), "reports")
@@ -123,7 +130,9 @@ def launch_gui() -> None:
         exit_code = app.exec()
         shutdown_result = shutdown_gui_runtime(window.worker)
         if shutdown_result.completed:
+            LOGGER.info("DayLens GUI stopped cleanly; exit_code=%s", exit_code)
             break
+        LOGGER.error("GUI shutdown incomplete: %s", shutdown_result.message)
         print(f"[Shutdown] {shutdown_result.message}", file=sys.stderr)
         window.show()
     sys.exit(exit_code)
