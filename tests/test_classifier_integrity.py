@@ -72,6 +72,18 @@ def test_360_bilibili_uses_content_before_browser_fallback(tmp_path: Path):
     assert result["category_key"] == "video"
 
 
+def test_production_rules_do_not_treat_anime_episode_as_learning():
+    config_path = Path(__file__).resolve().parents[1] / "config" / "config.yaml"
+
+    result = Classifier(str(config_path)).classify(
+        "360ChromeX.exe",
+        "凡人修仙传第189集-国创-高清独家在线观看-bilibili-哔哩哔哩 "
+        "- 360极速浏览器X 23.1",
+    )
+
+    assert result["category_key"] == "video"
+
+
 def test_chrome_github_uses_coding_content_rule(tmp_path: Path):
     config_path = tmp_path / "config.yaml"
     _write_config(config_path)

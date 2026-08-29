@@ -560,7 +560,6 @@ categories:
       - 第\d+讲
       - 第\d+课
       - 第\d+章
-      - 第\d+集
       - 第\d+节
       - Lesson\s*\d+
       - P\d+
