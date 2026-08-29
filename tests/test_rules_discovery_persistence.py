@@ -161,6 +161,52 @@ def test_scanned_category_retains_unscanned_factory_processes(tmp_path):
     } == {"excel.exe", "winword.exe"}
 
 
+def test_custom_conflict_follows_single_factory_process_owner():
+    config = {
+        "categories": {
+            "video": {
+                "display_name": "娱乐休闲",
+                "active_rule": "passive_allowed",
+                "match": {"process_names": [], "title_keywords": ["OBS"]},
+            },
+            "creative": {
+                "display_name": "创作工具",
+                "active_rule": "interactive_required",
+                "match": {"process_names": ["obs64.exe"], "title_keywords": ["OBS"]},
+            },
+        }
+    }
+    custom_rules = {
+        "video": {
+            "display_name": "娱乐休闲",
+            "active_rule": "passive_allowed",
+            "process_names": ["obs64.exe"],
+            "process_names_mode": "replace",
+            "title_keywords": ["OBS"],
+            "title_keywords_mode": "replace",
+            "title_patterns": [],
+            "title_patterns_mode": "inherit",
+        },
+        "creative": {
+            "display_name": "创作工具",
+            "active_rule": "interactive_required",
+            "process_names": ["obs64.exe"],
+            "process_names_mode": "replace",
+            "title_keywords": ["OBS"],
+            "title_keywords_mode": "replace",
+            "title_patterns": [],
+            "title_patterns_mode": "inherit",
+        },
+    }
+
+    database.apply_custom_rules(config, custom_rules)
+
+    assert config["categories"]["video"]["match"]["process_names"] == []
+    assert config["categories"]["creative"]["match"]["process_names"] == [
+        "obs64.exe"
+    ]
+
+
 def test_editor_process_removal_remains_explicit_after_save(tmp_path):
     db_path = str(tmp_path / "usage.db")
     config_path = tmp_path / "config.yaml"

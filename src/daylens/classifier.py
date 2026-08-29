@@ -31,6 +31,7 @@ _CATEGORY_PRIORITY = (
 _CATEGORY_PRIORITY_RANK = {
     key: index for index, key in enumerate(_CATEGORY_PRIORITY)
 }
+_ASCII_WORD_KEYWORD = re.compile(r"^[a-z0-9]+$")
 
 _DEFAULT_BROWSER_PROCESSES = {
     "chrome.exe",
@@ -84,10 +85,20 @@ def _category_priority_key(key):
     return (_CATEGORY_PRIORITY_RANK.get(key, len(_CATEGORY_PRIORITY)), key)
 
 
+def _keyword_matches(title_folded: str, keyword: str) -> bool:
+    """Match ASCII word keywords without colliding inside larger words."""
+    if not _ASCII_WORD_KEYWORD.fullmatch(keyword):
+        return keyword in title_folded
+    return re.search(
+        rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])",
+        title_folded,
+    ) is not None
+
+
 def _match_title(title_folded, match_rules, compiled_patterns=None):
     """Return (matched_keywords, matched_patterns) for title against rules."""
     kws = match_rules.get("title_keywords", [])
-    matched_kws = [kw for kw in kws if kw in title_folded]
+    matched_kws = [kw for kw in kws if _keyword_matches(title_folded, kw)]
     patterns = compiled_patterns or []
     matched_pats = [p.pattern for p in patterns if p.search(title_folded)]
     return matched_kws, matched_pats

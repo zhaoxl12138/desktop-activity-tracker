@@ -581,7 +581,6 @@ categories:
       - mpv.exe
       - mpc-be64.exe
       - mpc-hc.exe
-      - obs64.exe
       - Plex.exe
       - PotPlayer.exe
       - PotPlayerMini64.exe
@@ -604,7 +603,6 @@ categories:
       - GOG
       - Kodi
       - Netflix
-      - OBS
       - Plex
       - Spotify
       - Steam

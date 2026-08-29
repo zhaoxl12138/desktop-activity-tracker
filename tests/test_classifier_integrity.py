@@ -84,6 +84,30 @@ def test_production_rules_do_not_treat_anime_episode_as_learning():
     assert result["category_key"] == "video"
 
 
+@pytest.mark.parametrize(
+    "title",
+    [
+        "World Military Ranking - YouTube - Google Chrome",
+        "American History Documentary - YouTube - Google Chrome",
+    ],
+)
+def test_production_ascii_keywords_do_not_match_inside_larger_words(title):
+    config_path = Path(__file__).resolve().parents[1] / "config" / "config.yaml"
+
+    result = Classifier(str(config_path)).classify("chrome.exe", title)
+
+    assert result["category_key"] == "video"
+
+
+def test_production_obs_is_creative_not_passive_video():
+    config_path = Path(__file__).resolve().parents[1] / "config" / "config.yaml"
+
+    result = Classifier(str(config_path)).classify("obs64.exe", "OBS Studio")
+
+    assert result["category_key"] == "creative"
+    assert result["active_rule"] == "interactive_required"
+
+
 def test_chrome_github_uses_coding_content_rule(tmp_path: Path):
     config_path = tmp_path / "config.yaml"
     _write_config(config_path)

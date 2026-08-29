@@ -291,15 +291,32 @@ def apply_custom_rules(config: dict, custom_rules: dict[str, dict]) -> None:
     def category_order(key: str) -> tuple[int, str]:
         return (priority.get(key, len(priority)), key.casefold())
 
+    factory_owners: dict[str, list[str]] = {}
+    for key, category in categories.items():
+        match = category.get("match", {}) if isinstance(category, dict) else {}
+        for process_name in match.get("process_names", []) or []:
+            factory_owners.setdefault(process_name.casefold(), []).append(key)
+
+    requested_owners: dict[str, list[str]] = {}
+    for key, rule in custom_rules.items():
+        for process_name in rule.get("process_names", []) or []:
+            requested_owners.setdefault(process_name.casefold(), []).append(key)
+
     custom_owner: dict[str, str] = {}
+    for folded, owners in requested_owners.items():
+        factory_candidates = [
+            key for key in factory_owners.get(folded, []) if key in owners
+        ]
+        candidates = factory_candidates or owners
+        custom_owner[folded] = min(candidates, key=category_order)
+
     normalized_custom: dict[str, list[str]] = {}
     for key in sorted(custom_rules, key=category_order):
         unique: list[str] = []
         for process_name in custom_rules[key].get("process_names", []) or []:
             folded = process_name.casefold()
-            if folded in custom_owner:
+            if custom_owner.get(folded) != key:
                 continue
-            custom_owner[folded] = key
             unique.append(process_name)
         normalized_custom[key] = unique
 
