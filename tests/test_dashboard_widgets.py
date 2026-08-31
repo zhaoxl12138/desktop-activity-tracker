@@ -641,49 +641,25 @@ def test_top_app_widget_limits_dashboard_ranking_to_five_rows():
     app.processEvents()
 
 
-def test_daily_goals_card_renders_only_work_and_entertainment_rows():
+def test_entertainment_history_card_replaces_daily_goals_content():
     app = _app()
-    card_type = getattr(dashboard_widgets, "DailyGoalsCard", None)
+    card_type = getattr(dashboard_widgets, "EntertainmentHistoryCard", None)
     assert card_type is not None
     card = card_type()
-    card.set_data(
-        {
-            "status": {"label": "智能目标", "kind": "ready"},
-            "work": {
-                "current_seconds": 3_600,
-                "target_seconds": 6_300,
-                "remaining_seconds": 2_700,
-                "progress_percent": 57,
-                "sample_count": 7,
-                "comparable": True,
-            },
-            "entertainment": {
-                "current_seconds": 900,
-                "limit_seconds": 3_600,
-                "progress_percent": 25,
-                "state": "within",
-            },
-            "advice": "再完成一个25分钟工作段，继续接近今日目标",
-        }
-    )
+    card.set_data(_entertainment_history_payload())
     card.show()
     app.processEvents()
 
-    assert "1小时 / 1小时45分钟" in card.work_value_label.text()
-    assert "15分钟 / 1小时" in card.entertainment_value_label.text()
-    assert card.work_bar.value() == 57
-    assert card.entertainment_bar.value() == 25
     visible_text = {
         label.text()
         for label in card.findChildren(QLabel)
         if not label.isHidden()
     }
-    assert "智能目标" not in visible_text
-    assert "再完成一个25分钟工作段，继续接近今日目标" not in visible_text
+    assert "娱乐记录 · 近7天" in visible_text
+    assert not any("工作目标" in text or "今日目标" in text for text in visible_text)
 
     card.set_data({})
-    assert card.work_value_label.text() == "目标数据积累中"
-    assert card.entertainment_value_label.text() == "尚未设置"
+    assert card._status_label.text() == "娱乐数据积累中"
     card.deleteLater()
     app.processEvents()
 

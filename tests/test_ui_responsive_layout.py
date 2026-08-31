@@ -139,7 +139,7 @@ def test_page_hint_uses_font_aware_elision_with_full_tooltip(tmp_path):
     window.deleteLater()
 
 
-def test_right_column_shows_rhythm_ranking_and_goals_at_1280x720(tmp_path):
+def test_right_column_shows_rhythm_ranking_and_entertainment_history_at_1280x720(tmp_path):
     app, window = _window(tmp_path)
     window.resize(1280, 720)
     app.processEvents()
@@ -156,14 +156,15 @@ def test_right_column_shows_rhythm_ranking_and_goals_at_1280x720(tmp_path):
     ordered_cards = [
         page.trend_card,
         page.top_app_card,
-        page.daily_goals_card,
+        page.entertainment_history_card,
     ]
     assert all(
         upper.geometry().bottom() < lower.geometry().top()
         for upper, lower in zip(ordered_cards, ordered_cards[1:])
     )
-    assert page.top_app_card.width() == page.daily_goals_card.width()
-    assert page.daily_goals_card.geometry().bottom() <= page.rect().bottom()
+    assert page.top_app_card.width() == page.entertainment_history_card.width()
+    assert page.entertainment_history_card.minimumHeight() == 180
+    assert page.entertainment_history_card.geometry().bottom() <= page.rect().bottom()
 
     window.dashboard_refresh.shutdown(timeout_ms=1_000)
     window.deleteLater()
@@ -190,10 +191,10 @@ def test_dashboard_column_content_bottoms_align_with_compact_rhythm(tmp_path):
         app.processEvents()
 
         left_bottom = page.focus_timeline_card.geometry().bottom()
-        right_bottom = page.daily_goals_card.geometry().bottom()
+        right_bottom = page.entertainment_history_card.geometry().bottom()
         assert abs(left_bottom - right_bottom) <= 2
         assert page.focus_timeline_card.parentWidget().height() - left_bottom <= 2
-        assert page.daily_goals_card.parentWidget().height() - right_bottom <= 2
+        assert page.entertainment_history_card.parentWidget().height() - right_bottom <= 2
         assert page.trend_card.height() <= 300
         assert page.trend_card.canvas.height() >= 80
 
@@ -231,7 +232,7 @@ def test_dashboard_work_episode_rows_stay_compact_at_supported_sizes(tmp_path):
             assert page.focus_axis.height() == 28
             assert abs(
                 page.focus_timeline_card.geometry().bottom()
-                - page.daily_goals_card.geometry().bottom()
+                - page.entertainment_history_card.geometry().bottom()
             ) <= 2
 
             for row in rows:

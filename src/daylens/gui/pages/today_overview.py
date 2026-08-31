@@ -23,9 +23,9 @@ from ...utils import normalize_category_display_name, parse_nonnegative_int
 from .. import style as ui_style
 from ..widgets.dashboard_widgets import (
     ActiveRatioRingWidget,
-    DailyGoalsCard,
     DistributionLegend,
     DonutChartWidget,
+    EntertainmentHistoryCard,
     FocusTimelineBarWidget,
     SessionTop3Widget,
     TimelineWidget,
@@ -93,10 +93,10 @@ class TodayOverviewPage(QWidget):
         self.trend_card = self.rhythm_card
         self.classification_notice = self.trend_card.classification_notice
         self.top_app_card = TopAppListWidget()
-        self.daily_goals_card = DailyGoalsCard()
+        self.entertainment_history_card = EntertainmentHistoryCard()
         right_layout.addWidget(self.trend_card, 2)
         right_layout.addWidget(self.top_app_card, 1)
-        right_layout.addWidget(self.daily_goals_card)
+        right_layout.addWidget(self.entertainment_history_card, 1)
         columns.addWidget(right_panel, 4)
 
         self.insight_grid_widget = None
@@ -530,7 +530,7 @@ class TodayOverviewPage(QWidget):
         self.work_episode_widget.set_episodes(work_episode_rows)
         self.focus_axis.set_minutes(self._build_focus_axis(timeline_sessions))
         self.rhythm_card.set_data(dict(snapshot.get("rhythm", {}) or {}))
-        self.daily_goals_card.set_data(dict(snapshot.get("goals", {}) or {}))
+        self.entertainment_history_card.set_data(snapshot)
         focus_summary = str(snapshot.get("focus_summary", ""))
         self.focus_hint.setText(focus_summary)
         self.focus_hint.setVisible("暂未识别" not in focus_summary)
