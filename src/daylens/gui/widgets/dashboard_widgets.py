@@ -2210,10 +2210,11 @@ class _EntertainmentHistoryCanvas(QWidget):
         date_range: list[str] | tuple[str, str] | None = None,
     ) -> None:
         self._mode = mode if mode in {"7d", "30d"} else "7d"
+        raw_points = points if isinstance(points, (list, tuple)) else []
         self._points = sorted(
             [
                 dict(point)
-                for point in (points or [])
+                for point in raw_points
                 if isinstance(point, dict) and self._valid_date(point.get("date"))
             ],
             key=lambda point: str(point.get("date", "")),

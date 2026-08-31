@@ -807,6 +807,19 @@ def test_entertainment_history_calendar_ignores_invalid_ranges_and_point_dates()
     app.processEvents()
 
 
+def test_entertainment_history_canvas_degrades_for_non_sequence_points():
+    app = _app()
+    canvas = dashboard_widgets._EntertainmentHistoryCanvas()
+    canvas.set_data("30d", 7, ["2026-08-02", "2026-08-31"])
+    canvas.show()
+    app.processEvents()
+
+    assert canvas._points == []
+    assert canvas._state == "empty"
+    canvas.deleteLater()
+    app.processEvents()
+
+
 def test_entertainment_history_card_degrades_for_malformed_nested_models():
     app = _app()
     card = dashboard_widgets.EntertainmentHistoryCard()
