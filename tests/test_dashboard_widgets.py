@@ -790,6 +790,45 @@ def test_entertainment_history_card_degrades_safely_without_available_model():
     app.processEvents()
 
 
+def test_entertainment_history_calendar_ignores_invalid_ranges_and_point_dates():
+    app = _app()
+    canvas = dashboard_widgets._EntertainmentHistoryCanvas()
+    canvas.set_data(
+        "30d",
+        [{"date": "not-a-date", "seconds": 60, "has_data": True}],
+        ["also-not-a-date", "still-not-a-date"],
+    )
+    canvas.show()
+    app.processEvents()
+
+    assert canvas._calendar_dates == []
+    assert canvas._state == "empty"
+    canvas.deleteLater()
+    app.processEvents()
+
+
+def test_entertainment_history_card_degrades_for_malformed_nested_models():
+    app = _app()
+    card = dashboard_widgets.EntertainmentHistoryCard()
+    card.set_data(
+        {
+            "entertainment_history": {
+                "status": {"kind": "ready"},
+                "week": "not-a-model",
+                "month": 7,
+                "captured_at": 42,
+            }
+        }
+    )
+    card.show()
+    app.processEvents()
+
+    assert card._status_label.text() == "娱乐数据积累中"
+    assert [value.text() for _label, value in card._summary_labels] == ["--", "--", "--"]
+    card.deleteLater()
+    app.processEvents()
+
+
 def test_trend_canvas_renders_sparse_weekly_series():
     canvas = _TrendCanvas()
 

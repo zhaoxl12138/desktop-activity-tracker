@@ -2211,7 +2211,11 @@ class _EntertainmentHistoryCanvas(QWidget):
     ) -> None:
         self._mode = mode if mode in {"7d", "30d"} else "7d"
         self._points = sorted(
-            [dict(point) for point in (points or []) if isinstance(point, dict)],
+            [
+                dict(point)
+                for point in (points or [])
+                if isinstance(point, dict) and self._valid_date(point.get("date"))
+            ],
             key=lambda point: str(point.get("date", "")),
         )
         self._point_states = [self._point_state(point) for point in self._points]
@@ -2231,6 +2235,14 @@ class _EntertainmentHistoryCanvas(QWidget):
         if (parse_nonnegative_int(point.get("seconds")) or 0) == 0:
             return "zero"
         return "value"
+
+    @staticmethod
+    def _valid_date(value) -> bool:
+        try:
+            date.fromisoformat(str(value))
+            return True
+        except ValueError:
+            return False
 
     def _calendar_range(self, date_range) -> list[str]:
         if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
@@ -2477,13 +2489,15 @@ class EntertainmentHistoryCard(QFrame):
             return
         self._status_label.setVisible(False)
         self._captured_label.setText(self._captured_text(self._history.get("captured_at")))
-        mode_data = dict(self._history.get("week" if self._mode == "7d" else "month", {}) or {})
+        raw_mode_data = self._history.get("week" if self._mode == "7d" else "month", {})
+        mode_data = dict(raw_mode_data) if isinstance(raw_mode_data, dict) else {}
         self._range_label.setText(self._range_text(mode_data.get("date_range")))
         if not mode_data.get("points"):
             self._status_label.setText("娱乐数据积累中")
             self._status_label.setVisible(True)
         self.canvas.set_data(self._mode, mode_data.get("points", []), mode_data.get("date_range"))
-        self._set_summary(dict(mode_data.get("summary", {}) or {}))
+        raw_summary = mode_data.get("summary", {})
+        self._set_summary(dict(raw_summary) if isinstance(raw_summary, dict) else {})
 
     def _set_summary(self, summary: dict) -> None:
         total = parse_nonnegative_int(summary.get("total_seconds"))
