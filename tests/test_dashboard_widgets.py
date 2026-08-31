@@ -728,6 +728,8 @@ def test_entertainment_history_card_defaults_to_week_with_plain_text_summary():
 
     assert card._mode == "7d"
     assert card._title_label.text() == "娱乐记录 · 近7天"
+    assert card._range_label.text() == "8/25–8/31"
+    assert card._range_label.isVisible()
     assert card._captured_label.text() == "截至 14:35"
     assert [value.text() for _label, value in card._summary_labels] == [
         "1小时40分钟",
@@ -744,11 +746,14 @@ def test_entertainment_history_card_switches_to_month_calendar_with_over_limit_m
     app = _app()
     card = dashboard_widgets.EntertainmentHistoryCard()
     card.set_data(_entertainment_history_payload())
+    card.show()
     card._mode_buttons["30d"].click()
     app.processEvents()
 
     assert card._mode == "30d"
     assert card._title_label.text() == "娱乐记录 · 近30天"
+    assert card._range_label.text() == "8/2–8/31"
+    assert card._range_label.isVisible()
     assert card.canvas._mode == "30d"
     assert card.canvas._calendar_dates == [
         f"2026-08-{day:02d}" for day in range(2, 32)

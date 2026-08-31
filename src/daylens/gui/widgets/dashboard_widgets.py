@@ -2402,10 +2402,18 @@ class EntertainmentHistoryCard(QFrame):
         self._mode_buttons["7d"].setChecked(True)
         root.addLayout(header)
 
+        details = QHBoxLayout()
+        details.setSpacing(6)
+        self._range_label = QLabel("")
+        self._range_label.setTextFormat(Qt.PlainText)
+        self._range_label.setStyleSheet(f"font-size: 10px; color: {COLORS['text_secondary']};")
+        details.addWidget(self._range_label)
         self._captured_label = QLabel("")
         self._captured_label.setTextFormat(Qt.PlainText)
         self._captured_label.setStyleSheet(f"font-size: 10px; color: {COLORS['text_muted']};")
-        root.addWidget(self._captured_label)
+        details.addWidget(self._captured_label)
+        details.addStretch(1)
+        root.addLayout(details)
         self.canvas = _EntertainmentHistoryCanvas()
         self.canvas.setMinimumHeight(78)
         root.addWidget(self.canvas, 1)
@@ -2438,7 +2446,7 @@ class EntertainmentHistoryCard(QFrame):
         self.set_data({})
 
     def _dynamic_labels(self) -> list[QLabel]:
-        return [self._title_label, self._captured_label, self._status_label] + [label for pair in self._summary_labels for label in pair]
+        return [self._title_label, self._range_label, self._captured_label, self._status_label] + [label for pair in self._summary_labels for label in pair]
 
     def set_data(self, payload: dict | None) -> None:
         data = dict(payload or {}).get("entertainment_history")
@@ -2462,6 +2470,7 @@ class EntertainmentHistoryCard(QFrame):
         if not self._history or unavailable:
             self._status_label.setText("暂不可用" if unavailable else "娱乐数据积累中")
             self._status_label.setVisible(True)
+            self._range_label.setText("")
             self._captured_label.setText("")
             self.canvas.set_data(self._mode, [])
             self._set_summary({})
@@ -2469,6 +2478,7 @@ class EntertainmentHistoryCard(QFrame):
         self._status_label.setVisible(False)
         self._captured_label.setText(self._captured_text(self._history.get("captured_at")))
         mode_data = dict(self._history.get("week" if self._mode == "7d" else "month", {}) or {})
+        self._range_label.setText(self._range_text(mode_data.get("date_range")))
         if not mode_data.get("points"):
             self._status_label.setText("娱乐数据积累中")
             self._status_label.setVisible(True)
@@ -2492,6 +2502,17 @@ class EntertainmentHistoryCard(QFrame):
     def _captured_text(value) -> str:
         try:
             return f"截至 {datetime.fromisoformat(str(value)).strftime('%H:%M')}"
+        except ValueError:
+            return ""
+
+    @staticmethod
+    def _range_text(value) -> str:
+        if not isinstance(value, (list, tuple)) or len(value) != 2:
+            return ""
+        try:
+            start = date.fromisoformat(str(value[0]))
+            end = date.fromisoformat(str(value[1]))
+            return f"{start.month}/{start.day}–{end.month}/{end.day}"
         except ValueError:
             return ""
 
