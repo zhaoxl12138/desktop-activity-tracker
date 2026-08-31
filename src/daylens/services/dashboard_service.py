@@ -1938,6 +1938,7 @@ def load_today_snapshot(
 
     trusted_calculation_failed = False
     rhythm_query_failed = False
+    range_stats_query_failed = False
     try:
         thirty_day_stats = database.query_date_range_stats(
             db_path,
@@ -1957,6 +1958,7 @@ def load_today_snapshot(
         rhythm_daily = []
         trusted_calculation_failed = True
         rhythm_query_failed = True
+        range_stats_query_failed = True
     try:
         thirty_day_trend = _build_thirty_day_trend(thirty_day_daily)
     except Exception:
@@ -2047,7 +2049,7 @@ def load_today_snapshot(
         weekend_entertainment_limit_minutes=goal_config.get(
             "weekend_entertainment_limit_minutes", 120
         ),
-        query_failed=rhythm_query_failed,
+        query_failed=range_stats_query_failed,
     )
     try:
         goals = build_daily_goals(

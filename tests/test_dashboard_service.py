@@ -1000,6 +1000,53 @@ def test_entertainment_history_degrades_stably_when_range_query_fails(
     assert snapshot["goals"]["version"] == 1
 
 
+def test_entertainment_history_stays_ready_when_only_session_query_fails(
+    tmp_path: Path,
+    monkeypatch,
+):
+    db_path = tmp_path / "usage.db"
+    database.init_db(str(db_path)).close()
+
+    def successful_range_query(_db_path, dates):
+        return {
+            "daily": [
+                {
+                    "date": date_str,
+                    "total_samples": 0,
+                    "effective_seconds": 0,
+                    "video_seconds": 0,
+                }
+                for date_str in dates
+            ],
+            "totals": {},
+        }
+
+    def fail_session_query(*_args, **_kwargs):
+        raise RuntimeError("session range unavailable")
+
+    monkeypatch.setattr(
+        dashboard_service.database,
+        "query_date_range_stats",
+        successful_range_query,
+    )
+    monkeypatch.setattr(
+        dashboard_service.database,
+        "query_sessions_for_dates",
+        fail_session_query,
+    )
+
+    snapshot = load_today_snapshot(
+        str(db_path),
+        lambda process_name, _details: process_name,
+    )
+
+    assert snapshot["rhythm"]["today"]["status"]["kind"] == "unavailable"
+    assert snapshot["entertainment_history"]["status"] == {
+        "label": "可用",
+        "kind": "ready",
+    }
+
+
 def test_work_episode_rows_skip_malformed_sessions():
     valid = _rhythm_session("2026-08-12", "11:00:00", "11:10:00", 600)
     invalid = {**valid, "session_id": "bad", "start_time": "bad"}
