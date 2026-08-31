@@ -688,6 +688,103 @@ def test_daily_goals_card_renders_only_work_and_entertainment_rows():
     app.processEvents()
 
 
+def _entertainment_history_payload():
+    return {
+        "entertainment_history": {
+            "version": 1,
+            "status": {"label": "可用", "kind": "ready"},
+            "captured_at": "2026-08-31T14:35:00",
+            "week": {
+                "date_range": ["2026-08-25", "2026-08-31"],
+                "points": [
+                    {"date": "2026-08-25", "seconds": 1800, "has_data": True, "limit_seconds": 3600},
+                    {"date": "2026-08-26", "seconds": 0, "has_data": True, "limit_seconds": 3600},
+                    {"date": "2026-08-27", "has_data": False, "limit_seconds": 3600},
+                    {"date": "2026-08-28", "seconds": 4200, "has_data": True, "limit_seconds": 3600, "over_limit": True},
+                ],
+                "summary": {"total_seconds": 6000, "average_seconds": 1500, "max_date": "2026-08-28", "max_seconds": 4200},
+            },
+            "month": {
+                "date_range": ["2026-08-02", "2026-08-31"],
+                "points": [
+                    {"date": "2026-08-02", "seconds": 0, "has_data": True},
+                    {"date": "2026-08-30", "seconds": 7200, "has_data": True, "over_limit": True},
+                    {"date": "2026-08-31", "has_data": False},
+                ],
+                "summary": {"total_seconds": 7200, "average_seconds": 240, "max_date": "2026-08-30", "max_seconds": 7200},
+            },
+        }
+    }
+
+
+def test_entertainment_history_card_defaults_to_week_with_plain_text_summary():
+    app = _app()
+    card_type = getattr(dashboard_widgets, "EntertainmentHistoryCard", None)
+    assert card_type is not None
+    card = card_type()
+    card.set_data(_entertainment_history_payload())
+    card.show()
+    app.processEvents()
+
+    assert card._mode == "7d"
+    assert card._title_label.text() == "娱乐记录 · 近7天"
+    assert card._captured_label.text() == "截至 14:35"
+    assert [value.text() for _label, value in card._summary_labels] == [
+        "1小时40分钟",
+        "25分钟",
+        "8/28 · 1小时10分钟",
+    ]
+    assert all(label.textFormat() == Qt.PlainText for label in card._dynamic_labels())
+    assert "今日目标" not in " ".join(label.text() for label in card.findChildren(QLabel))
+    card.deleteLater()
+    app.processEvents()
+
+
+def test_entertainment_history_card_switches_to_month_calendar_with_over_limit_marker():
+    app = _app()
+    card = dashboard_widgets.EntertainmentHistoryCard()
+    card.set_data(_entertainment_history_payload())
+    card._mode_buttons["30d"].click()
+    app.processEvents()
+
+    assert card._mode == "30d"
+    assert card._title_label.text() == "娱乐记录 · 近30天"
+    assert card.canvas._mode == "30d"
+    assert card.canvas._calendar_dates == [
+        f"2026-08-{day:02d}" for day in range(2, 32)
+    ]
+    assert "2026-08-30" in card.canvas._over_limit_dates
+    assert card._summary_labels[1][1].text() == "4分钟"
+    card.deleteLater()
+    app.processEvents()
+
+
+def test_entertainment_history_week_canvas_distinguishes_zero_and_missing_points():
+    _app()
+    canvas = dashboard_widgets._EntertainmentHistoryCanvas()
+    points = _entertainment_history_payload()["entertainment_history"]["week"]["points"]
+    canvas.set_data("7d", points)
+
+    assert canvas._mode == "7d"
+    assert canvas._point_states == ["value", "zero", "missing", "over_limit"]
+    assert canvas._points[1]["seconds"] == 0
+    assert canvas._points[2]["has_data"] is False
+
+
+def test_entertainment_history_card_degrades_safely_without_available_model():
+    app = _app()
+    card = dashboard_widgets.EntertainmentHistoryCard()
+    card.set_data({})
+    app.processEvents()
+
+    assert card._status_label.text() == "娱乐数据积累中"
+    assert card.canvas._state == "empty"
+    card.set_data({"entertainment_history": {"status": "unavailable"}})
+    assert card._status_label.text() == "暂不可用"
+    card.deleteLater()
+    app.processEvents()
+
+
 def test_trend_canvas_renders_sparse_weekly_series():
     canvas = _TrendCanvas()
 

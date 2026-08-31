@@ -2191,6 +2191,319 @@ class DailyGoalsCard(QFrame):
         )
 
 
+class _EntertainmentHistoryCanvas(QWidget):
+    """Small bar chart / calendar heatmap for entertainment history."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._mode = "7d"
+        self._points: list[dict] = []
+        self._point_states: list[str] = []
+        self._calendar_dates: list[str] = []
+        self._over_limit_dates: set[str] = set()
+        self._state = "empty"
+
+    def set_data(
+        self,
+        mode: str,
+        points: list[dict] | None,
+        date_range: list[str] | tuple[str, str] | None = None,
+    ) -> None:
+        self._mode = mode if mode in {"7d", "30d"} else "7d"
+        self._points = sorted(
+            [dict(point) for point in (points or []) if isinstance(point, dict)],
+            key=lambda point: str(point.get("date", "")),
+        )
+        self._point_states = [self._point_state(point) for point in self._points]
+        self._over_limit_dates = {
+            str(point.get("date")) for point in self._points if point.get("over_limit")
+        }
+        self._calendar_dates = self._calendar_range(date_range)
+        self._state = "chart" if self._points else "empty"
+        self.update()
+
+    @staticmethod
+    def _point_state(point: dict) -> str:
+        if not point.get("has_data", False):
+            return "missing"
+        if point.get("over_limit", False):
+            return "over_limit"
+        if (parse_nonnegative_int(point.get("seconds")) or 0) == 0:
+            return "zero"
+        return "value"
+
+    def _calendar_range(self, date_range) -> list[str]:
+        if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
+            try:
+                start = date.fromisoformat(str(date_range[0]))
+                end = date.fromisoformat(str(date_range[1]))
+                if start <= end and (end - start).days < 40:
+                    return [
+                        (start + timedelta(days=offset)).isoformat()
+                        for offset in range((end - start).days + 1)
+                    ]
+            except ValueError:
+                pass
+        return [str(point.get("date", "")) for point in self._points]
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        if self._state == "empty":
+            painter.setPen(QColor(COLORS["text_muted"]))
+            painter.drawText(self.rect(), Qt.AlignCenter, "娱乐数据积累中")
+            return
+        if self._mode == "30d":
+            self._draw_calendar(painter)
+        else:
+            self._draw_bars(painter)
+
+    def _draw_bars(self, painter: QPainter) -> None:
+        rect = QRectF(self.rect()).adjusted(4, 6, -4, -19)
+        values = [
+            parse_nonnegative_int(point.get("seconds")) or 0
+            for point in self._points
+            if point.get("has_data", False)
+        ]
+        limits = [
+            parse_nonnegative_int(point.get("limit_seconds")) or 0
+            for point in self._points
+        ]
+        maximum = max(values + limits + [1])
+        slot = rect.width() / max(len(self._points), 1)
+        for index, point in enumerate(self._points):
+            x = rect.left() + index * slot
+            state = self._point_states[index]
+            if state == "missing":
+                painter.setPen(QPen(QColor(COLORS["border"]), 1, Qt.DashLine))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawRect(QRectF(x + slot * 0.28, rect.bottom() - 4, slot * 0.44, 3))
+            else:
+                seconds = parse_nonnegative_int(point.get("seconds")) or 0
+                height = max(2.0, seconds / maximum * rect.height())
+                color = QColor("#e66f24" if state == "over_limit" else COLORS["video_orange"])
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(color)
+                painter.drawRoundedRect(
+                    QRectF(x + slot * 0.22, rect.bottom() - height, slot * 0.56, height),
+                    2,
+                    2,
+                )
+            limit = parse_nonnegative_int(point.get("limit_seconds"))
+            if limit:
+                y = rect.bottom() - limit / maximum * rect.height()
+                painter.setPen(QPen(QColor("#c88d68"), 1, Qt.DashLine))
+                painter.drawLine(QPointF(x + slot * 0.16, y), QPointF(x + slot * 0.84, y))
+            painter.setPen(QColor(COLORS["text_muted"]))
+            font = painter.font()
+            font.setPixelSize(9)
+            painter.setFont(font)
+            label = self._short_date(str(point.get("date", "")), bool(point.get("is_today")))
+            painter.drawText(QRectF(x, rect.bottom() + 4, slot, 13), Qt.AlignCenter, label)
+
+    def _draw_calendar(self, painter: QPainter) -> None:
+        rect = QRectF(self.rect()).adjusted(22, 4, -4, -4)
+        point_map = {str(point.get("date", "")): point for point in self._points}
+        dates = self._calendar_dates
+        if not dates:
+            return
+        first = date.fromisoformat(dates[0])
+        weeks = max(1, math.ceil((first.weekday() + len(dates)) / 7))
+        cell_w = rect.width() / weeks
+        cell_h = rect.height() / 7
+        maximum = max(
+            [parse_nonnegative_int(point.get("seconds")) or 0 for point in self._points] + [1]
+        )
+        painter.setPen(QColor(COLORS["text_muted"]))
+        font = painter.font()
+        font.setPixelSize(8)
+        painter.setFont(font)
+        for weekday, text in enumerate("一二三四五六日"):
+            painter.drawText(QRectF(0, rect.top() + weekday * cell_h, 18, cell_h), Qt.AlignCenter, text)
+        for index, date_str in enumerate(dates):
+            day = date.fromisoformat(date_str)
+            offset = first.weekday() + index
+            column, row = divmod(offset, 7)
+            cell = QRectF(
+                rect.left() + column * cell_w + 1,
+                rect.top() + row * cell_h + 1,
+                max(3.0, cell_w - 3),
+                max(3.0, cell_h - 3),
+            )
+            point = point_map.get(date_str)
+            if point is None or not point.get("has_data", False):
+                painter.setPen(QPen(QColor(COLORS["border"]), 1))
+                painter.setBrush(Qt.NoBrush)
+            else:
+                seconds = parse_nonnegative_int(point.get("seconds")) or 0
+                strength = 45 + int(190 * seconds / maximum)
+                color = QColor(COLORS["video_orange"])
+                color.setAlpha(strength)
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(color)
+            painter.drawRoundedRect(cell, 2, 2)
+            if point and point.get("over_limit", False):
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QColor("#e66f24"))
+                triangle = QPainterPath()
+                triangle.moveTo(cell.right() - 6, cell.top())
+                triangle.lineTo(cell.right(), cell.top())
+                triangle.lineTo(cell.right(), cell.top() + 6)
+                triangle.closeSubpath()
+                painter.drawPath(triangle)
+
+    @staticmethod
+    def _short_date(value: str, is_today: bool) -> str:
+        if is_today:
+            return "今日"
+        try:
+            return f"{date.fromisoformat(value).month}/{date.fromisoformat(value).day}"
+        except ValueError:
+            return value
+
+
+class EntertainmentHistoryCard(QFrame):
+    """Entertainment history card backed by the dashboard snapshot model."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("dashboardCard")
+        self.setStyleSheet(ui_style.get_dashboard_card_style())
+        self.setMinimumHeight(180)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._mode = "7d"
+        self._history: dict = {}
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 10, 16, 10)
+        root.setSpacing(5)
+        header = QHBoxLayout()
+        self._title_label = QLabel("娱乐记录 · 近7天")
+        self._title_label.setTextFormat(Qt.PlainText)
+        self._title_label.setStyleSheet(f"font-size: 15px; font-weight: 800; color: {COLORS['text']};")
+        header.addWidget(self._title_label)
+        header.addStretch(1)
+        self._mode_buttons: dict[str, QPushButton] = {}
+        group = QButtonGroup(self)
+        group.setExclusive(True)
+        for mode, text in (("7d", "近7天"), ("30d", "近30天")):
+            button = QPushButton(text)
+            button.setCheckable(True)
+            button.setCursor(Qt.PointingHandCursor)
+            button.setStyleSheet(
+                f"QPushButton {{ padding: 3px 8px; border-radius: 6px; border: 1px solid {COLORS['border']}; color: {COLORS['text_secondary']}; background: {COLORS['panel_bg_alt']}; font-size: 11px; }}"
+                f"QPushButton:checked {{ background: {COLORS['video_orange']}; color: white; border-color: {COLORS['video_orange']}; }}"
+            )
+            button.clicked.connect(lambda _checked=False, current=mode: self.set_mode(current))
+            group.addButton(button)
+            self._mode_buttons[mode] = button
+            header.addWidget(button)
+        self._mode_buttons["7d"].setChecked(True)
+        root.addLayout(header)
+
+        self._captured_label = QLabel("")
+        self._captured_label.setTextFormat(Qt.PlainText)
+        self._captured_label.setStyleSheet(f"font-size: 10px; color: {COLORS['text_muted']};")
+        root.addWidget(self._captured_label)
+        self.canvas = _EntertainmentHistoryCanvas()
+        self.canvas.setMinimumHeight(78)
+        root.addWidget(self.canvas, 1)
+        summaries = QHBoxLayout()
+        summaries.setSpacing(6)
+        self._summary_labels: list[tuple[QLabel, QLabel]] = []
+        for title in ("总时长", "日均", "最高日"):
+            cell = QFrame()
+            cell.setStyleSheet(f"QFrame {{ background: {COLORS['panel_bg_alt']}; border-radius: 6px; }}")
+            layout = QVBoxLayout(cell)
+            layout.setContentsMargins(7, 3, 7, 3)
+            layout.setSpacing(0)
+            label, value = QLabel(title), QLabel("--")
+            for dynamic in (label, value):
+                dynamic.setTextFormat(Qt.PlainText)
+            label.setStyleSheet(f"font-size: 9px; color: {COLORS['text_muted']};")
+            value.setStyleSheet(f"font-size: 11px; font-weight: 800; color: {COLORS['text']};")
+            layout.addWidget(label)
+            layout.addWidget(value)
+            summaries.addWidget(cell, 1)
+            self._summary_labels.append((label, value))
+        root.addLayout(summaries)
+        self._status_label = QLabel("娱乐数据积累中")
+        self._status_label.setTextFormat(Qt.PlainText)
+        self._status_label.setVisible(False)
+        self._status_label.setStyleSheet(
+            f"font-size: 11px; color: {COLORS['text_muted']};"
+        )
+        root.addWidget(self._status_label)
+        self.set_data({})
+
+    def _dynamic_labels(self) -> list[QLabel]:
+        return [self._title_label, self._captured_label, self._status_label] + [label for pair in self._summary_labels for label in pair]
+
+    def set_data(self, payload: dict | None) -> None:
+        data = dict(payload or {}).get("entertainment_history")
+        self._history = dict(data) if isinstance(data, dict) else {}
+        self._apply_mode()
+
+    def set_mode(self, mode: str) -> None:
+        if mode not in {"7d", "30d"}:
+            return
+        self._mode = mode
+        if not self._mode_buttons[mode].isChecked():
+            self._mode_buttons[mode].setChecked(True)
+        self._apply_mode()
+
+    def _apply_mode(self) -> None:
+        label = "近7天" if self._mode == "7d" else "近30天"
+        self._title_label.setText(f"娱乐记录 · {label}")
+        status = self._history.get("status", {})
+        status = dict(status) if isinstance(status, dict) else {"kind": str(status)}
+        unavailable = status.get("kind") == "unavailable"
+        if not self._history or unavailable:
+            self._status_label.setText("暂不可用" if unavailable else "娱乐数据积累中")
+            self._status_label.setVisible(True)
+            self._captured_label.setText("")
+            self.canvas.set_data(self._mode, [])
+            self._set_summary({})
+            return
+        self._status_label.setVisible(False)
+        self._captured_label.setText(self._captured_text(self._history.get("captured_at")))
+        mode_data = dict(self._history.get("week" if self._mode == "7d" else "month", {}) or {})
+        if not mode_data.get("points"):
+            self._status_label.setText("娱乐数据积累中")
+            self._status_label.setVisible(True)
+        self.canvas.set_data(self._mode, mode_data.get("points", []), mode_data.get("date_range"))
+        self._set_summary(dict(mode_data.get("summary", {}) or {}))
+
+    def _set_summary(self, summary: dict) -> None:
+        total = parse_nonnegative_int(summary.get("total_seconds"))
+        average = parse_nonnegative_int(summary.get("average_seconds"))
+        maximum = parse_nonnegative_int(summary.get("max_seconds"))
+        max_date = summary.get("max_date")
+        values = [
+            _goal_duration(total) if total is not None else "--",
+            _goal_duration(average) if average is not None else "--",
+            f"{self._short_date(str(max_date))} · {_goal_duration(maximum)}" if max_date and maximum is not None else "--",
+        ]
+        for (_label, value), text in zip(self._summary_labels, values):
+            value.setText(text)
+
+    @staticmethod
+    def _captured_text(value) -> str:
+        try:
+            return f"截至 {datetime.fromisoformat(str(value)).strftime('%H:%M')}"
+        except ValueError:
+            return ""
+
+    @staticmethod
+    def _short_date(value: str) -> str:
+        try:
+            parsed = date.fromisoformat(value)
+            return f"{parsed.month}/{parsed.day}"
+        except ValueError:
+            return value
+
+
 class TopAppListWidget(QFrame):
     MAX_ROWS = 5
 
