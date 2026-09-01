@@ -2433,7 +2433,7 @@ class EntertainmentHistoryCard(QFrame):
         summaries = QHBoxLayout()
         summaries.setSpacing(6)
         self._summary_labels: list[tuple[QLabel, QLabel]] = []
-        for title in ("总时长", "日均", "最高日"):
+        for title in ("日均娱乐", "最高一天", "总时间"):
             cell = QFrame()
             cell.setStyleSheet(f"QFrame {{ background: {COLORS['panel_bg_alt']}; border-radius: 6px; }}")
             layout = QVBoxLayout(cell)
@@ -2506,9 +2506,9 @@ class EntertainmentHistoryCard(QFrame):
         maximum = parse_nonnegative_int(summary.get("max_seconds"))
         max_date = summary.get("max_date")
         values = [
-            _goal_duration(total) if total is not None else "--",
             _goal_duration(average) if average is not None else "--",
             f"{self._short_date(str(max_date))} · {_goal_duration(maximum)}" if max_date and maximum is not None else "--",
+            _goal_duration(total) if total is not None else "--",
         ]
         for (_label, value), text in zip(self._summary_labels, values):
             value.setText(text)

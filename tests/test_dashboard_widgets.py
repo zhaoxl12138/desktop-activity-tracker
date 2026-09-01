@@ -693,6 +693,29 @@ def _entertainment_history_payload():
     }
 
 
+def test_entertainment_history_card_matches_work_rhythm_summary_order():
+    app = _app()
+    card = dashboard_widgets.EntertainmentHistoryCard()
+    payload = _entertainment_history_payload()
+    payload["entertainment_history"]["week"]["summary"] = {
+        "total_seconds": 7_200,
+        "average_seconds": 1_200,
+        "max_date": "2026-09-01",
+        "max_seconds": 3_600,
+    }
+
+    card.set_data(payload)
+
+    assert [label.text() for label, _value in card._summary_labels] == [
+        "日均娱乐", "最高一天", "总时间",
+    ]
+    assert [value.text() for _label, value in card._summary_labels] == [
+        "20分钟", "9/1 · 1小时", "2小时",
+    ]
+    card.deleteLater()
+    app.processEvents()
+
+
 def test_entertainment_history_card_defaults_to_week_with_plain_text_summary():
     app = _app()
     card_type = getattr(dashboard_widgets, "EntertainmentHistoryCard", None)
@@ -708,9 +731,9 @@ def test_entertainment_history_card_defaults_to_week_with_plain_text_summary():
     assert card._range_label.isVisible()
     assert card._captured_label.text() == "截至 14:35"
     assert [value.text() for _label, value in card._summary_labels] == [
-        "1小时40分钟",
         "25分钟",
         "8/28 · 1小时10分钟",
+        "1小时40分钟",
     ]
     assert all(label.textFormat() == Qt.PlainText for label in card._dynamic_labels())
     assert "今日目标" not in " ".join(label.text() for label in card.findChildren(QLabel))
@@ -735,7 +758,7 @@ def test_entertainment_history_card_switches_to_month_calendar_with_over_limit_m
         f"2026-08-{day:02d}" for day in range(2, 32)
     ]
     assert "2026-08-30" in card.canvas._over_limit_dates
-    assert card._summary_labels[1][1].text() == "4分钟"
+    assert card._summary_labels[0][1].text() == "4分钟"
     card.deleteLater()
     app.processEvents()
 
