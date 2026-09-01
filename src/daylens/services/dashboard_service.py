@@ -412,6 +412,99 @@ def build_daily_goals(
     }
 
 
+def build_entertainment_history(
+    *,
+    captured_now: datetime,
+    daily_rows: list[dict],
+    current_entertainment_seconds: int,
+    today_has_data: bool,
+    weekday_entertainment_limit_minutes: int,
+    weekend_entertainment_limit_minutes: int,
+    query_failed: bool,
+) -> dict[str, object]:
+    """Build rolling entertainment facts from the dashboard's loaded range."""
+    today = captured_now.date()
+    today_str = today.isoformat()
+    row_map = _daily_row_map(daily_rows)
+
+    def limit_seconds(day: date) -> int | None:
+        configured = (
+            weekday_entertainment_limit_minutes
+            if day.weekday() < 5
+            else weekend_entertainment_limit_minutes
+        )
+        parsed = parse_nonnegative_int(configured)
+        if parsed is None or parsed <= 0 or parsed > 720:
+            return None
+        return parsed * 60
+
+    def build_mode(days: int) -> dict[str, object]:
+        dates = [
+            today - timedelta(days=offset)
+            for offset in reversed(range(days))
+        ]
+        points: list[dict[str, object]] = []
+        for day in dates:
+            date_str = day.isoformat()
+            row = row_map.get(date_str)
+            is_today = date_str == today_str
+            has_data = (
+                bool(today_has_data)
+                if is_today
+                else _day_has_metric_data(row or {})
+            )
+            seconds = (
+                parse_nonnegative_int(current_entertainment_seconds) or 0
+                if is_today
+                else parse_nonnegative_int((row or {}).get("video_seconds")) or 0
+            )
+            boundary = limit_seconds(day)
+            points.append(
+                {
+                    "date": date_str,
+                    "seconds": seconds,
+                    "has_data": has_data,
+                    "is_today": is_today,
+                    "limit_seconds": boundary,
+                    "over_limit": bool(boundary is not None and seconds > boundary),
+                }
+            )
+
+        valid = [point for point in points if point["has_data"]]
+        max_point = max(
+            valid,
+            key=lambda point: int(point["seconds"]),
+            default=None,
+        )
+        total = sum(int(point["seconds"]) for point in valid)
+        return {
+            "date_range": [dates[0].isoformat(), dates[-1].isoformat()],
+            "points": points,
+            "summary": {
+                "total_seconds": total,
+                "average_seconds": round(total / len(valid)) if valid else 0,
+                "max_date": max_point["date"] if max_point is not None else None,
+                "max_seconds": (
+                    int(max_point["seconds"])
+                    if max_point is not None
+                    else 0
+                ),
+            },
+        }
+
+    return {
+        "version": 1,
+        "captured_at": captured_now.isoformat(timespec="seconds"),
+        "status": (
+            {"label": "暂不可用", "kind": "unavailable"}
+            if query_failed
+            else {"label": "可用", "kind": "ready"}
+        ),
+        "week": build_mode(7),
+        "month": build_mode(30),
+    }
+
+
 def _weekday_label(value: date) -> str:
     return "周" + "一二三四五六日"[value.weekday()]
 
@@ -1845,6 +1938,7 @@ def load_today_snapshot(
 
     trusted_calculation_failed = False
     rhythm_query_failed = False
+    range_stats_query_failed = False
     try:
         thirty_day_stats = database.query_date_range_stats(
             db_path,
@@ -1864,6 +1958,7 @@ def load_today_snapshot(
         rhythm_daily = []
         trusted_calculation_failed = True
         rhythm_query_failed = True
+        range_stats_query_failed = True
     try:
         thirty_day_trend = _build_thirty_day_trend(thirty_day_daily)
     except Exception:
@@ -1939,6 +2034,23 @@ def load_today_snapshot(
     )
     today_entertainment_seconds = category_seconds(stats)["entertainment"]
     goal_config = dict(goal_settings or {})
+    entertainment_history = build_entertainment_history(
+        captured_now=captured_now,
+        daily_rows=rhythm_daily,
+        current_entertainment_seconds=today_entertainment_seconds,
+        today_has_data=(
+            _day_has_metric_data(totals)
+            or bool(stats.get("by_category"))
+            or bool(stats.get("by_app"))
+        ),
+        weekday_entertainment_limit_minutes=goal_config.get(
+            "weekday_entertainment_limit_minutes", 60
+        ),
+        weekend_entertainment_limit_minutes=goal_config.get(
+            "weekend_entertainment_limit_minutes", 120
+        ),
+        query_failed=range_stats_query_failed,
+    )
     try:
         goals = build_daily_goals(
             captured_now=captured_now,
@@ -2116,6 +2228,7 @@ def load_today_snapshot(
         "insight": insight,
         "rhythm": rhythm,
         "goals": goals,
+        "entertainment_history": entertainment_history,
         "trend": {
             "today": split_today["total"],
             "today_work": split_today["work"],

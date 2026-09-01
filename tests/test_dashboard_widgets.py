@@ -641,49 +641,179 @@ def test_top_app_widget_limits_dashboard_ranking_to_five_rows():
     app.processEvents()
 
 
-def test_daily_goals_card_renders_only_work_and_entertainment_rows():
+def test_entertainment_history_card_replaces_daily_goals_content():
     app = _app()
-    card_type = getattr(dashboard_widgets, "DailyGoalsCard", None)
+    card_type = getattr(dashboard_widgets, "EntertainmentHistoryCard", None)
     assert card_type is not None
     card = card_type()
-    card.set_data(
-        {
-            "status": {"label": "智能目标", "kind": "ready"},
-            "work": {
-                "current_seconds": 3_600,
-                "target_seconds": 6_300,
-                "remaining_seconds": 2_700,
-                "progress_percent": 57,
-                "sample_count": 7,
-                "comparable": True,
-            },
-            "entertainment": {
-                "current_seconds": 900,
-                "limit_seconds": 3_600,
-                "progress_percent": 25,
-                "state": "within",
-            },
-            "advice": "再完成一个25分钟工作段，继续接近今日目标",
-        }
-    )
+    card.set_data(_entertainment_history_payload())
     card.show()
     app.processEvents()
 
-    assert "1小时 / 1小时45分钟" in card.work_value_label.text()
-    assert "15分钟 / 1小时" in card.entertainment_value_label.text()
-    assert card.work_bar.value() == 57
-    assert card.entertainment_bar.value() == 25
     visible_text = {
         label.text()
         for label in card.findChildren(QLabel)
         if not label.isHidden()
     }
-    assert "智能目标" not in visible_text
-    assert "再完成一个25分钟工作段，继续接近今日目标" not in visible_text
+    assert "娱乐记录 · 近7天" in visible_text
+    assert not any("工作目标" in text or "今日目标" in text for text in visible_text)
 
     card.set_data({})
-    assert card.work_value_label.text() == "目标数据积累中"
-    assert card.entertainment_value_label.text() == "尚未设置"
+    assert card._status_label.text() == "娱乐数据积累中"
+    card.deleteLater()
+    app.processEvents()
+
+
+def _entertainment_history_payload():
+    return {
+        "entertainment_history": {
+            "version": 1,
+            "status": {"label": "可用", "kind": "ready"},
+            "captured_at": "2026-08-31T14:35:00",
+            "week": {
+                "date_range": ["2026-08-25", "2026-08-31"],
+                "points": [
+                    {"date": "2026-08-25", "seconds": 1800, "has_data": True, "limit_seconds": 3600},
+                    {"date": "2026-08-26", "seconds": 0, "has_data": True, "limit_seconds": 3600},
+                    {"date": "2026-08-27", "has_data": False, "limit_seconds": 3600},
+                    {"date": "2026-08-28", "seconds": 4200, "has_data": True, "limit_seconds": 3600, "over_limit": True},
+                ],
+                "summary": {"total_seconds": 6000, "average_seconds": 1500, "max_date": "2026-08-28", "max_seconds": 4200},
+            },
+            "month": {
+                "date_range": ["2026-08-02", "2026-08-31"],
+                "points": [
+                    {"date": "2026-08-02", "seconds": 0, "has_data": True},
+                    {"date": "2026-08-30", "seconds": 7200, "has_data": True, "over_limit": True},
+                    {"date": "2026-08-31", "has_data": False},
+                ],
+                "summary": {"total_seconds": 7200, "average_seconds": 240, "max_date": "2026-08-30", "max_seconds": 7200},
+            },
+        }
+    }
+
+
+def test_entertainment_history_card_defaults_to_week_with_plain_text_summary():
+    app = _app()
+    card_type = getattr(dashboard_widgets, "EntertainmentHistoryCard", None)
+    assert card_type is not None
+    card = card_type()
+    card.set_data(_entertainment_history_payload())
+    card.show()
+    app.processEvents()
+
+    assert card._mode == "7d"
+    assert card._title_label.text() == "娱乐记录 · 近7天"
+    assert card._range_label.text() == "8/25–8/31"
+    assert card._range_label.isVisible()
+    assert card._captured_label.text() == "截至 14:35"
+    assert [value.text() for _label, value in card._summary_labels] == [
+        "1小时40分钟",
+        "25分钟",
+        "8/28 · 1小时10分钟",
+    ]
+    assert all(label.textFormat() == Qt.PlainText for label in card._dynamic_labels())
+    assert "今日目标" not in " ".join(label.text() for label in card.findChildren(QLabel))
+    card.deleteLater()
+    app.processEvents()
+
+
+def test_entertainment_history_card_switches_to_month_calendar_with_over_limit_marker():
+    app = _app()
+    card = dashboard_widgets.EntertainmentHistoryCard()
+    card.set_data(_entertainment_history_payload())
+    card.show()
+    card._mode_buttons["30d"].click()
+    app.processEvents()
+
+    assert card._mode == "30d"
+    assert card._title_label.text() == "娱乐记录 · 近30天"
+    assert card._range_label.text() == "8/2–8/31"
+    assert card._range_label.isVisible()
+    assert card.canvas._mode == "30d"
+    assert card.canvas._calendar_dates == [
+        f"2026-08-{day:02d}" for day in range(2, 32)
+    ]
+    assert "2026-08-30" in card.canvas._over_limit_dates
+    assert card._summary_labels[1][1].text() == "4分钟"
+    card.deleteLater()
+    app.processEvents()
+
+
+def test_entertainment_history_week_canvas_distinguishes_zero_and_missing_points():
+    _app()
+    canvas = dashboard_widgets._EntertainmentHistoryCanvas()
+    points = _entertainment_history_payload()["entertainment_history"]["week"]["points"]
+    canvas.set_data("7d", points)
+
+    assert canvas._mode == "7d"
+    assert canvas._point_states == ["value", "zero", "missing", "over_limit"]
+    assert canvas._points[1]["seconds"] == 0
+    assert canvas._points[2]["has_data"] is False
+
+
+def test_entertainment_history_card_degrades_safely_without_available_model():
+    app = _app()
+    card = dashboard_widgets.EntertainmentHistoryCard()
+    card.set_data({})
+    app.processEvents()
+
+    assert card._status_label.text() == "娱乐数据积累中"
+    assert card.canvas._state == "empty"
+    card.set_data({"entertainment_history": {"status": "unavailable"}})
+    assert card._status_label.text() == "暂不可用"
+    card.deleteLater()
+    app.processEvents()
+
+
+def test_entertainment_history_calendar_ignores_invalid_ranges_and_point_dates():
+    app = _app()
+    canvas = dashboard_widgets._EntertainmentHistoryCanvas()
+    canvas.set_data(
+        "30d",
+        [{"date": "not-a-date", "seconds": 60, "has_data": True}],
+        ["also-not-a-date", "still-not-a-date"],
+    )
+    canvas.show()
+    app.processEvents()
+
+    assert canvas._calendar_dates == []
+    assert canvas._state == "empty"
+    canvas.deleteLater()
+    app.processEvents()
+
+
+def test_entertainment_history_canvas_degrades_for_non_sequence_points():
+    app = _app()
+    canvas = dashboard_widgets._EntertainmentHistoryCanvas()
+    canvas.set_data("30d", 7, ["2026-08-02", "2026-08-31"])
+    canvas.show()
+    app.processEvents()
+
+    assert canvas._points == []
+    assert canvas._state == "empty"
+    canvas.deleteLater()
+    app.processEvents()
+
+
+def test_entertainment_history_card_degrades_for_malformed_nested_models():
+    app = _app()
+    card = dashboard_widgets.EntertainmentHistoryCard()
+    card.set_data(
+        {
+            "entertainment_history": {
+                "status": {"kind": "ready"},
+                "week": "not-a-model",
+                "month": 7,
+                "captured_at": 42,
+            }
+        }
+    )
+    card.show()
+    app.processEvents()
+
+    assert card._status_label.text() == "娱乐数据积累中"
+    assert [value.text() for _label, value in card._summary_labels] == ["--", "--", "--"]
     card.deleteLater()
     app.processEvents()
 

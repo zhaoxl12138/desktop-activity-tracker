@@ -831,6 +831,222 @@ def test_dashboard_snapshot_exposes_goal_model_with_supplied_boundary(tmp_path: 
     assert snapshot["goals"]["entertainment"]["limit_seconds"] == 4_500
 
 
+def test_dashboard_snapshot_builds_entertainment_history_from_existing_range(
+    monkeypatch,
+):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls):
+            return cls(2026, 8, 31, 14, 5, 6)
+
+    range_calls = []
+
+    def empty_stats(*_args):
+        return {
+            "totals": {
+                "total_samples": 0,
+                "effective_seconds": 0,
+                "engaged_seconds": 0,
+                "passive_seconds": 0,
+                "idle_seconds": 0,
+                "total_seconds": 0,
+            },
+            "by_category": [],
+            "by_app": [],
+            "by_app_detail": [],
+        }
+
+    def query_date_stats(_db_path, date_str):
+        result = empty_stats()
+        if date_str == "2026-08-31":
+            result["totals"].update(total_samples=1, effective_seconds=300)
+            result["by_category"] = [
+                {"category_key": "video", "effective_seconds": 300}
+            ]
+        return result
+
+    def query_range_stats(_db_path, dates):
+        dates = list(dates)
+        range_calls.append(dates)
+        daily = [
+            {
+                "date": date_str,
+                "total_samples": 0,
+                "effective_seconds": 0,
+                "video_seconds": 0,
+            }
+            for date_str in dates
+        ]
+        by_date = {row["date"]: row for row in daily}
+        by_date["2026-08-28"].update(
+            total_samples=1,
+            effective_seconds=600,
+            video_seconds=600,
+        )
+        by_date["2026-08-30"].update(
+            total_samples=1,
+            effective_seconds=1,
+            video_seconds=0,
+        )
+        by_date["2026-08-31"].update(
+            total_samples=1,
+            effective_seconds=999,
+            video_seconds=999,
+        )
+        return {"daily": daily, "totals": {}}
+
+    monkeypatch.setattr(dashboard_service, "datetime", FrozenDateTime)
+    monkeypatch.setattr(dashboard_service.database, "query_date_stats", query_date_stats)
+    monkeypatch.setattr(
+        dashboard_service.database,
+        "query_date_range_stats",
+        query_range_stats,
+    )
+    monkeypatch.setattr(
+        dashboard_service.database,
+        "query_sessions_for_dates",
+        lambda *_: [],
+    )
+    monkeypatch.setattr(dashboard_service, "build_focus_summary", lambda *_: ("", 0))
+    monkeypatch.setattr(
+        dashboard_service.database,
+        "count_recording_days",
+        lambda *_: 0,
+    )
+
+    snapshot = load_today_snapshot(
+        "unused.db",
+        lambda process_name, _details: process_name,
+        {
+            "weekday_entertainment_limit_minutes": 60,
+            "weekend_entertainment_limit_minutes": 120,
+        },
+    )
+
+    history = snapshot["entertainment_history"]
+    assert len(range_calls) == 1
+    assert len(range_calls[0]) == 31
+    assert history["version"] == 1
+    assert history["captured_at"] == "2026-08-31T14:05:06"
+    assert history["status"] == {"label": "可用", "kind": "ready"}
+    assert history["week"]["date_range"] == ["2026-08-25", "2026-08-31"]
+    assert history["month"]["date_range"] == ["2026-08-02", "2026-08-31"]
+    assert [point["date"] for point in history["week"]["points"]] == [
+        "2026-08-25",
+        "2026-08-26",
+        "2026-08-27",
+        "2026-08-28",
+        "2026-08-29",
+        "2026-08-30",
+        "2026-08-31",
+    ]
+    points = {point["date"]: point for point in history["week"]["points"]}
+    assert points["2026-08-29"] == {
+        "date": "2026-08-29",
+        "seconds": 0,
+        "has_data": False,
+        "is_today": False,
+        "limit_seconds": 7_200,
+        "over_limit": False,
+    }
+    assert points["2026-08-30"]["seconds"] == 0
+    assert points["2026-08-30"]["has_data"] is True
+    assert points["2026-08-30"]["limit_seconds"] == 7_200
+    assert points["2026-08-31"]["seconds"] == 300
+    assert points["2026-08-31"]["is_today"] is True
+    assert points["2026-08-31"]["limit_seconds"] == 3_600
+    assert history["week"]["summary"] == {
+        "total_seconds": 900,
+        "average_seconds": 300,
+        "max_date": "2026-08-28",
+        "max_seconds": 600,
+    }
+    assert history["month"]["summary"] == history["week"]["summary"]
+    assert snapshot["goals"]["version"] == 1
+
+
+def test_entertainment_history_degrades_stably_when_range_query_fails(
+    tmp_path: Path,
+    monkeypatch,
+):
+    db_path = tmp_path / "usage.db"
+    database.init_db(str(db_path)).close()
+
+    def fail_range_query(*_args, **_kwargs):
+        raise RuntimeError("range unavailable")
+
+    monkeypatch.setattr(
+        dashboard_service.database,
+        "query_date_range_stats",
+        fail_range_query,
+    )
+
+    snapshot = load_today_snapshot(
+        str(db_path),
+        lambda process_name, _details: process_name,
+    )
+
+    history = snapshot["entertainment_history"]
+    assert history["version"] == 1
+    assert history["status"] == {"label": "暂不可用", "kind": "unavailable"}
+    assert len(history["week"]["points"]) == 7
+    assert len(history["month"]["points"]) == 30
+    assert history["month"]["summary"] == {
+        "total_seconds": 0,
+        "average_seconds": 0,
+        "max_date": None,
+        "max_seconds": 0,
+    }
+    assert snapshot["goals"]["version"] == 1
+
+
+def test_entertainment_history_stays_ready_when_only_session_query_fails(
+    tmp_path: Path,
+    monkeypatch,
+):
+    db_path = tmp_path / "usage.db"
+    database.init_db(str(db_path)).close()
+
+    def successful_range_query(_db_path, dates):
+        return {
+            "daily": [
+                {
+                    "date": date_str,
+                    "total_samples": 0,
+                    "effective_seconds": 0,
+                    "video_seconds": 0,
+                }
+                for date_str in dates
+            ],
+            "totals": {},
+        }
+
+    def fail_session_query(*_args, **_kwargs):
+        raise RuntimeError("session range unavailable")
+
+    monkeypatch.setattr(
+        dashboard_service.database,
+        "query_date_range_stats",
+        successful_range_query,
+    )
+    monkeypatch.setattr(
+        dashboard_service.database,
+        "query_sessions_for_dates",
+        fail_session_query,
+    )
+
+    snapshot = load_today_snapshot(
+        str(db_path),
+        lambda process_name, _details: process_name,
+    )
+
+    assert snapshot["rhythm"]["today"]["status"]["kind"] == "unavailable"
+    assert snapshot["entertainment_history"]["status"] == {
+        "label": "可用",
+        "kind": "ready",
+    }
+
+
 def test_work_episode_rows_skip_malformed_sessions():
     valid = _rhythm_session("2026-08-12", "11:00:00", "11:10:00", 600)
     invalid = {**valid, "session_id": "bad", "start_time": "bad"}

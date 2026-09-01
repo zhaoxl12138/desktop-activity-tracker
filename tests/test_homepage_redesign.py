@@ -118,6 +118,23 @@ def _dashboard_snapshot(**overrides):
     return payload
 
 
+def _entertainment_history():
+    return {
+        "status": {"label": "可用", "kind": "ready"},
+        "captured_at": "2026-08-31T14:35:00",
+        "week": {
+            "date_range": ["2026-08-25", "2026-08-31"],
+            "points": [{"date": "2026-08-31", "seconds": 900, "has_data": True}],
+            "summary": {"total_seconds": 900, "average_seconds": 900},
+        },
+        "month": {
+            "date_range": ["2026-08-02", "2026-08-31"],
+            "points": [{"date": "2026-08-31", "seconds": 900, "has_data": True}],
+            "summary": {"total_seconds": 900, "average_seconds": 30},
+        },
+    }
+
+
 def test_homepage_shell_matches_reference_structure():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -182,7 +199,7 @@ def test_homepage_shell_matches_reference_structure():
         assert getattr(window.pages["today"], "insight_empty_label", None) is None
         assert window.pages["today"].trend_card.height() <= 300
         assert window.pages["today"].top_app_card.minimumHeight() >= 180
-        assert window.pages["today"].daily_goals_card.minimumHeight() >= 130
+        assert window.pages["today"].entertainment_history_card.minimumHeight() >= 180
         assert window.pages["today"].distribution_cmp_labels == {}
         distribution_texts = {
             label.text()
@@ -385,3 +402,31 @@ def test_today_overview_applies_old_and_trusted_snapshots_safely():
         window.close()
         app.processEvents()
         assert window.dashboard_refresh.shutdown(timeout_ms=1_000) is True
+
+
+def test_today_overview_uses_entertainment_history_instead_of_daily_goals(tmp_path):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    db_path = tmp_path / "usage.db"
+    database.init_db(str(db_path)).close()
+    from desktop_activity_tracker.gui.pages.today_overview import TodayOverviewPage
+
+    overview = TodayOverviewPage(str(db_path))
+    overview.apply_snapshot(
+        _dashboard_snapshot(
+            goals={"work": {"target_seconds": 6_300}},
+            entertainment_history=_entertainment_history(),
+        )
+    )
+    app.processEvents()
+
+    assert not hasattr(overview, "daily_goals_card")
+    assert overview.entertainment_history_card._title_label.text() == "娱乐记录 · 近7天"
+    overview.entertainment_history_card._mode_buttons["30d"].click()
+    assert overview.entertainment_history_card._title_label.text() == "娱乐记录 · 近30天"
+    visible_text = " ".join(label.text() for label in overview.findChildren(QLabel))
+    assert "今日工作目标" not in visible_text
+    overview.apply_snapshot(_dashboard_snapshot())
+    assert overview.entertainment_history_card._status_label.text() == "娱乐数据积累中"
+    overview.deleteLater()
+    app.processEvents()
