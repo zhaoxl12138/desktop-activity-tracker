@@ -2346,6 +2346,14 @@ class _EntertainmentHistoryCanvas(QWidget):
             return f"{hours}h{minutes}m"
         return f"{minutes}m" if minutes else "<1m"
 
+    @staticmethod
+    def _bar_colors(point: dict) -> tuple[QColor, QColor | None]:
+        if point.get("is_today", False):
+            return QColor("#ff8a2b"), QColor("#ffd166")
+        if point.get("over_limit", False):
+            return QColor("#e66f24"), None
+        return QColor(COLORS["video_orange"]), None
+
     def _tooltip_text_for_index(self, index: int) -> str:
         if not 0 <= index < len(self._points):
             return ""
@@ -2428,8 +2436,8 @@ class _EntertainmentHistoryCanvas(QWidget):
             else:
                 seconds = parse_nonnegative_int(point.get("seconds")) or 0
                 height = max(2.0, seconds / maximum * rect.height())
-                color = QColor("#e66f24" if state == "over_limit" else COLORS["video_orange"])
-                painter.setPen(Qt.NoPen)
+                color, outline = self._bar_colors(point)
+                painter.setPen(QPen(outline, 1.25) if outline is not None else Qt.NoPen)
                 painter.setBrush(color)
                 bar_rect = QRectF(
                     x + slot * 0.22,
@@ -2454,8 +2462,10 @@ class _EntertainmentHistoryCanvas(QWidget):
             painter.setPen(QColor(COLORS["text_muted"]))
             font = painter.font()
             font.setPixelSize(9)
-            font.setBold(False)
+            font.setBold(bool(point.get("is_today", False)))
             painter.setFont(font)
+            if point.get("is_today", False):
+                painter.setPen(QColor(COLORS["text_secondary"]))
             label = self._short_date(str(point.get("date", "")), bool(point.get("is_today")))
             painter.drawText(QRectF(x, rect.bottom() + 4, slot, 13), Qt.AlignCenter, label)
 

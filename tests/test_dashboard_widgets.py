@@ -823,6 +823,19 @@ def test_entertainment_history_week_canvas_uses_duration_labels_without_limits()
     assert canvas._bar_duration_labels == ["30m", "", "", "1h10m"]
 
 
+def test_entertainment_history_week_canvas_emphasizes_today_bar():
+    _app()
+    canvas = dashboard_widgets._EntertainmentHistoryCanvas()
+
+    today_fill, today_outline = canvas._bar_colors({"is_today": True})
+    regular_fill, regular_outline = canvas._bar_colors({"is_today": False})
+
+    assert today_fill.name() == "#ff8a2b"
+    assert today_outline is not None
+    assert regular_fill.name() == dashboard_widgets.COLORS["video_orange"].lower()
+    assert regular_outline is None
+
+
 def test_entertainment_history_card_degrades_safely_without_available_model():
     app = _app()
     card = dashboard_widgets.EntertainmentHistoryCard()
