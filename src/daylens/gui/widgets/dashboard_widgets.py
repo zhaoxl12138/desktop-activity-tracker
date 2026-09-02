@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -1178,11 +1179,13 @@ class RhythmComparisonCard(QFrame):
 class _RhythmCanvas(QWidget):
     def __init__(self):
         super().__init__()
+        self.setMouseTracking(True)
         self._kind = "empty"
         self._state = "empty"
         self._data: dict = {}
         self._show_bar_duration_labels = False
         self._bar_duration_labels: list[str] = []
+        self._bar_hit_rects: list[QRectF | None] = []
 
     def set_data(self, data: dict) -> None:
         self._data = dict(data or {})
@@ -1198,6 +1201,7 @@ class _RhythmCanvas(QWidget):
             else ""
             for value in (values or [])
         ]
+        self._bar_hit_rects = [None] * len(values or [])
         self._state = "chart" if any(value is not None for value in (values or [])) else "empty"
         self.update()
 
@@ -1211,6 +1215,35 @@ class _RhythmCanvas(QWidget):
         if hours:
             return f"{hours}h{minutes}m"
         return f"{minutes}m" if minutes else "<1m"
+
+    def _tooltip_text_for_index(self, index: int) -> str:
+        contexts = self._data.get("hover_contexts", [])
+        if not isinstance(contexts, (list, tuple)) or not 0 <= index < len(contexts):
+            return ""
+        context = contexts[index]
+        if not isinstance(context, dict):
+            return ""
+        label = str(context.get("label", "") or "").strip()
+        seconds = parse_nonnegative_int(context.get("seconds")) or 0
+        if not label or seconds <= 0:
+            return ""
+        return f"{label}\n参与 {_goal_duration(seconds)}"
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if self._kind == "bars":
+            position = event.position()
+            for index, rect in enumerate(self._bar_hit_rects):
+                if rect is not None and rect.contains(position):
+                    text = self._tooltip_text_for_index(index)
+                    if text:
+                        QToolTip.showText(event.globalPosition().toPoint(), text, self)
+                        return
+        QToolTip.hideText()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        QToolTip.hideText()
+        super().leaveEvent(event)
 
     def _value_color(self, index: int) -> QColor:
         return QColor(COLORS["primary"])
@@ -1310,7 +1343,14 @@ class _RhythmCanvas(QWidget):
                 continue
             painter.setBrush(self._value_color(index))
             height = float(value) / y_max * chart.height()
-            painter.drawRoundedRect(QRectF(chart.left() + index * width + width * 0.2, chart.bottom() - height, width * 0.6, height), 3, 3)
+            bar_rect = QRectF(
+                chart.left() + index * width + width * 0.2,
+                chart.bottom() - height,
+                width * 0.6,
+                height,
+            )
+            self._bar_hit_rects[index] = bar_rect
+            painter.drawRoundedRect(bar_rect, 3, 3)
             duration_label = self._bar_duration_labels[index]
             if duration_label:
                 painter.setPen(QColor(COLORS["text_secondary"]))
@@ -2244,6 +2284,7 @@ class _EntertainmentHistoryCanvas(QWidget):
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
+        self.setMouseTracking(True)
         self._mode = "7d"
         self._points: list[dict] = []
         self._point_states: list[str] = []
@@ -2251,6 +2292,7 @@ class _EntertainmentHistoryCanvas(QWidget):
         self._calendar_dates: list[str] = []
         self._over_limit_dates: set[str] = set()
         self._state = "empty"
+        self._bar_hit_rects: list[QRectF | None] = []
 
     def set_data(
         self,
@@ -2273,6 +2315,7 @@ class _EntertainmentHistoryCanvas(QWidget):
             self._bar_duration_label(point) if self._mode == "7d" else ""
             for point in self._points
         ]
+        self._bar_hit_rects = [None] * len(self._points)
         self._over_limit_dates = {
             str(point.get("date")) for point in self._points if point.get("over_limit")
         }
@@ -2302,6 +2345,34 @@ class _EntertainmentHistoryCanvas(QWidget):
         if hours:
             return f"{hours}h{minutes}m"
         return f"{minutes}m" if minutes else "<1m"
+
+    def _tooltip_text_for_index(self, index: int) -> str:
+        if not 0 <= index < len(self._points):
+            return ""
+        context = self._points[index].get("hover_context")
+        if not isinstance(context, dict):
+            return ""
+        label = str(context.get("label", "") or "").strip()
+        seconds = parse_nonnegative_int(context.get("seconds")) or 0
+        if not label or seconds <= 0:
+            return ""
+        return f"{label}\n娱乐 {_goal_duration(seconds)}"
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if self._mode == "7d":
+            position = event.position()
+            for index, rect in enumerate(self._bar_hit_rects):
+                if rect is not None and rect.contains(position):
+                    text = self._tooltip_text_for_index(index)
+                    if text:
+                        QToolTip.showText(event.globalPosition().toPoint(), text, self)
+                        return
+        QToolTip.hideText()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        QToolTip.hideText()
+        super().leaveEvent(event)
 
     @staticmethod
     def _valid_date(value) -> bool:
@@ -2360,11 +2431,14 @@ class _EntertainmentHistoryCanvas(QWidget):
                 color = QColor("#e66f24" if state == "over_limit" else COLORS["video_orange"])
                 painter.setPen(Qt.NoPen)
                 painter.setBrush(color)
-                painter.drawRoundedRect(
-                    QRectF(x + slot * 0.22, rect.bottom() - height, slot * 0.56, height),
-                    2,
-                    2,
+                bar_rect = QRectF(
+                    x + slot * 0.22,
+                    rect.bottom() - height,
+                    slot * 0.56,
+                    height,
                 )
+                self._bar_hit_rects[index] = bar_rect
+                painter.drawRoundedRect(bar_rect, 2, 2)
                 duration_label = self._bar_duration_labels[index]
                 if duration_label:
                     painter.setPen(QColor(COLORS["text_secondary"]))

@@ -87,6 +87,57 @@ def _trusted_rhythm_day(date_str: str, engaged_seconds: int) -> dict:
     }
 
 
+def test_dashboard_snapshot_exposes_daily_work_and_entertainment_hover_contexts():
+    captured_now = datetime(2026, 9, 2, 10, 43)
+    today = captured_now.date()
+    dates = [today - timedelta(days=offset) for offset in reversed(range(7))]
+    daily_rows = [
+        _trusted_rhythm_day(day.isoformat(), 1_800)
+        for day in dates
+    ]
+    work_minor = _rhythm_session(
+        "2026-09-01", "09:00:00", "09:10:00", 600, session_id="work-minor"
+    )
+    work_minor["normalized_title"] = "Daily report"
+    work_major = _rhythm_session(
+        "2026-09-01", "10:00:00", "10:30:00", 1_500, session_id="work-major"
+    )
+    work_major["normalized_title"] = "Codex: chart update"
+    video = _rhythm_session(
+        "2026-09-01", "20:00:00", "20:25:00", 1_200,
+        session_id="video-main", category_key="video",
+    )
+    video["effective_seconds"] = 1_200
+    video["engaged_seconds"] = 300
+    video["normalized_title"] = "Fast Movie"
+
+    rhythm = dashboard_service.build_rhythm_snapshot(
+        captured_now=captured_now,
+        sessions=[work_minor, work_major, video],
+        daily_rows=daily_rows,
+        query_failed=False,
+    )
+    history = dashboard_service.build_entertainment_history(
+        captured_now=captured_now,
+        daily_rows=daily_rows,
+        current_entertainment_seconds=1_200,
+        today_has_data=True,
+        weekday_entertainment_limit_minutes=60,
+        weekend_entertainment_limit_minutes=120,
+        query_failed=False,
+        sessions=[work_minor, work_major, video],
+    )
+
+    assert rhythm["7d"]["chart"]["hover_contexts"][-2] == {
+        "label": "Codex: chart update",
+        "seconds": 1_500,
+    }
+    assert history["week"]["points"][-2]["hover_context"] == {
+        "label": "Fast Movie",
+        "seconds": 1_200,
+    }
+
+
 def test_rhythm_half_hour_cumulative_series_conserves_cross_slot_engagement():
     sessions = [
         _rhythm_session(

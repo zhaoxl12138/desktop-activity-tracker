@@ -155,8 +155,8 @@ def test_right_column_shows_rhythm_ranking_and_entertainment_history_at_1280x720
     assert all(label.textFormat() == Qt.PlainText for label in page.trend_card._dynamic_labels())
     ordered_cards = [
         page.trend_card,
-        page.top_app_card,
         page.entertainment_history_card,
+        page.top_app_card,
     ]
     assert all(
         upper.geometry().bottom() < lower.geometry().top()
@@ -191,10 +191,10 @@ def test_dashboard_column_content_bottoms_align_with_compact_rhythm(tmp_path):
         app.processEvents()
 
         left_bottom = page.focus_timeline_card.geometry().bottom()
-        right_bottom = page.entertainment_history_card.geometry().bottom()
+        right_bottom = page.top_app_card.geometry().bottom()
         assert abs(left_bottom - right_bottom) <= 2
         assert page.focus_timeline_card.parentWidget().height() - left_bottom <= 2
-        assert page.entertainment_history_card.parentWidget().height() - right_bottom <= 2
+        assert page.top_app_card.parentWidget().height() - right_bottom <= 2
         assert page.trend_card.height() <= 300
         assert page.trend_card.canvas.height() >= 80
 
@@ -232,7 +232,7 @@ def test_dashboard_work_episode_rows_stay_compact_at_supported_sizes(tmp_path):
             assert page.focus_axis.height() == 28
             assert abs(
                 page.focus_timeline_card.geometry().bottom()
-                - page.entertainment_history_card.geometry().bottom()
+                - page.top_app_card.geometry().bottom()
             ) <= 2
 
             for row in rows:

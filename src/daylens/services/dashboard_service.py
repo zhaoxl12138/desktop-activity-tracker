@@ -412,6 +412,54 @@ def build_daily_goals(
     }
 
 
+def _short_hover_context_label(session: dict) -> str:
+    process_name = str(session.get("process_name", "") or "").strip()
+    process_label = _strip_executable_suffix(process_name) or "未知应用"
+    for key in ("normalized_title", "window_title"):
+        value = html.unescape(
+            unicodedata.normalize("NFKC", str(session.get(key, "") or ""))
+        )
+        value = " ".join(value.split())
+        if not value or any(unicodedata.category(char).startswith("C") for char in value):
+            continue
+        if value.casefold() == process_name.casefold():
+            continue
+        return value if len(value) <= 24 else value[:23] + "…"
+    return process_label if len(process_label) <= 24 else process_label[:23] + "…"
+
+
+def _work_hover_seconds(session: dict) -> int:
+    engaged = parse_nonnegative_int(session.get("engaged_seconds")) or 0
+    if engaged:
+        return engaged
+    if str(session.get("metric_version", "") or "") != "attention-v1":
+        return parse_nonnegative_int(session.get("effective_seconds")) or 0
+    return 0
+
+
+def _daily_top_hover_contexts(
+    sessions: list[dict],
+    category_keys: set[str],
+    seconds_for,
+) -> dict[str, dict[str, object]]:
+    grouped: dict[str, dict[str, int]] = {}
+    for session in sessions:
+        if str(session.get("category_key", "") or "") not in category_keys:
+            continue
+        seconds = seconds_for(session)
+        date_str = str(session.get("date", "") or "")
+        if seconds <= 0 or not date_str:
+            continue
+        label = _short_hover_context_label(session)
+        date_labels = grouped.setdefault(date_str, {})
+        date_labels[label] = date_labels.get(label, 0) + seconds
+    result: dict[str, dict[str, object]] = {}
+    for date_str, labels in grouped.items():
+        label, seconds = max(labels.items(), key=lambda item: (item[1], item[0]))
+        result[date_str] = {"label": label, "seconds": seconds}
+    return result
+
+
 def build_entertainment_history(
     *,
     captured_now: datetime,
@@ -421,11 +469,17 @@ def build_entertainment_history(
     weekday_entertainment_limit_minutes: int,
     weekend_entertainment_limit_minutes: int,
     query_failed: bool,
+    sessions: list[dict] | None = None,
 ) -> dict[str, object]:
     """Build rolling entertainment facts from the dashboard's loaded range."""
     today = captured_now.date()
     today_str = today.isoformat()
     row_map = _daily_row_map(daily_rows)
+    hover_contexts = _daily_top_hover_contexts(
+        list(sessions or []),
+        ENTERTAINMENT_KEYS,
+        lambda session: parse_nonnegative_int(session.get("effective_seconds")) or 0,
+    )
 
     def limit_seconds(day: date) -> int | None:
         configured = (
@@ -459,16 +513,18 @@ def build_entertainment_history(
                 else parse_nonnegative_int((row or {}).get("video_seconds")) or 0
             )
             boundary = limit_seconds(day)
-            points.append(
-                {
-                    "date": date_str,
-                    "seconds": seconds,
-                    "has_data": has_data,
-                    "is_today": is_today,
-                    "limit_seconds": boundary,
-                    "over_limit": bool(boundary is not None and seconds > boundary),
-                }
-            )
+            point = {
+                "date": date_str,
+                "seconds": seconds,
+                "has_data": has_data,
+                "is_today": is_today,
+                "limit_seconds": boundary,
+                "over_limit": bool(boundary is not None and seconds > boundary),
+            }
+            hover_context = hover_contexts.get(date_str)
+            if hover_context is not None:
+                point["hover_context"] = hover_context
+            points.append(point)
 
         valid = [point for point in points if point["has_data"]]
         max_point = max(
@@ -632,12 +688,18 @@ def _build_seven_day_rhythm(
     captured_now: datetime,
     daily_rows: list[dict],
     *,
+    sessions: list[dict],
     comparison_allowed: bool,
 ) -> dict[str, object]:
     end = captured_now.date()
     dates = [end - timedelta(days=offset) for offset in reversed(range(7))]
     prior = [dates[0] - timedelta(days=offset) for offset in reversed(range(1, 8))]
     row_map = _daily_row_map(daily_rows)
+    hover_contexts = _daily_top_hover_contexts(
+        sessions,
+        WORK_KEYS,
+        _work_hover_seconds,
+    )
     history_start = (
         RHYTHM_HISTORY_START_DATE
         if captured_now.date() >= RHYTHM_HISTORY_START_DATE
@@ -690,6 +752,9 @@ def _build_seven_day_rhythm(
             "values": display_values,
             "value_kinds": display_kinds,
             "average_seconds": average if valid else None,
+            "hover_contexts": [
+                hover_contexts.get(day.isoformat()) for day in display_dates
+            ],
         },
         "metrics": [
             {"label": "日均参与", "value": _duration_short(average), "delta": ""},
@@ -872,7 +937,12 @@ def build_rhythm_snapshot(
         "version": 1,
         "primary_metric": "work_engaged_seconds",
         "today": _build_today_rhythm(captured_now, filtered_sessions, daily_rows, query_failed=query_failed),
-        "7d": _build_seven_day_rhythm(captured_now, effective_daily_rows, comparison_allowed=comparison_allowed),
+        "7d": _build_seven_day_rhythm(
+            captured_now,
+            effective_daily_rows,
+            sessions=filtered_sessions,
+            comparison_allowed=comparison_allowed,
+        ),
         "30d": _build_thirty_day_rhythm(captured_now, effective_daily_rows),
     }
     unavailable_status: dict[str, str] | None = None
@@ -2050,6 +2120,7 @@ def load_today_snapshot(
             "weekend_entertainment_limit_minutes", 120
         ),
         query_failed=range_stats_query_failed,
+        sessions=range_sessions,
     )
     try:
         goals = build_daily_goals(

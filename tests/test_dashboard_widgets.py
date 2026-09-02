@@ -123,6 +123,20 @@ def test_rhythm_canvas_uses_duration_labels_for_seven_day_bars():
     assert canvas._bar_duration_labels == ["1h0m", "", "", "1h30m"]
 
 
+def test_rhythm_canvas_formats_hover_text_from_daily_context():
+    _app()
+    canvas = dashboard_widgets._RhythmCanvas()
+    canvas.set_data(
+        {
+            "kind": "bars",
+            "values": [1_500],
+            "hover_contexts": [{"label": "Codex: chart update", "seconds": 1_500}],
+        }
+    )
+
+    assert canvas._tooltip_text_for_index(0) == "Codex: chart update\n参与 25分钟"
+
+
 def test_rhythm_canvas_limits_dense_date_labels_to_six_positions():
     _app()
     canvas = dashboard_widgets._RhythmCanvas()
@@ -788,6 +802,16 @@ def test_entertainment_history_week_canvas_distinguishes_zero_and_missing_points
     assert canvas._point_states == ["value", "zero", "missing", "over_limit"]
     assert canvas._points[1]["seconds"] == 0
     assert canvas._points[2]["has_data"] is False
+
+
+def test_entertainment_history_week_canvas_formats_hover_text_from_daily_context():
+    _app()
+    canvas = dashboard_widgets._EntertainmentHistoryCanvas()
+    points = _entertainment_history_payload()["entertainment_history"]["week"]["points"]
+    points[0]["hover_context"] = {"label": "Fast Movie", "seconds": 1_200}
+    canvas.set_data("7d", points)
+
+    assert canvas._tooltip_text_for_index(0) == "Fast Movie\n娱乐 20分钟"
 
 
 def test_entertainment_history_week_canvas_uses_duration_labels_without_limits():

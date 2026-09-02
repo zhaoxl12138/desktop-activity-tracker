@@ -422,6 +422,10 @@ def test_today_overview_uses_entertainment_history_instead_of_daily_goals(tmp_pa
 
     assert not hasattr(overview, "daily_goals_card")
     assert overview.entertainment_history_card._title_label.text() == "娱乐记录 · 近7天"
+    right_layout = overview.top_app_card.parentWidget().layout()
+    assert right_layout.indexOf(overview.entertainment_history_card) < right_layout.indexOf(
+        overview.top_app_card
+    )
     overview.entertainment_history_card._mode_buttons["30d"].click()
     assert overview.entertainment_history_card._title_label.text() == "娱乐记录 · 近30天"
     visible_text = " ".join(label.text() for label in overview.findChildren(QLabel))

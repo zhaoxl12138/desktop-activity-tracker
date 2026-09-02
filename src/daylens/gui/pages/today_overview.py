@@ -95,8 +95,8 @@ class TodayOverviewPage(QWidget):
         self.top_app_card = TopAppListWidget()
         self.entertainment_history_card = EntertainmentHistoryCard()
         right_layout.addWidget(self.trend_card, 2)
-        right_layout.addWidget(self.top_app_card, 1)
         right_layout.addWidget(self.entertainment_history_card, 1)
+        right_layout.addWidget(self.top_app_card, 1)
         columns.addWidget(right_panel, 4)
 
         self.insight_grid_widget = None
