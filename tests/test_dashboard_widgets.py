@@ -446,9 +446,14 @@ def test_work_interruption_card_shows_primary_source_and_top_three_rows():
     app.processEvents()
 
     assert card.conclusion_label.text() == "今天被打断 4 次，主要来自 微信"
+    assert "干扰累计" in {
+        label.text() for label in card.findChildren(QLabel)
+    }
+    assert "font-size: 17px" in card.conclusion_label.styleSheet()
     assert card.count_value.text() == "4次"
     assert card.duration_value.text() == "18分钟"
     assert card.primary_value.text() == "微信"
+    assert "font-size: 16px" in card.count_value.styleSheet()
     assert len(card._source_rows) == 3
     assert all(row.findChild(QLabel, "interruptionSourceLabel") is not None for row in card._source_rows)
 

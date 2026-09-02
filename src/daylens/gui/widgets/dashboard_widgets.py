@@ -2911,19 +2911,26 @@ class WorkInterruptionCard(QFrame):
         )
         header.addWidget(title)
         header.addStretch()
+        badge = QLabel("今日")
+        badge.setTextFormat(Qt.PlainText)
+        badge.setStyleSheet(
+            f"font-size: 11px; font-weight: 700; color: {COLORS['primary']}; "
+            f"background: {COLORS['card_bg_alt']}; border: none; border-radius: 8px; padding: 3px 8px;"
+        )
+        header.addWidget(badge)
+        layout.addLayout(header)
         self.conclusion_label = QLabel()
         self.conclusion_label.setObjectName("interruptionConclusion")
         self.conclusion_label.setTextFormat(Qt.PlainText)
         self.conclusion_label.setStyleSheet(
-            f"font-size: 12px; color: {COLORS['text_secondary']}; border: none;"
+            f"font-size: 17px; font-weight: 800; color: {COLORS['text']}; border: none;"
         )
-        header.addWidget(self.conclusion_label)
-        layout.addLayout(header)
+        layout.addWidget(self.conclusion_label)
 
         metrics = QHBoxLayout()
         metrics.setSpacing(7)
         self.count_value = self._add_metric(metrics, "明显干扰")
-        self.duration_value = self._add_metric(metrics, "离开工作")
+        self.duration_value = self._add_metric(metrics, "干扰累计")
         self.primary_value = self._add_metric(metrics, "主要来源")
         layout.addLayout(metrics)
 
@@ -2944,12 +2951,12 @@ class WorkInterruptionCard(QFrame):
         label = QLabel(label_text)
         label.setTextFormat(Qt.PlainText)
         label.setStyleSheet(
-            f"font-size: 10px; color: {COLORS['text_muted']}; border: none;"
+            f"font-size: 11px; font-weight: 700; color: {COLORS['text_secondary']}; border: none;"
         )
         value = QLabel("--")
         value.setTextFormat(Qt.PlainText)
         value.setStyleSheet(
-            f"font-size: 13px; font-weight: 800; color: {COLORS['text']}; border: none;"
+            f"font-size: 16px; font-weight: 800; color: {COLORS['text']}; border: none;"
         )
         metric_layout.addWidget(label)
         metric_layout.addWidget(value)
@@ -2971,14 +2978,14 @@ class WorkInterruptionCard(QFrame):
             self.count_value.setText("--")
             self.duration_value.setText("--")
             self.primary_value.setText("--")
-            self.setFixedHeight(82)
+            self.setFixedHeight(106)
             return
         if status != "ready":
             self.conclusion_label.setText("今天暂未识别到可分析的工作干扰")
             self.count_value.setText("0次")
             self.duration_value.setText("0分钟")
             self.primary_value.setText("--")
-            self.setFixedHeight(82)
+            self.setFixedHeight(106)
             return
 
         count = parse_nonnegative_int(payload.get("total_count")) or 0
@@ -2992,7 +2999,7 @@ class WorkInterruptionCard(QFrame):
 
         for source in list(payload.get("sources", []) or [])[:3]:
             self._add_source_row(dict(source or {}))
-        self.setFixedHeight(82 + len(self._source_rows) * 22)
+        self.setFixedHeight(106 + len(self._source_rows) * 24)
 
     def _add_source_row(self, source: dict) -> None:
         kind = str(source.get("kind", "other") or "other")
@@ -3010,7 +3017,7 @@ class WorkInterruptionCard(QFrame):
         label.setObjectName("interruptionSourceLabel")
         label.setTextFormat(Qt.PlainText)
         label.setStyleSheet(
-            f"font-size: 11px; color: {COLORS['text_secondary']}; border: none;"
+            f"font-size: 13px; font-weight: 700; color: {COLORS['text']}; border: none;"
         )
         row_layout.addWidget(label, 1)
         count = parse_nonnegative_int(source.get("count")) or 0
@@ -3018,7 +3025,7 @@ class WorkInterruptionCard(QFrame):
         value = QLabel(f"{count}次 · {_goal_duration(seconds)}")
         value.setTextFormat(Qt.PlainText)
         value.setStyleSheet(
-            f"font-size: 11px; color: {COLORS['text_muted']}; border: none;"
+            f"font-size: 12px; color: {COLORS['text_secondary']}; border: none;"
         )
         row_layout.addWidget(value)
         self.source_layout.addWidget(row)
