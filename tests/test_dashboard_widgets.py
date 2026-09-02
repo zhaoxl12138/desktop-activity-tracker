@@ -108,6 +108,21 @@ def test_rhythm_canvas_uses_one_color_for_all_recorded_values():
     ).name()
 
 
+def test_rhythm_canvas_uses_duration_labels_for_seven_day_bars():
+    _app()
+    canvas = dashboard_widgets._RhythmCanvas()
+    canvas.set_data(
+        {
+            "kind": "bars",
+            "show_bar_duration_labels": True,
+            "values": [3_600, 0, None, 5_400],
+            "average_seconds": 4_500,
+        }
+    )
+
+    assert canvas._bar_duration_labels == ["1h0m", "", "", "1h30m"]
+
+
 def test_rhythm_canvas_limits_dense_date_labels_to_six_positions():
     _app()
     canvas = dashboard_widgets._RhythmCanvas()

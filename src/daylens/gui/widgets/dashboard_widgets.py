@@ -1154,7 +1154,9 @@ class RhythmComparisonCard(QFrame):
         self._status_label.setText(str(status.get("label", "数据积累中")))
         self._set_status_style(str(status.get("kind", "waiting")))
         self._conclusion_label.setText(str(data.get("conclusion", "节奏数据积累中")))
-        self.canvas.set_data(dict(data.get("chart", {}) or {}))
+        chart = dict(data.get("chart", {}) or {})
+        chart["show_bar_duration_labels"] = self._mode == "7d"
+        self.canvas.set_data(chart)
         self._set_metrics(list(data.get("metrics", []) or []))
 
     def _set_metrics(self, values: list[dict]) -> None:
@@ -1179,13 +1181,36 @@ class _RhythmCanvas(QWidget):
         self._kind = "empty"
         self._state = "empty"
         self._data: dict = {}
+        self._show_bar_duration_labels = False
+        self._bar_duration_labels: list[str] = []
 
     def set_data(self, data: dict) -> None:
         self._data = dict(data or {})
         self._kind = str(self._data.get("kind", "empty") or "empty")
         values = self._data.get("current") if self._kind == "cumulative" else self._data.get("values")
+        self._show_bar_duration_labels = bool(
+            self._kind == "bars"
+            and self._data.get("show_bar_duration_labels", False)
+        )
+        self._bar_duration_labels = [
+            self._bar_duration_label(value)
+            if self._show_bar_duration_labels
+            else ""
+            for value in (values or [])
+        ]
         self._state = "chart" if any(value is not None for value in (values or [])) else "empty"
         self.update()
+
+    @staticmethod
+    def _bar_duration_label(value) -> str:
+        seconds = parse_nonnegative_int(value) or 0
+        if seconds <= 0:
+            return ""
+        hours, remainder = divmod(seconds, 3600)
+        minutes = remainder // 60
+        if hours:
+            return f"{hours}h{minutes}m"
+        return f"{minutes}m" if minutes else "<1m"
 
     def _value_color(self, index: int) -> QColor:
         return QColor(COLORS["primary"])
@@ -1226,7 +1251,12 @@ class _RhythmCanvas(QWidget):
             painter.setPen(QColor(COLORS["text_muted"]))
             painter.drawText(rect, Qt.AlignCenter, "节奏数据积累中")
             return
-        chart = rect.adjusted(38, 5, -10, -22)
+        chart = rect.adjusted(
+            38,
+            18 if self._show_bar_duration_labels else 5,
+            -10,
+            -22,
+        )
         values = list(self._data.get("current", [])) if self._kind == "cumulative" else list(self._data.get("values", []))
         extra = []
         for key in ("baseline_low", "baseline_high", "baseline_median"):
@@ -1281,8 +1311,26 @@ class _RhythmCanvas(QWidget):
             painter.setBrush(self._value_color(index))
             height = float(value) / y_max * chart.height()
             painter.drawRoundedRect(QRectF(chart.left() + index * width + width * 0.2, chart.bottom() - height, width * 0.6, height), 3, 3)
+            duration_label = self._bar_duration_labels[index]
+            if duration_label:
+                painter.setPen(QColor(COLORS["text_secondary"]))
+                duration_font = painter.font()
+                duration_font.setPixelSize(9)
+                duration_font.setBold(True)
+                painter.setFont(duration_font)
+                painter.drawText(
+                    QRectF(
+                        chart.left() + index * width,
+                        max(0.0, chart.bottom() - height - 14),
+                        width,
+                        12,
+                    ),
+                    Qt.AlignCenter,
+                    duration_label,
+                )
+                painter.setPen(Qt.NoPen)
         average = self._data.get("average_seconds")
-        if average is not None:
+        if average is not None and not self._show_bar_duration_labels:
             y = chart.bottom() - float(average) / y_max * chart.height()
             painter.setPen(QPen(QColor("#91a9c2"), 1.5, Qt.DashLine))
             painter.drawLine(QPointF(chart.left(), y), QPointF(chart.right(), y))
