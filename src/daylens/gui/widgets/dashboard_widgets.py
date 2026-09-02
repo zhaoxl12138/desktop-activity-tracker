@@ -2293,6 +2293,8 @@ class _EntertainmentHistoryCanvas(QWidget):
         self._over_limit_dates: set[str] = set()
         self._state = "empty"
         self._bar_hit_rects: list[QRectF | None] = []
+        self._calendar_hit_rects: list[tuple[QRectF, str, dict | None]] = []
+        self._calendar_week_labels: list[str] = []
 
     def set_data(
         self,
@@ -2320,6 +2322,8 @@ class _EntertainmentHistoryCanvas(QWidget):
             str(point.get("date")) for point in self._points if point.get("over_limit")
         }
         self._calendar_dates = self._calendar_range(date_range)
+        self._calendar_week_labels = self._calendar_week_starts(self._calendar_dates)
+        self._calendar_hit_rects = []
         self._state = "chart" if self._points else "empty"
         self.update()
 
@@ -2366,6 +2370,52 @@ class _EntertainmentHistoryCanvas(QWidget):
             return ""
         return f"{label}\n娱乐 {_goal_duration(seconds)}"
 
+    @staticmethod
+    def _calendar_week_starts(dates: list[str]) -> list[str]:
+        if not dates:
+            return []
+        first = date.fromisoformat(dates[0])
+        week_start = first - timedelta(days=first.weekday())
+        weeks = math.ceil((first.weekday() + len(dates)) / 7)
+        return [
+            f"{(week_start + timedelta(days=7 * index)).month}/{(week_start + timedelta(days=7 * index)).day}"
+            for index in range(weeks)
+        ]
+
+    @staticmethod
+    def _calendar_color(point: dict, maximum: int) -> QColor:
+        if not point.get("has_data", False):
+            return QColor(COLORS["panel_bg_alt"])
+        seconds = parse_nonnegative_int(point.get("seconds")) or 0
+        if seconds <= 0:
+            return QColor(COLORS["panel_bg_alt"])
+        ratio = seconds / max(maximum, 1)
+        if ratio <= 0.25:
+            return QColor("#854426")
+        if ratio <= 0.5:
+            return QColor("#a95220")
+        if ratio <= 0.75:
+            return QColor("#cd6120")
+        return QColor(COLORS["video_orange"])
+
+    @staticmethod
+    def _calendar_tooltip_text(date_str: str, point: dict | None) -> str:
+        try:
+            day = date.fromisoformat(date_str)
+            heading = f"{day.month}/{day.day} 周{'一二三四五六日'[day.weekday()]}"
+        except ValueError:
+            return ""
+        if not point or not point.get("has_data", False):
+            return f"{heading}\n暂无记录"
+        seconds = parse_nonnegative_int(point.get("seconds")) or 0
+        lines = [heading, f"娱乐 {_goal_duration(seconds)}"]
+        context = point.get("hover_context")
+        if isinstance(context, dict):
+            label = str(context.get("label", "") or "").strip()
+            if label:
+                lines.append(label)
+        return "\n".join(lines)
+
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
         if self._mode == "7d":
             position = event.position()
@@ -2375,6 +2425,16 @@ class _EntertainmentHistoryCanvas(QWidget):
                     if text:
                         QToolTip.showText(event.globalPosition().toPoint(), text, self)
                         return
+        elif self._mode == "30d":
+            position = event.position()
+            for rect, date_str, point in self._calendar_hit_rects:
+                if rect.contains(position):
+                    QToolTip.showText(
+                        event.globalPosition().toPoint(),
+                        self._calendar_tooltip_text(date_str, point),
+                        self,
+                    )
+                    return
         QToolTip.hideText()
         super().mouseMoveEvent(event)
 
@@ -2470,7 +2530,7 @@ class _EntertainmentHistoryCanvas(QWidget):
             painter.drawText(QRectF(x, rect.bottom() + 4, slot, 13), Qt.AlignCenter, label)
 
     def _draw_calendar(self, painter: QPainter) -> None:
-        rect = QRectF(self.rect()).adjusted(22, 4, -4, -4)
+        rect = QRectF(self.rect()).adjusted(22, 16, -4, -4)
         point_map = {str(point.get("date", "")): point for point in self._points}
         dates = self._calendar_dates
         if not dates:
@@ -2486,6 +2546,12 @@ class _EntertainmentHistoryCanvas(QWidget):
         font = painter.font()
         font.setPixelSize(8)
         painter.setFont(font)
+        for column, label in enumerate(self._calendar_week_labels):
+            painter.drawText(
+                QRectF(rect.left() + column * cell_w, 1, cell_w, 12),
+                Qt.AlignCenter,
+                label,
+            )
         for weekday, text in enumerate("一二三四五六日"):
             painter.drawText(QRectF(0, rect.top() + weekday * cell_h, 18, cell_h), Qt.AlignCenter, text)
         for index, date_str in enumerate(dates):
@@ -2501,15 +2567,13 @@ class _EntertainmentHistoryCanvas(QWidget):
             point = point_map.get(date_str)
             if point is None or not point.get("has_data", False):
                 painter.setPen(QPen(QColor(COLORS["border"]), 1))
-                painter.setBrush(Qt.NoBrush)
+                painter.setBrush(self._calendar_color(point or {}, maximum))
             else:
-                seconds = parse_nonnegative_int(point.get("seconds")) or 0
-                strength = 45 + int(190 * seconds / maximum)
-                color = QColor(COLORS["video_orange"])
-                color.setAlpha(strength)
-                painter.setPen(Qt.NoPen)
-                painter.setBrush(color)
+                outline = QColor("#ffd166") if point.get("is_today", False) else None
+                painter.setPen(QPen(outline, 1.25) if outline is not None else Qt.NoPen)
+                painter.setBrush(self._calendar_color(point, maximum))
             painter.drawRoundedRect(cell, 2, 2)
+            self._calendar_hit_rects.append((cell, date_str, point))
             if point and point.get("over_limit", False):
                 painter.setPen(Qt.NoPen)
                 painter.setBrush(QColor("#e66f24"))
@@ -2546,7 +2610,7 @@ class EntertainmentHistoryCard(QFrame):
         root.setContentsMargins(16, 10, 16, 10)
         root.setSpacing(5)
         header = QHBoxLayout()
-        self._title_label = QLabel("娱乐记录 · 近7天")
+        self._title_label = QLabel("娱乐时间 · 近7天")
         self._title_label.setTextFormat(Qt.PlainText)
         self._title_label.setStyleSheet(f"font-size: 15px; font-weight: 800; color: {COLORS['text']};")
         header.addWidget(self._title_label)
@@ -2630,7 +2694,7 @@ class EntertainmentHistoryCard(QFrame):
 
     def _apply_mode(self) -> None:
         label = "近7天" if self._mode == "7d" else "近30天"
-        self._title_label.setText(f"娱乐记录 · {label}")
+        self._title_label.setText(f"娱乐时间 · {label}")
         status = self._history.get("status", {})
         status = dict(status) if isinstance(status, dict) else {"kind": str(status)}
         unavailable = status.get("kind") == "unavailable"

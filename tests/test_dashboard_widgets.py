@@ -684,7 +684,7 @@ def test_entertainment_history_card_replaces_daily_goals_content():
         for label in card.findChildren(QLabel)
         if not label.isHidden()
     }
-    assert "娱乐记录 · 近7天" in visible_text
+    assert "娱乐时间 · 近7天" in visible_text
     assert not any("工作目标" in text or "今日目标" in text for text in visible_text)
 
     card.set_data({})
@@ -755,7 +755,7 @@ def test_entertainment_history_card_defaults_to_week_with_plain_text_summary():
     app.processEvents()
 
     assert card._mode == "7d"
-    assert card._title_label.text() == "娱乐记录 · 近7天"
+    assert card._title_label.text() == "娱乐时间 · 近7天"
     assert card._range_label.text() == "8/25–8/31"
     assert card._range_label.isVisible()
     assert card._captured_label.text() == "截至 14:35"
@@ -779,7 +779,7 @@ def test_entertainment_history_card_switches_to_month_calendar_with_over_limit_m
     app.processEvents()
 
     assert card._mode == "30d"
-    assert card._title_label.text() == "娱乐记录 · 近30天"
+    assert card._title_label.text() == "娱乐时间 · 近30天"
     assert card._range_label.text() == "8/2–8/31"
     assert card._range_label.isVisible()
     assert card.canvas._mode == "30d"
@@ -865,6 +865,28 @@ def test_entertainment_history_calendar_ignores_invalid_ranges_and_point_dates()
     assert canvas._state == "empty"
     canvas.deleteLater()
     app.processEvents()
+
+
+def test_entertainment_history_month_calendar_uses_week_starts_and_discrete_levels():
+    _app()
+    canvas = dashboard_widgets._EntertainmentHistoryCanvas()
+    points = [
+        {
+            "date": "2026-08-16",
+            "seconds": 7_860,
+            "has_data": True,
+            "hover_context": {"label": "Fast Movie", "seconds": 7_860},
+        },
+        {"date": "2026-09-02", "seconds": 0, "has_data": True, "is_today": True},
+    ]
+    canvas.set_data("30d", points, ["2026-08-04", "2026-09-02"])
+
+    assert canvas._calendar_week_labels == ["8/3", "8/10", "8/17", "8/24", "8/31"]
+    assert canvas._calendar_color({"has_data": True, "seconds": 0}, 7_860).name() == dashboard_widgets.COLORS["panel_bg_alt"].lower()
+    assert canvas._calendar_color({"has_data": True, "seconds": 7_860}, 7_860).name() == "#f97316"
+    assert canvas._calendar_tooltip_text("2026-08-16", points[0]) == (
+        "8/16 周日\n娱乐 2小时11分钟\nFast Movie"
+    )
 
 
 def test_entertainment_history_canvas_degrades_for_non_sequence_points():
