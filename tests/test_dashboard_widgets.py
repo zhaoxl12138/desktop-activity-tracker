@@ -775,6 +775,15 @@ def test_entertainment_history_week_canvas_distinguishes_zero_and_missing_points
     assert canvas._points[2]["has_data"] is False
 
 
+def test_entertainment_history_week_canvas_uses_duration_labels_without_limits():
+    _app()
+    canvas = dashboard_widgets._EntertainmentHistoryCanvas()
+    points = _entertainment_history_payload()["entertainment_history"]["week"]["points"]
+    canvas.set_data("7d", points)
+
+    assert canvas._bar_duration_labels == ["30m", "", "", "1h10m"]
+
+
 def test_entertainment_history_card_degrades_safely_without_available_model():
     app = _app()
     card = dashboard_widgets.EntertainmentHistoryCard()

@@ -2199,6 +2199,7 @@ class _EntertainmentHistoryCanvas(QWidget):
         self._mode = "7d"
         self._points: list[dict] = []
         self._point_states: list[str] = []
+        self._bar_duration_labels: list[str] = []
         self._calendar_dates: list[str] = []
         self._over_limit_dates: set[str] = set()
         self._state = "empty"
@@ -2220,6 +2221,10 @@ class _EntertainmentHistoryCanvas(QWidget):
             key=lambda point: str(point.get("date", "")),
         )
         self._point_states = [self._point_state(point) for point in self._points]
+        self._bar_duration_labels = [
+            self._bar_duration_label(point) if self._mode == "7d" else ""
+            for point in self._points
+        ]
         self._over_limit_dates = {
             str(point.get("date")) for point in self._points if point.get("over_limit")
         }
@@ -2236,6 +2241,19 @@ class _EntertainmentHistoryCanvas(QWidget):
         if (parse_nonnegative_int(point.get("seconds")) or 0) == 0:
             return "zero"
         return "value"
+
+    @staticmethod
+    def _bar_duration_label(point: dict) -> str:
+        if not point.get("has_data", False):
+            return ""
+        seconds = parse_nonnegative_int(point.get("seconds")) or 0
+        if seconds <= 0:
+            return ""
+        hours, remainder = divmod(seconds, 3600)
+        minutes = remainder // 60
+        if hours:
+            return f"{hours}h{minutes}m"
+        return f"{minutes}m" if minutes else "<1m"
 
     @staticmethod
     def _valid_date(value) -> bool:
@@ -2273,17 +2291,13 @@ class _EntertainmentHistoryCanvas(QWidget):
             self._draw_bars(painter)
 
     def _draw_bars(self, painter: QPainter) -> None:
-        rect = QRectF(self.rect()).adjusted(4, 6, -4, -19)
+        rect = QRectF(self.rect()).adjusted(4, 18, -4, -19)
         values = [
             parse_nonnegative_int(point.get("seconds")) or 0
             for point in self._points
             if point.get("has_data", False)
         ]
-        limits = [
-            parse_nonnegative_int(point.get("limit_seconds")) or 0
-            for point in self._points
-        ]
-        maximum = max(values + limits + [1])
+        maximum = max(values + [1])
         slot = rect.width() / max(len(self._points), 1)
         for index, point in enumerate(self._points):
             x = rect.left() + index * slot
@@ -2303,14 +2317,22 @@ class _EntertainmentHistoryCanvas(QWidget):
                     2,
                     2,
                 )
-            limit = parse_nonnegative_int(point.get("limit_seconds"))
-            if limit:
-                y = rect.bottom() - limit / maximum * rect.height()
-                painter.setPen(QPen(QColor("#c88d68"), 1, Qt.DashLine))
-                painter.drawLine(QPointF(x + slot * 0.16, y), QPointF(x + slot * 0.84, y))
+                duration_label = self._bar_duration_labels[index]
+                if duration_label:
+                    painter.setPen(QColor(COLORS["text_secondary"]))
+                    duration_font = painter.font()
+                    duration_font.setPixelSize(9)
+                    duration_font.setBold(True)
+                    painter.setFont(duration_font)
+                    painter.drawText(
+                        QRectF(x, max(0.0, rect.bottom() - height - 14), slot, 12),
+                        Qt.AlignCenter,
+                        duration_label,
+                    )
             painter.setPen(QColor(COLORS["text_muted"]))
             font = painter.font()
             font.setPixelSize(9)
+            font.setBold(False)
             painter.setFont(font)
             label = self._short_date(str(point.get("date", "")), bool(point.get("is_today")))
             painter.drawText(QRectF(x, rect.bottom() + 4, slot, 13), Qt.AlignCenter, label)
