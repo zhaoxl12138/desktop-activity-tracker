@@ -26,10 +26,8 @@ from ..widgets.dashboard_widgets import (
     DistributionLegend,
     DonutChartWidget,
     EntertainmentHistoryCard,
-    FocusTimelineBarWidget,
-    SessionTop3Widget,
-    TimelineWidget,
     TopAppListWidget,
+    WorkInterruptionCard,
     WorkEpisodeListWidget,
     RhythmComparisonCard,
 )
@@ -69,7 +67,7 @@ class TodayOverviewPage(QWidget):
         root.addLayout(columns, 1)
 
         self.distribution_card = self._build_distribution_card()
-        self.focus_timeline_card = self._build_focus_timeline_card()
+        self.work_analysis_card = self._build_work_analysis_card()
         self.time_stats_card = None
         self.time_stats_ratio_ring = None
 
@@ -79,7 +77,7 @@ class TodayOverviewPage(QWidget):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(14)
         left_layout.addWidget(self.distribution_card)
-        left_layout.addWidget(self.focus_timeline_card, 1)
+        left_layout.addWidget(self.work_analysis_card, 1)
         columns.addWidget(left_panel, 7)
 
         # Right panel: trend chart + TOP5 in a single vertical layout
@@ -311,91 +309,17 @@ class TodayOverviewPage(QWidget):
         outer.addLayout(cmp_row)
         return card
 
-    def _build_focus_card(self) -> QWidget:
-        card = QFrame()
-        card.setObjectName("dashboardCard")
-        card.setStyleSheet(ui_style.get_dashboard_card_style())
-        card.setMinimumHeight(220)
-
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(6)
-
-        header = QHBoxLayout()
-        title = QLabel("今日专注")
-        title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {ui_style.COLORS['text']};")
-        header.addWidget(title)
-        header.addStretch()
-        self.consecutive_label = QLabel("")
-        self.consecutive_label.setStyleSheet(
-            f"font-size: 11px; color: {ui_style.COLORS['primary']}; font-weight: 700;"
-        )
-        header.addWidget(self.consecutive_label)
-        layout.addLayout(header)
-
-        self.focus_hint = QLabel("今日暂未识别到连续专注时段。")
-        self.focus_hint.setWordWrap(True)
-        self.focus_hint.setStyleSheet(f"font-size: 13px; color: {ui_style.COLORS['text_secondary']};")
-        layout.addWidget(self.focus_hint)
-        layout.addStretch()
-        return card
-
-    def _build_focus_timeline_card(self) -> QWidget:
+    def _build_work_analysis_card(self) -> QWidget:
         card = QFrame()
         card.setObjectName("dashboardCard")
         card.setStyleSheet(ui_style.get_dashboard_card_style())
 
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(14, 5, 14, 4)
-        layout.setSpacing(2)
+        layout.setContentsMargins(14, 10, 14, 8)
+        layout.setSpacing(8)
 
-        title = QLabel("今日专注时间轴")
-        title.setStyleSheet(f"font-size: 16px; font-weight: 800; color: {ui_style.COLORS['text']};")
-        layout.addWidget(title)
-
-        self.focus_axis = FocusTimelineBarWidget()
-        layout.addWidget(self.focus_axis)
-
-        tick_row = QHBoxLayout()
-        tick_row.setSpacing(0)
-        for index, text in enumerate(["00:00", "04:00", "08:00", "12:00", "16:00", "20:00", "24:00"]):
-            label = QLabel(text)
-            label.setStyleSheet(f"font-size: 9px; color: {ui_style.COLORS['text_muted']};")
-            tick_row.addWidget(label)
-            if index < 6:
-                tick_row.addStretch()
-        layout.addLayout(tick_row)
-
-        legend_row = QHBoxLayout()
-        legend_row.setSpacing(4)
-        self.focus_legend_labels: list[QLabel] = []
-        self.focus_legend_dots: list[QLabel] = []
-        self.focus_legend_colors: list[str] = []
-        for name, color in [
-            ("工作参与", ui_style.COLORS["coding_green"]),
-            ("未计入专注", ui_style.COLORS["timeline_idle"]),
-        ]:
-            dot = QLabel("●")
-            dot.setTextFormat(Qt.PlainText)
-            dot.setStyleSheet(f"font-size: 10px; color: {color};")
-            text_label = QLabel(name)
-            text_label.setTextFormat(Qt.PlainText)
-            text_label.setStyleSheet(f"font-size: 10px; color: {ui_style.COLORS['text_secondary']};")
-            legend_row.addWidget(dot)
-            legend_row.addWidget(text_label)
-            legend_row.addSpacing(10)
-            self.focus_legend_dots.append(dot)
-            self.focus_legend_labels.append(text_label)
-            self.focus_legend_colors.append(color)
-        legend_row.addStretch()
-        layout.addLayout(legend_row)
-
-        self.focus_hint = QLabel("今日暂未识别到连续专注时段。")
-        self.focus_hint.setStyleSheet(f"font-size: 10px; color: {ui_style.COLORS['text_secondary']};")
-        layout.addWidget(self.focus_hint)
-
-        self.consecutive_label = QLabel("")
-        self.consecutive_label.setVisible(False)
+        self.interruption_card = WorkInterruptionCard()
+        layout.addWidget(self.interruption_card)
 
         section_title = QLabel("关键工作片段")
         section_title.setObjectName("workEpisodeSectionTitle")
@@ -508,13 +432,6 @@ class TodayOverviewPage(QWidget):
             }
             for session in snapshot.get("sessions", [])
         ]
-        timeline_sessions = sorted(
-            sessions,
-            key=lambda session: (
-                str(session.get("start_time", "") or ""),
-                str(session.get("end_time", "") or ""),
-            ),
-        )
         work_episode_rows = list(snapshot.get("work_episode_rows", []) or [])
         if not work_episode_rows:
             from ...services.dashboard_service import build_work_episode_rows
@@ -528,18 +445,16 @@ class TodayOverviewPage(QWidget):
                 ),
             )
         self.work_episode_widget.set_episodes(work_episode_rows)
-        self.focus_axis.set_minutes(self._build_focus_axis(timeline_sessions))
+        self.interruption_card.set_data(
+            dict(snapshot.get("interruption_analysis", {}) or {})
+        )
         self.rhythm_card.set_data(dict(snapshot.get("rhythm", {}) or {}))
         self.entertainment_history_card.set_data(snapshot)
-        focus_summary = str(snapshot.get("focus_summary", ""))
-        self.focus_hint.setText(focus_summary)
-        self.focus_hint.setVisible("暂未识别" not in focus_summary)
         consecutive_days = int(snapshot.get("consecutive_days", 0) or 0)
         self.last_consecutive_days = consecutive_days
         self.last_recording_streak_days = int(
             snapshot.get("recording_streak_days", consecutive_days) or 0
         )
-        self.consecutive_label.setText(f"连续专注 {consecutive_days}天" if consecutive_days > 0 else "")
         self._update_top_apps(snapshot.get("top_app_rows", []))
 
     def _update_top_apps(self, rows_data: list[dict[str, object]]) -> None:

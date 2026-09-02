@@ -138,6 +138,116 @@ def test_dashboard_snapshot_exposes_daily_work_and_entertainment_hover_contexts(
     }
 
 
+def test_interruption_analysis_merges_non_work_sessions_until_work_resumes():
+    work_before = _rhythm_session(
+        "2026-09-02", "09:00:00", "09:10:00", 600, session_id="work-before"
+    )
+    social = {
+        **_rhythm_session(
+            "2026-09-02", "09:10:00", "09:13:00", 180, session_id="social"
+        ),
+        "category_key": "social",
+        "process_name": "WeChat.exe",
+    }
+    video = {
+        **_rhythm_session(
+            "2026-09-02", "09:13:00", "09:15:00", 120, session_id="video"
+        ),
+        "category_key": "video",
+        "process_name": "QyClient.exe",
+    }
+    work_after = _rhythm_session(
+        "2026-09-02", "09:15:00", "09:25:00", 600, session_id="work-after"
+    )
+
+    analysis = dashboard_service.build_interruption_analysis(
+        [work_before, social, video, work_after],
+        lambda process, _details: {
+            "WeChat.exe": "微信",
+            "QyClient.exe": "腾讯视频",
+        }.get(process, process),
+    )
+
+    assert analysis == {
+        "status": "ready",
+        "total_count": 1,
+        "total_seconds": 300,
+        "primary_source": {
+            "label": "微信",
+            "count": 1,
+            "seconds": 180,
+            "kind": "social",
+        },
+        "sources": [
+            {
+                "label": "微信",
+                "count": 1,
+                "seconds": 180,
+                "kind": "social",
+            }
+        ],
+    }
+
+
+def test_interruption_analysis_excludes_long_gaps_and_invalid_sessions():
+    work_before = _rhythm_session(
+        "2026-09-02", "09:00:00", "09:10:00", 600, session_id="work-before"
+    )
+    social = {
+        **_rhythm_session(
+            "2026-09-02", "09:10:00", "09:12:00", 120, session_id="social"
+        ),
+        "category_key": "social",
+        "process_name": "WeChat.exe",
+    }
+    malformed = {**social, "session_id": "bad", "start_time": "invalid"}
+    work_after = _rhythm_session(
+        "2026-09-02", "09:26:00", "09:36:00", 600, session_id="work-after"
+    )
+
+    analysis = dashboard_service.build_interruption_analysis(
+        [work_before, social, malformed, work_after], lambda process, _details: process
+    )
+
+    assert analysis == {
+        "status": "empty",
+        "total_count": 0,
+        "total_seconds": 0,
+        "primary_source": None,
+        "sources": [],
+    }
+
+
+def test_interruption_analysis_labels_idle_as_away_from_computer():
+    work_before = _rhythm_session(
+        "2026-09-02", "09:00:00", "09:10:00", 600, session_id="work-before"
+    )
+    idle = {
+        **_rhythm_session(
+            "2026-09-02", "09:10:00", "09:14:00", 240, session_id="idle"
+        ),
+        "category_key": "idle",
+        "process_name": "system",
+        "effective_seconds": 0,
+        "engaged_seconds": 0,
+        "idle_seconds": 240,
+    }
+    work_after = _rhythm_session(
+        "2026-09-02", "09:14:00", "09:24:00", 600, session_id="work-after"
+    )
+
+    analysis = dashboard_service.build_interruption_analysis(
+        [work_before, idle, work_after], lambda process, _details: process
+    )
+
+    assert analysis["primary_source"] == {
+        "label": "离开电脑",
+        "count": 1,
+        "seconds": 240,
+        "kind": "idle",
+    }
+
+
 def test_rhythm_half_hour_cumulative_series_conserves_cross_slot_engagement():
     sessions = [
         _rhythm_session(
@@ -2036,6 +2146,13 @@ def test_snapshot_builds_exact_trusted_insight_payload_without_daily_session_que
     assert snapshot["rhythm"]["version"] == 1
     assert snapshot["rhythm"]["primary_metric"] == "work_engaged_seconds"
     assert snapshot["rhythm"]["today"]["chart"]["kind"] == "cumulative"
+    assert snapshot["interruption_analysis"] == {
+        "status": "empty",
+        "total_count": 0,
+        "total_seconds": 0,
+        "primary_source": None,
+        "sources": [],
+    }
     assert snapshot["rhythm"]["7d"]["date_range"] == [
         "2026-08-05",
         "2026-08-11",

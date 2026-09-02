@@ -190,10 +190,10 @@ def test_dashboard_column_content_bottoms_align_with_compact_rhythm(tmp_path):
         window.resize(width, height)
         app.processEvents()
 
-        left_bottom = page.focus_timeline_card.geometry().bottom()
+        left_bottom = page.work_analysis_card.geometry().bottom()
         right_bottom = page.top_app_card.geometry().bottom()
         assert abs(left_bottom - right_bottom) <= 2
-        assert page.focus_timeline_card.parentWidget().height() - left_bottom <= 2
+        assert page.work_analysis_card.parentWidget().height() - left_bottom <= 2
         assert page.top_app_card.parentWidget().height() - right_bottom <= 2
         assert page.trend_card.height() <= 300
         assert page.trend_card.canvas.height() >= 80
@@ -229,9 +229,9 @@ def test_dashboard_work_episode_rows_stay_compact_at_supported_sizes(tmp_path):
             assert all(row.height() == 72 for row in rows)
             expected_height = episode_count * 72 + max(0, episode_count - 1) * 6
             assert page.work_episode_widget.height() == expected_height
-            assert page.focus_axis.height() == 28
+            assert page.interruption_card.height() >= 82
             assert abs(
-                page.focus_timeline_card.geometry().bottom()
+                page.work_analysis_card.geometry().bottom()
                 - page.top_app_card.geometry().bottom()
             ) <= 2
 

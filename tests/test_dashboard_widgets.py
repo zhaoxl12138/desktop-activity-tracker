@@ -420,6 +420,54 @@ def test_key_sessions_use_five_minute_minimum():
     assert [session["process_name"] for session in widget._sessions] == ["Code.exe"]
 
 
+def test_work_interruption_card_shows_primary_source_and_top_three_rows():
+    app = _app()
+    card_type = getattr(dashboard_widgets, "WorkInterruptionCard", None)
+    assert card_type is not None
+    card = card_type()
+    card.set_data(
+        {
+            "status": "ready",
+            "total_count": 4,
+            "total_seconds": 1_080,
+            "primary_source": {
+                "label": "微信",
+                "count": 2,
+                "seconds": 420,
+                "kind": "social",
+            },
+            "sources": [
+                {"label": "微信", "count": 2, "seconds": 420, "kind": "social"},
+                {"label": "腾讯视频", "count": 1, "seconds": 360, "kind": "entertainment"},
+                {"label": "离开电脑", "count": 1, "seconds": 300, "kind": "idle"},
+            ],
+        }
+    )
+    app.processEvents()
+
+    assert card.conclusion_label.text() == "今天被打断 4 次，主要来自 微信"
+    assert card.count_value.text() == "4次"
+    assert card.duration_value.text() == "18分钟"
+    assert card.primary_value.text() == "微信"
+    assert len(card._source_rows) == 3
+    assert all(row.findChild(QLabel, "interruptionSourceLabel") is not None for row in card._source_rows)
+
+
+def test_work_interruption_card_has_clear_empty_and_unavailable_states():
+    app = _app()
+    card = dashboard_widgets.WorkInterruptionCard()
+
+    card.set_data({"status": "empty"})
+    app.processEvents()
+    assert card.conclusion_label.text() == "今天暂未识别到可分析的工作干扰"
+    assert card._source_rows == []
+
+    card.set_data({"status": "unavailable"})
+    app.processEvents()
+    assert card.conclusion_label.text() == "干扰数据暂不可用，稍后会自动恢复"
+    assert card._source_rows == []
+
+
 def test_work_episode_widget_renders_topic_apps_and_participation():
     app = _app()
     widget_type = getattr(dashboard_widgets, "WorkEpisodeListWidget", None)

@@ -34,6 +34,7 @@ THIRTY_DAY_METRIC_BREAK_NOTICE = (
 
 RHYTHM_CONTINUITY_GAP_SECONDS = 30
 RHYTHM_HISTORY_START_DATE = date(2026, 8, 13)
+INTERRUPTION_WINDOW_SECONDS = 15 * 60
 
 
 def _rolling_date_strings(end_date: date, days: int) -> list[str]:
@@ -1185,6 +1186,149 @@ def _safe_tool_text(source: str) -> str | None:
     return label
 
 
+def _empty_interruption_analysis(status: str = "empty") -> dict[str, object]:
+    return {
+        "status": status,
+        "total_count": 0,
+        "total_seconds": 0,
+        "primary_source": None,
+        "sources": [],
+    }
+
+
+def _interruption_source(
+    session: dict,
+    resolve_display,
+) -> tuple[str, str, int]:
+    """Return the displayable primary source for one non-work interval."""
+    category_key = str(session.get("category_key", "") or "")
+    seconds = parse_nonnegative_int(session.get("effective_seconds")) or 0
+    if seconds <= 0:
+        seconds = parse_nonnegative_int(session.get("engaged_seconds")) or 0
+    if seconds <= 0:
+        seconds = parse_nonnegative_int(session.get("passive_seconds")) or 0
+    if seconds <= 0:
+        seconds = parse_nonnegative_int(session.get("idle_seconds")) or 0
+    if seconds <= 0:
+        seconds = parse_nonnegative_int(session.get("duration_seconds")) or 0
+
+    if category_key == "idle":
+        return "idle", "离开电脑", seconds
+    if category_key == "social":
+        kind = "social"
+    elif category_key in ENTERTAINMENT_KEYS:
+        kind = "entertainment"
+    elif category_key in BROWSER_CATEGORY_KEYS:
+        kind = "browser"
+    else:
+        kind = "other"
+
+    process_name = str(session.get("process_name", "") or "").strip()
+    try:
+        resolved = resolve_display(process_name, []) if resolve_display else ""
+    except Exception:
+        resolved = ""
+    label = _safe_tool_text(str(resolved or ""))
+    if label is None:
+        label = _safe_tool_text(process_name)
+    return kind, label or "其他应用", seconds
+
+
+def build_interruption_analysis(
+    sessions: list[dict],
+    resolve_display=None,
+) -> dict[str, object]:
+    """Summarize short non-work runs that are bracketed by work sessions.
+
+    A single switch can produce several tracking rows.  The rows are treated as
+    one interruption only when they are consecutive and work resumes promptly.
+    """
+    ordered: list[tuple[datetime, datetime, dict]] = []
+    seen_events: set[tuple[str, ...]] = set()
+    for session in sessions:
+        identity = _session_event_identity(session)
+        if identity in seen_events:
+            continue
+        seen_events.add(identity)
+        interval = _session_interval(session)
+        if interval is None or interval[1] <= interval[0]:
+            continue
+        ordered.append((interval[0], interval[1], session))
+    ordered.sort(key=lambda item: (item[0], item[1]))
+
+    total_count = 0
+    total_seconds = 0
+    source_totals: dict[tuple[str, str], dict[str, object]] = {}
+    previous_work_end: datetime | None = None
+    break_rows: list[tuple[datetime, datetime, dict]] = []
+    active_date = None
+
+    for start_dt, end_dt, session in ordered:
+        if active_date != start_dt.date():
+            active_date = start_dt.date()
+            previous_work_end = None
+            break_rows = []
+        is_work = str(session.get("category_key", "") or "") in WORK_KEYS
+        if not is_work:
+            if previous_work_end is not None:
+                break_rows.append((start_dt, end_dt, session))
+            continue
+
+        if previous_work_end is not None and break_rows:
+            gaps = [
+                (break_rows[0][0] - previous_work_end).total_seconds(),
+                (start_dt - break_rows[-1][1]).total_seconds(),
+            ]
+            gaps.extend(
+                (right[0] - left[1]).total_seconds()
+                for left, right in zip(break_rows, break_rows[1:])
+            )
+            elapsed = (start_dt - previous_work_end).total_seconds()
+            if (
+                0 < elapsed <= INTERRUPTION_WINDOW_SECONDS
+                and all(0 <= gap <= RHYTHM_CONTINUITY_GAP_SECONDS for gap in gaps)
+            ):
+                candidates = [
+                    _interruption_source(row[2], resolve_display)
+                    for row in break_rows
+                ]
+                primary_kind, primary_label, primary_seconds = max(
+                    candidates,
+                    key=lambda item: (item[2], item[1]),
+                )
+                total_count += 1
+                total_seconds += sum(item[2] for item in candidates)
+                key = (primary_kind, primary_label)
+                entry = source_totals.setdefault(
+                    key,
+                    {
+                        "label": primary_label,
+                        "count": 0,
+                        "seconds": 0,
+                        "kind": primary_kind,
+                    },
+                )
+                entry["count"] = int(entry["count"]) + 1
+                entry["seconds"] = int(entry["seconds"]) + primary_seconds
+
+        previous_work_end = end_dt
+        break_rows = []
+
+    if total_count == 0:
+        return _empty_interruption_analysis()
+    sources = sorted(
+        source_totals.values(),
+        key=lambda item: (-int(item["count"]), -int(item["seconds"]), str(item["label"])),
+    )[:3]
+    return {
+        "status": "ready",
+        "total_count": total_count,
+        "total_seconds": total_seconds,
+        "primary_source": dict(sources[0]),
+        "sources": [dict(source) for source in sources],
+    }
+
+
 def _stable_tool_identity(
     session: dict,
     resolve_display=None,
@@ -2123,6 +2267,11 @@ def load_today_snapshot(
         sessions=range_sessions,
     )
     try:
+        interruption_analysis = build_interruption_analysis(sessions, resolve_display)
+    except Exception:
+        LOGGER.exception("Failed to build dashboard interruption analysis")
+        interruption_analysis = _empty_interruption_analysis("unavailable")
+    try:
         goals = build_daily_goals(
             captured_now=captured_now,
             daily_rows=rhythm_daily,
@@ -2300,6 +2449,7 @@ def load_today_snapshot(
         "rhythm": rhythm,
         "goals": goals,
         "entertainment_history": entertainment_history,
+        "interruption_analysis": interruption_analysis,
         "trend": {
             "today": split_today["total"],
             "today_work": split_today["work"],

@@ -152,8 +152,8 @@ def main():
         overview = window.pages["today"]
         assert overview.trend_card is not None, "trend card missing"
         assert overview.top_app_card is not None, "top app card missing"
-        assert overview.focus_timeline_card is not None, "focus timeline card missing"
-        assert overview.focus_axis is not None, "focus axis missing"
+        assert overview.work_analysis_card is not None, "work analysis card missing"
+        assert overview.interruption_card is not None, "interruption analysis missing"
         assert overview.insight_card is None, "trusted insight card should be removed"
         assert overview.time_stats_card is None, "time stats card should be removed"
 

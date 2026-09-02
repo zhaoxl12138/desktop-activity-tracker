@@ -2878,6 +2878,153 @@ class TopAppListWidget(QFrame):
             self._row_widgets.append(row)
 
 
+class WorkInterruptionCard(QFrame):
+    """Compact, evidence-based summary of interruptions between work blocks."""
+
+    _SOURCE_COLORS = {
+        "social": COLORS["social_purple"],
+        "entertainment": COLORS["video_orange"],
+        "idle": COLORS["idle_gray"],
+        "browser": COLORS["tools_cyan"],
+        "other": COLORS["text_muted"],
+    }
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("workInterruptionCard")
+        self.setStyleSheet(
+            f"QFrame#workInterruptionCard {{ background: {COLORS['panel_bg_alt']}; "
+            f"border: 1px solid {COLORS['border']}; border-radius: 9px; }}"
+        )
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._source_rows: list[QFrame] = []
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 9, 12, 9)
+        layout.setSpacing(5)
+        header = QHBoxLayout()
+        header.setSpacing(8)
+        title = QLabel("工作干扰分析")
+        title.setTextFormat(Qt.PlainText)
+        title.setStyleSheet(
+            f"font-size: 15px; font-weight: 800; color: {COLORS['text']}; border: none;"
+        )
+        header.addWidget(title)
+        header.addStretch()
+        self.conclusion_label = QLabel()
+        self.conclusion_label.setObjectName("interruptionConclusion")
+        self.conclusion_label.setTextFormat(Qt.PlainText)
+        self.conclusion_label.setStyleSheet(
+            f"font-size: 12px; color: {COLORS['text_secondary']}; border: none;"
+        )
+        header.addWidget(self.conclusion_label)
+        layout.addLayout(header)
+
+        metrics = QHBoxLayout()
+        metrics.setSpacing(7)
+        self.count_value = self._add_metric(metrics, "明显干扰")
+        self.duration_value = self._add_metric(metrics, "离开工作")
+        self.primary_value = self._add_metric(metrics, "主要来源")
+        layout.addLayout(metrics)
+
+        self.source_layout = QVBoxLayout()
+        self.source_layout.setContentsMargins(0, 0, 0, 0)
+        self.source_layout.setSpacing(3)
+        layout.addLayout(self.source_layout)
+        self.set_data({"status": "empty"})
+
+    def _add_metric(self, layout: QHBoxLayout, label_text: str) -> QLabel:
+        metric = QFrame()
+        metric.setStyleSheet(
+            f"background: {COLORS['card_bg_alt']}; border: none; border-radius: 6px;"
+        )
+        metric_layout = QVBoxLayout(metric)
+        metric_layout.setContentsMargins(8, 4, 8, 4)
+        metric_layout.setSpacing(0)
+        label = QLabel(label_text)
+        label.setTextFormat(Qt.PlainText)
+        label.setStyleSheet(
+            f"font-size: 10px; color: {COLORS['text_muted']}; border: none;"
+        )
+        value = QLabel("--")
+        value.setTextFormat(Qt.PlainText)
+        value.setStyleSheet(
+            f"font-size: 13px; font-weight: 800; color: {COLORS['text']}; border: none;"
+        )
+        metric_layout.addWidget(label)
+        metric_layout.addWidget(value)
+        layout.addWidget(metric, 1)
+        return value
+
+    def _clear_source_rows(self) -> None:
+        for row in self._source_rows:
+            self.source_layout.removeWidget(row)
+            row.deleteLater()
+        self._source_rows.clear()
+
+    def set_data(self, data: dict | None) -> None:
+        payload = dict(data or {})
+        status = str(payload.get("status", "empty") or "empty")
+        self._clear_source_rows()
+        if status == "unavailable":
+            self.conclusion_label.setText("干扰数据暂不可用，稍后会自动恢复")
+            self.count_value.setText("--")
+            self.duration_value.setText("--")
+            self.primary_value.setText("--")
+            self.setFixedHeight(82)
+            return
+        if status != "ready":
+            self.conclusion_label.setText("今天暂未识别到可分析的工作干扰")
+            self.count_value.setText("0次")
+            self.duration_value.setText("0分钟")
+            self.primary_value.setText("--")
+            self.setFixedHeight(82)
+            return
+
+        count = parse_nonnegative_int(payload.get("total_count")) or 0
+        seconds = parse_nonnegative_int(payload.get("total_seconds")) or 0
+        primary = dict(payload.get("primary_source", {}) or {})
+        primary_label = str(primary.get("label", "其他应用") or "其他应用")
+        self.conclusion_label.setText(f"今天被打断 {count} 次，主要来自 {primary_label}")
+        self.count_value.setText(f"{count}次")
+        self.duration_value.setText(_goal_duration(seconds))
+        self.primary_value.setText(primary_label)
+
+        for source in list(payload.get("sources", []) or [])[:3]:
+            self._add_source_row(dict(source or {}))
+        self.setFixedHeight(82 + len(self._source_rows) * 22)
+
+    def _add_source_row(self, source: dict) -> None:
+        kind = str(source.get("kind", "other") or "other")
+        color = self._SOURCE_COLORS.get(kind, self._SOURCE_COLORS["other"])
+        row = QFrame()
+        row.setStyleSheet("background: transparent; border: none;")
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(2, 0, 2, 0)
+        row_layout.setSpacing(6)
+        dot = QLabel("●")
+        dot.setTextFormat(Qt.PlainText)
+        dot.setStyleSheet(f"font-size: 10px; color: {color}; border: none;")
+        row_layout.addWidget(dot)
+        label = ElidedLabel(str(source.get("label", "其他应用") or "其他应用"))
+        label.setObjectName("interruptionSourceLabel")
+        label.setTextFormat(Qt.PlainText)
+        label.setStyleSheet(
+            f"font-size: 11px; color: {COLORS['text_secondary']}; border: none;"
+        )
+        row_layout.addWidget(label, 1)
+        count = parse_nonnegative_int(source.get("count")) or 0
+        seconds = parse_nonnegative_int(source.get("seconds")) or 0
+        value = QLabel(f"{count}次 · {_goal_duration(seconds)}")
+        value.setTextFormat(Qt.PlainText)
+        value.setStyleSheet(
+            f"font-size: 11px; color: {COLORS['text_muted']}; border: none;"
+        )
+        row_layout.addWidget(value)
+        self.source_layout.addWidget(row)
+        self._source_rows.append(row)
+
+
 class WorkEpisodeListWidget(QFrame):
     """Compact list of coherent work episodes rather than raw sessions."""
 
