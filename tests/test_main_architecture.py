@@ -116,6 +116,13 @@ def test_gui_bootstrap_installs_persistent_logging_before_qt_application():
     assert "install_qt_message_handler()" in GUI_BOOTSTRAP_SOURCE
 
 
+def test_gui_bootstrap_records_lifecycle_diagnostics():
+    assert "start_runtime_diagnostics(db_path)" in GUI_BOOTSTRAP_SOURCE
+    assert "install_thread_exception_handler()" in GUI_BOOTSTRAP_SOURCE
+    assert "install_native_fault_handler(db_path)" in GUI_BOOTSTRAP_SOURCE
+    assert "diagnostics.mark_clean_shutdown(exit_code=exit_code)" in GUI_BOOTSTRAP_SOURCE
+
+
 def test_recording_worker_persists_reported_failures():
     assert '"Recording worker %s: %s"' in WORKER_SOURCE
     assert "exc_info=(error.__class__, error, error.__traceback__)" in WORKER_SOURCE

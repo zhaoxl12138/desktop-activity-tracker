@@ -20,7 +20,13 @@ from .gui_shutdown_service import (
     stop_recording_worker_safely,
 )
 from .instance_lock import acquire_recording_lock
-from .logging_service import configure_app_logging, install_qt_message_handler
+from .logging_service import (
+    configure_app_logging,
+    install_native_fault_handler,
+    install_qt_message_handler,
+    install_thread_exception_handler,
+    start_runtime_diagnostics,
+)
 
 
 DUPLICATE_INSTANCE_MESSAGE = "程序已在运行中，请查看系统托盘图标。"
@@ -87,9 +93,13 @@ def launch_gui() -> None:
     config = load_config(config_path)
     config, db_path = prepare_runtime_config(config)
     log_path = configure_app_logging(db_path)
+    diagnostics = start_runtime_diagnostics(db_path)
+    install_thread_exception_handler()
+    install_native_fault_handler(db_path)
     LOGGER.info("DayLens GUI starting; database=%s log=%s", db_path, log_path)
 
     from PySide6.QtGui import QFont
+    from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QApplication
 
     install_qt_message_handler()
@@ -105,6 +115,11 @@ def launch_gui() -> None:
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setFont(QFont("Microsoft YaHei", 10))
+    heartbeat_timer = QTimer(app)
+    heartbeat_timer.setInterval(60_000)
+    heartbeat_timer.timeout.connect(diagnostics.heartbeat)
+    heartbeat_timer.start()
+    app.aboutToQuit.connect(lambda: diagnostics.heartbeat("event_loop_exiting"))
 
     settings, existing_rules = load_bootstrap_state(db_path)
     if settings.get("wizard_completed") != "true":
@@ -128,11 +143,14 @@ def launch_gui() -> None:
 
     while True:
         exit_code = app.exec()
+        diagnostics.heartbeat("shutdown_requested")
         shutdown_result = shutdown_gui_runtime(window.worker)
         if shutdown_result.completed:
             LOGGER.info("DayLens GUI stopped cleanly; exit_code=%s", exit_code)
+            diagnostics.mark_clean_shutdown(exit_code=exit_code)
             break
         LOGGER.error("GUI shutdown incomplete: %s", shutdown_result.message)
+        diagnostics.heartbeat("shutdown_incomplete")
         print(f"[Shutdown] {shutdown_result.message}", file=sys.stderr)
         window.show()
     sys.exit(exit_code)
