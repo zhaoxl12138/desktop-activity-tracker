@@ -703,6 +703,50 @@ class SessionTracker:
                 cat_name = cat["category_name"]
                 active_rule = cat["active_rule"]
 
+        base_category = cat_key
+        ai_decision = None
+        intelligence = getattr(self, 'intelligence', None)
+        if intelligence is not None:
+            try:
+                prior_active = (self._last_attention_state == 'engaged'
+                                and idle_seconds <= self.idle_threshold)
+                ai_decision = intelligence.observe(
+                    process_name, raw_title, base_category, self.classification_version,
+                    active_seconds=self.sample_interval if prior_active else 0,
+                )
+                proposed = (ai_decision or {}).get('category')
+                # Media gating stays under existing rules in this release.
+                if ((ai_decision or {}).get('certainty') == 'high'
+                        and (base_category in ('browser_general', 'other')
+                             or (ai_decision or {}).get('source') == '手动')
+                        and base_category != 'video'
+                        and proposed in ('coding', 'reading', 'office', 'ai_tools', 'creative', 'social', 'tools')
+                        and proposed in getattr(self.classifier, 'categories', {})):
+                    category = self.classifier.categories[proposed]
+                    cat_key = proposed
+                    cat_name = category['display_name']
+                    active_rule = category['active_rule']
+            except Exception:
+                ai_decision = None
+        previous_ai = getattr(self, '_ai_display', {})
+        if (self._current is not None and self._current.process_name == process_name
+                and self._current.window_title == raw_title
+                and self._current.category_key != cat_key
+                and (cat_key != base_category or previous_ai.get('source') in ('AI', '手动'))):
+            # This is reclassification of the same page, not a user task switch:
+            # bypass cross-group grace, and preserve already recorded counters.
+            if not self.finish_current('ai_classification'):
+                cat_key = self._current.category_key
+                cat_name = self._current.category_name
+                active_rule = self._current.active_rule
+        self._ai_display = {
+            'source': (ai_decision or {}).get('source', 'AI') if cat_key != base_category else '规则',
+            'base_category': base_category,
+            'reason': (ai_decision or {}).get('reason', ''),
+            'suggested_category': (ai_decision or {}).get('category', ''),
+            'certainty': (ai_decision or {}).get('certainty', ''),
+        }
+
         norm_title = normalize_window_title(process_name, raw_title)
         new_domain = _get_domain(cat_key)
 
@@ -1313,6 +1357,7 @@ class SessionTracker:
             "normalized_title": (p.get("norm_title", s.normalized_title if s else "") if p else (s.normalized_title if s else "")),
             "category_key": cat_key,
             "category_name": cat_name,
+            "classification_detail": dict(getattr(self, '_ai_display', {})),
             "active_rule": active_rule,
             "duration_seconds": s.duration_seconds if s else 0,
             "effective_seconds": s.effective_seconds if s else 0,

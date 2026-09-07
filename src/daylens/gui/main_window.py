@@ -193,6 +193,8 @@ class MainWindow(QMainWindow):
             ),
         }
         self.pages["settings"].config_saved.connect(self._apply_saved_config)
+        if callable(getattr(self.worker, 'reload_intelligence', None)):
+            self.pages['live'].classification_corrected.connect(self.worker.reload_intelligence)
         self.pages["settings"].restart_requested.connect(self._restart_app)
         for _, key, _ in NAV_ITEMS:
             self.stack.addWidget(self.pages[key])

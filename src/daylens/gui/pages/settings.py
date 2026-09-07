@@ -254,6 +254,10 @@ class SettingsPage(QWidget):
         layout.addWidget(g3)
 
         # ── Save ──
+        from ..widgets.intelligence_settings import IntelligenceSettings
+        self.intelligence_settings = IntelligenceSettings(worker=worker)
+        self.intelligence_settings.setStyleSheet(build_group_style())
+        layout.addWidget(self.intelligence_settings)
         layout.addStretch()
         btn_save = QPushButton("保存设置")
         btn_save.setStyleSheet(ui_style.get_button_primary_style())

@@ -292,6 +292,7 @@ class RecordingWorker(QThread):
         self._set_health("starting", error="")
         audio_detector = None
         audio_com_initialized = False
+        intelligence = None
         try:
             if AudioDetector is not None and initialize_audio_com is not None:
                 try:
@@ -331,6 +332,15 @@ class RecordingWorker(QThread):
                 on_session_rewrite=self._rewrite_or_queue,
                 audio_detector=audio_detector,
             )
+            try:
+                from pathlib import Path
+                from .. import get_data_dir
+                from ..services.intelligence_scheduler import IntelligenceScheduler
+                intelligence = IntelligenceScheduler(Path(get_data_dir()) / 'intelligence')
+                self._tracker.intelligence = intelligence
+                intelligence.start()
+            except Exception:
+                LOGGER.warning('Optional intelligence unavailable; local recording continues')
             # Keep the public interval values sourced from the exact tracker config.
             self.sample_interval = tracker_options["sample_interval_seconds"]
             self.flush_interval = tracker_options["flush_interval_seconds"]
@@ -376,6 +386,8 @@ class RecordingWorker(QThread):
             # transferred every unresolved session to the recovery spool.
             self._mark_fatal(error, recoverable=self._recoverable_fatal)
         finally:
+            if intelligence is not None:
+                intelligence.close()
             try:
                 self._cleanup()
             finally:
@@ -729,6 +741,10 @@ class RecordingWorker(QThread):
             try:
                 if command == "settings":
                     self._apply_settings(payload)
+                elif command == "reload_intelligence":
+                    intelligence = getattr(self._tracker, 'intelligence', None)
+                    if intelligence is not None:
+                        intelligence.reload()
                 elif command == "reload_classifier":
                     if self._tracker is not None:
                         replacement_classifier = classifier.Classifier(
@@ -818,6 +834,9 @@ class RecordingWorker(QThread):
     def pause(self):
         self._pause_requested.set()
         self._paused.set()
+
+    def reload_intelligence(self):
+        self._commands.put(('reload_intelligence', None))
 
     def resume(self):
         self._paused.clear()

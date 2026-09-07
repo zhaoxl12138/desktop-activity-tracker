@@ -51,6 +51,9 @@ class ReportsPage(QWidget):
         )
         layout.addWidget(subtitle)
         layout.addWidget(self._build_generation_bar())
+        from ..widgets.intelligence_review_bar import IntelligenceReviewBar
+        self.intelligence_bar = IntelligenceReviewBar(db_path)
+        layout.addWidget(self.intelligence_bar)
 
         content = QHBoxLayout()
         content.setSpacing(14)

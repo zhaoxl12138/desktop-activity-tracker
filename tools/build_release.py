@@ -143,7 +143,7 @@ def _reset_directory(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def build_release() -> None:
+def build_release(*, publish: bool = True) -> None:
     _reset_directory(BUILD_TEMP_DIR)
     _reset_directory(DIST_DIR)
 
@@ -175,6 +175,9 @@ def build_release() -> None:
     _copy_dist_to_staging()
     staging_exe = RELEASE_STAGING_DIR / "DayLens.exe"
     _smoke_test(staging_exe)
+    if not publish:
+        print(f"Validated staging release prepared at: {RELEASE_STAGING_DIR}")
+        return
     _stop_running_gracefully()
     _publish_staging()
 
@@ -205,4 +208,9 @@ def _create_desktop_shortcut(exe_path: str) -> None:
 
 
 if __name__ == "__main__":
-    build_release()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--stage-only', action='store_true',
+                        help='Build and validate without stopping or replacing the running release')
+    args = parser.parse_args()
+    build_release(publish=not args.stage_only)

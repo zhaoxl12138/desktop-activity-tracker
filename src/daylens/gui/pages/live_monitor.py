@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QBrush
 from PySide6.QtWidgets import (
     QFrame,
@@ -14,6 +14,9 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
+    QPushButton,
+    QInputDialog,
+    QMessageBox,
 )
 
 from ...utils import fmt_seconds, normalize_category_display_name
@@ -24,6 +27,8 @@ from ..style import COLORS, get_category_color
 class LiveMonitorPage(QWidget):
     """Realtime foreground-window monitor."""
 
+    classification_corrected = Signal()
+
     def __init__(self):
         super().__init__()
         self._samples = []
@@ -33,7 +38,32 @@ class LiveMonitorPage(QWidget):
         layout.setSpacing(14)
 
         layout.addWidget(self._build_current_session_card())
+        self.correct_button = QPushButton('纠正当前分类')
+        self.correct_button.clicked.connect(self._correct_current)
+        layout.addWidget(self.correct_button, 0, Qt.AlignLeft)
         layout.addWidget(self._build_history_card(), 1)
+
+    def _correct_current(self):
+        if not self._samples:
+            return
+        sample = dict(self._samples[0])
+        if sample.get('category_key') == 'video':
+            QMessageBox.information(self, '媒体分类保护', '视频类别涉及播放计时，请通过规则管理调整。')
+            return
+        choices = {'技术学习 / 开发': 'coding', '阅读学习': 'reading', '办公 / 求职': 'office',
+                   'AI工具': 'ai_tools', '设计创作': 'creative', '社交通讯': 'social', '系统工具': 'tools'}
+        selected, ok = QInputDialog.getItem(self, '纠正分类', '仅用于当前应用与标题，后续记录生效：', list(choices), 0, False)
+        if not ok:
+            return
+        try:
+            from pathlib import Path
+            from ... import get_data_dir
+            from ...services.intelligence_state import save_override
+            save_override(Path(get_data_dir()) / 'intelligence', sample.get('process_name'),
+                          sample.get('window_title'), choices[selected])
+            self.classification_corrected.emit()
+        except Exception:
+            QMessageBox.warning(self, '保存失败', '无法保存此标题的分类纠正')
 
     def _build_current_session_card(self):
         card = QFrame()
@@ -201,6 +231,14 @@ class LiveMonitorPage(QWidget):
         self.lbl_process.setText(proc)
         self.lbl_title.setText(title)
         self.lbl_category.setText(cat_name)
+        detail = sample.get('classification_detail') or {}
+        source = detail.get('source', '规则')
+        if source != '规则':
+            self.lbl_category.setText(f'{cat_name} · {source}')
+        reason = str(detail.get('reason') or '')
+        # Qt tooltips can interpret HTML; escape all model-controlled text.
+        import html
+        self.lbl_category.setToolTip(html.escape(f'分类来源：{source}\n{reason}'))
         self.lbl_category.setStyleSheet(
             f"""
             QLabel {{
