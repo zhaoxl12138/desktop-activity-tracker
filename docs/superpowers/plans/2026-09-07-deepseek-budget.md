@@ -40,3 +40,12 @@
 - Deployment pending: existing PID 44340 continues running `release/DayLens.exe`. Windows Computer Use can find the window but screenshot capture fails with `SetIsBorderRequired 0x80004002`, so no guessed clicks or force-kill were used. User was asked to use the normal Exit action. Recheck process state before publishing staging.
 - Live paid API test remains user-controlled: no key was entered, no browsing records transmitted, and tests use fake providers. After deployment, user can save their key locally and run the fixed-text connection test.
 - Existing unrelated edits to `today_overview.py` and `test_top_app_icons.py` predate this implementation and remain preserved.
+
+## Deployment verification (2026-09-07 23:30)
+
+- Old PID 44340 exited cleanly at 23:28:10 (runtime diagnostics status `clean`, exit code 0).
+- Rechecked staging smoke and canonical database `quick_check=ok` before publishing.
+- Moved old release to `release_backup_20260907_ai` for recovery; moved validated staging into the sole normal launch directory `release`.
+- New PID 24816 started from `D:/OfficeSoftware/DayLens/release/DayLens.exe` at 23:29:24. Startup log confirms `D:/OfficeSoftware/DayLens/data/usage.db`.
+- Read-only verification: session count increased from 20,925 to 20,926, historical range still 2026-06-01 through 2026-09-07; the new session reached 23:30:21. Recording and persistence resumed on the same database.
+- AI remains opt-in. User supplies the key through local settings; no live browsing/API upload was performed by the development checks.
