@@ -21,7 +21,8 @@ def save_key(key: str) -> None:
         import win32cred
         win32cred.CredWrite({
             'Type': win32cred.CRED_TYPE_GENERIC, 'TargetName': TARGET,
-            'UserName': 'DayLens', 'CredentialBlob': key.encode('utf-16-le'),
+            # CredWrite accepts Unicode and performs the UTF-16 encoding itself.
+            'UserName': 'DayLens', 'CredentialBlob': key,
             'Persist': win32cred.CRED_PERSIST_LOCAL_MACHINE,
         }, 0)
     except Exception:

@@ -78,6 +78,22 @@ def main():
 
 
 if __name__ == "__main__":
+    if os.environ.get("DAYLENS_CREDENTIAL_SMOKE") == "1":
+        from uuid import uuid4
+        from daylens.services import intelligence_credentials as credentials
+
+        # Separate process, unique disposable target; never touch the user's key.
+        credentials.TARGET = 'DayLens/Diagnostics/' + str(uuid4())
+        try:
+            credentials.save_key('diagnostic-only')
+            value = credentials.read_key()
+            result = 0 if value == 'diagnostic-only' else (21 if value is None else 22)
+            credentials.delete_key()
+            if credentials.read_key() is not None:
+                result = 23
+        finally:
+            credentials.delete_key()
+        raise SystemExit(result)
     if os.environ.get("DAYLENS_QT_SMOKE") == "1":
         raise SystemExit(0 if _run_qt_smoke() else 1)
     main()

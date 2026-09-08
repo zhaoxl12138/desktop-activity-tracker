@@ -88,6 +88,12 @@ def _smoke_test(exe_path: Path) -> None:
         check=True,
         env=env,
     )
+    env.pop(_QT_SMOKE_ENV, None)
+    env['DAYLENS_CREDENTIAL_SMOKE'] = '1'
+    subprocess.run(
+        [str(exe_path)], cwd=exe_path.parent, capture_output=True,
+        timeout=20, check=True, env=env,
+    )
 
 
 def _remove_directory(path: Path, *, required: bool) -> bool:
