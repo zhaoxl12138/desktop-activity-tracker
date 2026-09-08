@@ -31,6 +31,12 @@ _TRUST_ASSESSMENT_ERROR = "可信度计算异常"
 
 
 def _atomic_write_text(filepath: str, content: str) -> None:
+    from .services.report_sections import REPORT_WRITE_LOCK, preserve_summary
+    with REPORT_WRITE_LOCK:
+        _replace_report_text(filepath, preserve_summary(filepath, content))
+
+
+def _replace_report_text(filepath: str, content: str) -> None:
     """Write a report through a same-directory temp file and atomic replace."""
     directory = os.path.dirname(os.path.abspath(filepath))
     os.makedirs(directory, exist_ok=True)

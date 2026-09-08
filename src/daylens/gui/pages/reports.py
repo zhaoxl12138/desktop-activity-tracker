@@ -51,9 +51,12 @@ class ReportsPage(QWidget):
         )
         layout.addWidget(subtitle)
         layout.addWidget(self._build_generation_bar())
-        from ..widgets.intelligence_review_bar import IntelligenceReviewBar
-        self.intelligence_bar = IntelligenceReviewBar(db_path)
-        layout.addWidget(self.intelligence_bar)
+        self.automation_status = QLabel()
+        self.automation_status.setTextFormat(Qt.PlainText)
+        self.automation_status.setWordWrap(True)
+        self.automation_status.setStyleSheet(
+            f"color: {ui_style.COLORS['text_secondary']}; font-size: 12px;")
+        layout.addWidget(self.automation_status)
 
         content = QHBoxLayout()
         content.setSpacing(14)
@@ -267,6 +270,9 @@ class ReportsPage(QWidget):
         return table
 
     def refresh(self):
+        from pathlib import Path
+        from ...services.intelligence_report_schedule import schedule_status
+        self.automation_status.setText(schedule_status(Path(self.db_path).resolve().parent / 'intelligence'))
         table_specs = [
             (self.tab_daily, "daily", "日报"),
             (self.tab_weekly, "weekly", "周报"),

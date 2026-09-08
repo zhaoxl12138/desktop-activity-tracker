@@ -45,12 +45,19 @@ def main():
                     window.nav_list.setCurrentRow(i)
                     break
             app.processEvents()
+            for scroll in window.findChildren(QScrollArea):
+                if scroll.isVisible():
+                    scroll.verticalScrollBar().setValue(0)
+            app.processEvents()
             if page == 'settings':
                 for _ in range(2):
                     for scroll in window.findChildren(QScrollArea):
                         if scroll.isVisible():
                             scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum())
                     app.processEvents()
+                from daylens.gui.widgets.intelligence_settings import IntelligenceSettings
+                card = window.findChild(IntelligenceSettings)
+                card.grab().save(str(output / 'intelligence-settings-card.png'))
             widget = window.pages[page]
             assert widget.width() <= window.width()
             window.grab().save(str(output / f'{page}-1280x720.png'))

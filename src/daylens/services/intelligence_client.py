@@ -6,11 +6,15 @@ import http.client
 import json
 import time
 
-from .intelligence_budget import IntelligenceBudget
+from .intelligence_budget import IntelligenceBudget, BudgetUnavailable
 
 
 class IntelligenceError(RuntimeError):
     pass
+
+
+class RequestDeferred(IntelligenceError, BudgetUnavailable):
+    """No request was sent: safe to retry after preflight conditions change."""
 
 
 class NullIntelligenceProvider:
@@ -78,7 +82,7 @@ class DeepSeekProvider:
                      output_limit=512, input_byte_limit=6000):
         key = self.key_reader()
         if not key:
-            raise IntelligenceError('未配置DeepSeek API密钥')
+            raise RequestDeferred('未配置DeepSeek API密钥')
         messages = [{'role': 'system', 'content': prompt},
                     {'role': 'user', 'content': json.dumps(payload, ensure_ascii=False)}]
         encoded_messages = json.dumps(messages, ensure_ascii=False).encode('utf-8')
@@ -91,8 +95,11 @@ class DeepSeekProvider:
             'max_tokens': output_limit,
         }, ensure_ascii=False).encode('utf-8')
         # UTF-8 bytes + protocol allowance intentionally overestimates token count.
-        request_id = self.budget.reserve(len(encoded_messages) + 512, output_limit,
-                                         kind=kind, units=units, daily_limit=daily_limit)
+        try:
+            request_id = self.budget.reserve(len(encoded_messages) + 512, output_limit,
+                                             kind=kind, units=units, daily_limit=daily_limit)
+        except BudgetUnavailable as exc:
+            raise RequestDeferred(str(exc)) from None
         response = None
         try:
             response = self.transport(body, key)

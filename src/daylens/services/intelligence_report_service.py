@@ -71,7 +71,8 @@ def generate_budget_review(db_path, kind, day: date | None = None, *, directory=
 def render_review(result):
     if result.get('status') != 'ready':
         return '该周期智能复盘未完成，已保留调用状态以避免重复扣费。原生报告仍然可用。'
-    lines = [f"智能复盘 · {result['period']}", '',
+    lines = [f"智能复盘 · {result['period']}",
+             f"生成于 {result.get('captured_at', '未知')}（按当时已记录数据汇总）", '',
              '仅覆盖已纳入的记录/摘要，不代表全部时间；解释由AI生成。', '']
     facts = {f['id']: f for f in result.get('facts', [])}
     for topic in result.get('topics', []):

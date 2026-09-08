@@ -154,7 +154,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(5000, self._check_report_schedule)
         self.report_schedule_timer = QTimer(self)
         self.report_schedule_timer.timeout.connect(self._check_report_schedule)
-        self.report_schedule_timer.start(300000)  # every 5 minutes
+        self.report_schedule_timer.start(60000)  # check the 23:00 boundary each minute
         self.daily_report_timer = QTimer(self)
         self.daily_report_timer.timeout.connect(self._auto_generate_daily_report)
         self.daily_report_timer.start(3600000)  # refresh today's report every hour
@@ -819,8 +819,8 @@ class MainWindow(QMainWindow):
         try:
             now = time.time()
             last = getattr(self, '_last_report_gen', 0)
-            # Debounce: don't regenerate within 5 minutes
-            if now - last < 290:
+            # Debounce repeated signals while still checking each minute.
+            if now - last < 50:
                 return
 
             job = ReportJob(
@@ -1016,7 +1016,7 @@ class MainWindow(QMainWindow):
             tasks.resume()
         report_timer = getattr(window, "report_schedule_timer", None)
         if report_timer is not None:
-            report_timer.start(300000)
+            report_timer.start(60000)
         daily_timer = getattr(window, "daily_report_timer", None)
         if daily_timer is not None:
             daily_timer.start(3600000)

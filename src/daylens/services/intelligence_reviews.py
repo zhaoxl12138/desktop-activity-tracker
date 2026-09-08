@@ -8,6 +8,11 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from .intelligence_state import atomic_json
+from .intelligence_client import RequestDeferred
+
+
+class NoReviewData(ValueError):
+    pass
 
 
 REVIEW_PROMPT = (
@@ -29,6 +34,14 @@ def review_period(kind, day: date):
     if kind == 'monthly':
         return day.strftime('%Y-%m')
     raise ValueError('Unsupported review period')
+
+
+def _compressed_summary(summary, source, period):
+    # Do not resend recursively nested evidence IDs. Keep a bounded excerpt
+    # per source date/week so catch-up months fit the low-cost input ceiling.
+    return {'id': f'{source}:{period}', 'period': period,
+            'observations': [{'text': x['text'][:80]} for x in summary.get('observations', [])[:1]],
+            'topics': [{'name': x['name'][:30]} for x in summary.get('topics', [])[:2]]}
 
 
 class IntelligenceReviews:
@@ -68,9 +81,18 @@ class IntelligenceReviews:
                 continue
             # Weeks spanning months are explicitly labeled, never represented
             # as an exact calendar-month total.
-            facts.append({'id': f'{source}:{period}', 'period': period,
-                          'observations': summary.get('observations', [])[:4],
-                          'topics': summary.get('topics', [])[:5]})
+            facts.append(_compressed_summary(summary, source, period))
+        if kind == 'monthly':
+            # A month can end before Sunday. Include those final daily summaries
+            # instead of silently dropping the unfinished calendar week.
+            covered = {f['period'] for f in facts}
+            for candidate in dates:
+                if review_period('weekly', candidate) in covered:
+                    continue
+                summary = self.load('daily', candidate)
+                if summary and summary.get('status') == 'ready':
+                    period = candidate.isoformat()
+                    facts.append(_compressed_summary(summary, 'daily', period))
         return facts
 
     def generate(self, kind, day, facts):
@@ -79,7 +101,7 @@ class IntelligenceReviews:
         if existing is not None:
             return existing
         if not isinstance(facts, list) or not facts:
-            raise ValueError('没有可用于复盘的数据')
+            raise NoReviewData('没有可用于复盘的数据')
         # The caller constructs IDs and numbers locally. AI only references them.
         ids = {f['id'] for f in facts}
         if len(ids) != len(facts) or any(not isinstance(x, str) for x in ids):
@@ -121,6 +143,11 @@ class IntelligenceReviews:
                           observations=result['observations'], topics=result['topics'])
             atomic_json(destination, output)
             return output
+        except RequestDeferred:
+            # Preflight failed before any network transmission. Unlike an
+            # uncertain request, this period can safely remain in the backlog.
+            destination.unlink(missing_ok=True)
+            raise
         except Exception:
             atomic_json(destination, dict(marker, status='failed',
                                            error='智能复盘未完成，原生报告保持可用'))

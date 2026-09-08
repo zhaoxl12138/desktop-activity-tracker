@@ -64,10 +64,17 @@ def execute_report_job(job: ReportJob) -> dict[str, object]:
             "generated_paths": generated,
         }
     if job.kind == "periodic":
-        generated = auto_generate_current_reports(
+        from pathlib import Path
+        from .intelligence_report_schedule import run_scheduled_reviews
+        generated = list(auto_generate_current_reports(
             job.db_path,
             job.reports_dir,
+        ))
+        ai = run_scheduled_reviews(
+            job.db_path, job.reports_dir,
+            directory=Path(job.db_path).resolve().parent / 'intelligence',
         )
+        generated = list(dict.fromkeys(generated + ai['generated_paths']))
         for filepath in generated:
             sync_report_to_obsidian(filepath, job.obsidian_path)
         return {

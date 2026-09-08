@@ -332,7 +332,7 @@ color: {COLORS['text']};
 
 def get_input_style() -> str:
     return f"""
-QLineEdit, QComboBox, QTextEdit, QPlainTextEdit, QSpinBox {{
+QLineEdit, QComboBox, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox {{
     background: {COLORS['panel_bg_alt']};
     color: {COLORS['text']};
     border: 1px solid {COLORS['border']};
@@ -340,7 +340,7 @@ QLineEdit, QComboBox, QTextEdit, QPlainTextEdit, QSpinBox {{
     padding: 8px 10px;
     selection-background-color: {COLORS['primary']};
 }}
-QLineEdit:focus, QComboBox:focus, QTextEdit:focus, QPlainTextEdit:focus {{
+QLineEdit:focus, QComboBox:focus, QTextEdit:focus, QPlainTextEdit:focus, QDoubleSpinBox:focus {{
     border-color: {COLORS['primary']};
 }}
 QTableWidget, QTableView {{
