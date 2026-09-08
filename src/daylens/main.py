@@ -60,6 +60,12 @@ def main():
         launch_gui()
         return
 
+    if args.command == 'maintenance-exit':
+        from daylens import get_data_dir
+        from daylens.services.maintenance_control import request_exit_and_wait
+        request_exit_and_wait(get_data_dir())
+        return
+
     config_path = resolve_config_path()
     config = load_config(config_path)
 

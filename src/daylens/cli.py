@@ -15,6 +15,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("gui", help="启动图形界面 (默认)")
     subparsers.add_parser("start", help="命令行模式开始记录")
     subparsers.add_parser("today", help="快速查看今日统计")
+    subparsers.add_parser("maintenance-exit", help="请求正在运行的DayLens安全退出")
 
     report_parser = subparsers.add_parser("report", help="查看使用统计")
     report_parser.add_argument("--today", action="store_true", help="查看今日统计")

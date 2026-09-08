@@ -38,6 +38,8 @@ from ..services.reports_service import (
 )
 from ..services.restart_service import current_launch_command, schedule_restart
 from ..services.gui_shutdown_service import stop_recording_worker_safely
+from ..services.maintenance_control import consume_request as consume_maintenance_request
+from ..services.maintenance_control import record_result as record_maintenance_result
 from .dashboard_refresh_controller import (
     DashboardRefreshController,
     DashboardSnapshot,
@@ -160,6 +162,9 @@ class MainWindow(QMainWindow):
         self.daily_report_timer.start(3600000)  # refresh today's report every hour
         QTimer.singleShot(10000, self._auto_generate_daily_report)
         QTimer.singleShot(15000, self._start_report_backfill)
+        self.maintenance_timer = QTimer(self)
+        self.maintenance_timer.timeout.connect(self._check_maintenance_request)
+        self.maintenance_timer.start(1000)
 
     def _init_pages(self) -> None:
         """Create page widgets once. Reused across theme toggles."""
@@ -973,25 +978,38 @@ class MainWindow(QMainWindow):
         )
         if reply != QMessageBox.Yes:
             return
+        MainWindow._perform_safe_quit(self)
+
+    def _check_maintenance_request(self) -> None:
+        request = consume_maintenance_request(os.path.dirname(self.db_path))
+        if request is not None:
+            self._perform_safe_quit(request_id=request['id'])
+
+    def _perform_safe_quit(self, request_id=None) -> None:
         if not MainWindow._suspend_dashboard_refresh(self):
-            QMessageBox.warning(
-                self,
-                "无法安全退出",
-                "首页后台查询仍在运行，请稍后重试。",
-            )
+            message = "首页后台查询仍在运行，请稍后重试。"
+            if request_id:
+                record_maintenance_result(os.path.dirname(self.db_path), request_id, 'failed', message)
+            else:
+                QMessageBox.warning(self, "无法安全退出", message)
             return
         result = stop_recording_worker_safely(self.worker)
         if not result.completed:
             MainWindow._resume_dashboard_refresh(self)
-            QMessageBox.warning(self, "Cannot quit safely", result.message)
+            if request_id:
+                record_maintenance_result(os.path.dirname(self.db_path), request_id, 'failed', result.message)
+            else:
+                QMessageBox.warning(self, "Cannot quit safely", result.message)
             return
+        if request_id:
+            record_maintenance_result(os.path.dirname(self.db_path), request_id, 'completed', '')
         app = QApplication.instance()
         if app is not None:
             app.quit()
 
     @staticmethod
     def _suspend_dashboard_refresh(window) -> bool:
-        for timer_name in ("report_schedule_timer", "daily_report_timer"):
+        for timer_name in ("report_schedule_timer", "daily_report_timer", "maintenance_timer"):
             timer = getattr(window, timer_name, None)
             if timer is not None:
                 timer.stop()
@@ -1020,6 +1038,9 @@ class MainWindow(QMainWindow):
         daily_timer = getattr(window, "daily_report_timer", None)
         if daily_timer is not None:
             daily_timer.start(3600000)
+        maintenance_timer = getattr(window, "maintenance_timer", None)
+        if maintenance_timer is not None:
+            maintenance_timer.start(1000)
 
     def _restore_recording_worker(self):
         from .worker import RecordingWorker
