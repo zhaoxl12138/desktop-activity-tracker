@@ -116,6 +116,40 @@ def test_budget_refusal_is_retryable_not_failed_period(tmp_path):
     assert reviews.load('daily', date(2026, 9, 8)) is None
 
 
+def test_review_keeps_supported_items_when_one_model_item_is_invalid(tmp_path):
+    from daylens.services.intelligence_reviews import IntelligenceReviews
+
+    class Provider:
+        def request_json(self, *args, **kwargs):
+            return {
+                'observations': [
+                    {'text': '持续处理项目资料', 'evidence_ids': ['one']},
+                    {'text': '连续工作100小时', 'evidence_ids': ['one']},
+                ],
+                'topics': [
+                    {'name': '项目资料', 'evidence_ids': ['one']},
+                    {'name': '代码检查', 'evidence_ids': ['one', 'two']},
+                ],
+            }
+
+    facts = [
+        {'id': 'one', 'app': 'editor', 'title': 'Project notes', 'engaged_seconds': 300},
+        {'id': 'two', 'app': 'editor', 'title': 'Code review', 'engaged_seconds': 240},
+    ]
+    result = IntelligenceReviews(tmp_path, Provider()).generate(
+        'daily', date(2026, 9, 8), facts,
+    )
+
+    assert result['status'] == 'ready'
+    assert result['observations'] == [
+        {'text': '持续处理项目资料', 'evidence_ids': ['one']},
+    ]
+    assert result['topics'] == [
+        {'name': '项目资料', 'evidence_ids': ['one']},
+        {'name': '代码检查', 'evidence_ids': ['two']},
+    ]
+
+
 def test_budget_style_includes_double_spinbox():
     from daylens.gui.style import get_input_style
     assert 'QDoubleSpinBox' in get_input_style()

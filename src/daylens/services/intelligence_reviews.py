@@ -21,7 +21,9 @@ REVIEW_PROMPT = (
     'observation without invented numbers or completion claims","evidence_ids":'
     '["input fact id"]}],"topics":[{"name":"short Chinese topic","evidence_ids":'
     '["input fact id"]}]}. At most 4 observations and 5 topics. Do not infer mental '
-    'state, productivity quality, or completed tasks. Every claim needs evidence.'
+    'state, productivity quality, or completed tasks. Every claim needs evidence. '
+    'Do not write numbers unless they appear in the referenced facts. Assign each '
+    'evidence id to at most one topic.'
 )
 
 
@@ -118,10 +120,13 @@ class IntelligenceReviews:
                 output_limit=900 if kind == 'daily' else 1200,
                 input_byte_limit=16000 if kind == 'daily' else 22000,
             )
+            checked = {}
+            assigned = set()
             for field, limit in (('observations', 4), ('topics', 5)):
                 values = result.get(field)
                 if not isinstance(values, list) or len(values) > limit:
                     raise ValueError('复盘格式无效')
+                accepted = []
                 for item in values:
                     label = 'text' if field == 'observations' else 'name'
                     if (not isinstance(item, dict) or not isinstance(item.get(label), str)
@@ -129,18 +134,24 @@ class IntelligenceReviews:
                             or not isinstance(item.get('evidence_ids'), list)
                             or not item['evidence_ids']
                             or any(not isinstance(x, str) or x not in ids for x in item['evidence_ids'])):
-                        raise ValueError('复盘引用了无效依据')
-                    evidence_text = json.dumps([f for f in facts if f['id'] in item['evidence_ids']], ensure_ascii=False)
+                        continue
+                    references = list(dict.fromkeys(item['evidence_ids']))
+                    if field == 'topics':
+                        references = [identity for identity in references if identity not in assigned]
+                        if not references:
+                            continue
+                    evidence_text = json.dumps(
+                        [f for f in facts if f['id'] in references], ensure_ascii=False)
                     if any(number not in evidence_text for number in re.findall(r'\d+(?:\.\d+)?', item[label])):
-                        raise ValueError('复盘包含无依据的数字')
-            assigned = set()
-            for topic in result['topics']:
-                references = set(topic['evidence_ids'])
-                if assigned.intersection(references):
-                    raise ValueError('同一工作片段不能重复计入多个主题')
-                assigned.update(references)
+                        continue
+                    accepted.append({label: item[label], 'evidence_ids': references})
+                    if field == 'topics':
+                        assigned.update(references)
+                if not accepted:
+                    raise ValueError('复盘没有可用内容')
+                checked[field] = accepted
             output = dict(marker, status='ready', facts=facts,
-                          observations=result['observations'], topics=result['topics'])
+                          observations=checked['observations'], topics=checked['topics'])
             atomic_json(destination, output)
             return output
         except RequestDeferred:
