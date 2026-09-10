@@ -15,6 +15,61 @@ def test_due_periods_cutoff_order_and_activation():
         ('daily', date(2026, 12, 31)), ('monthly', date(2026, 12, 31))]
 
 
+def test_daily_facts_uses_normalized_title_from_range_query(monkeypatch, tmp_path):
+    from daylens.services import intelligence_report_service as service
+
+    monkeypatch.setattr(service.database, 'query_sessions_for_dates', lambda *_: [{
+        'session_id': 'session-1',
+        'process_name': 'code.exe',
+        'normalized_title': 'DayLens report fix',
+        'category_key': 'coding',
+        'duration_seconds': 300,
+        'engaged_seconds': 300,
+        'passive_seconds': 0,
+        'idle_seconds': 0,
+    }])
+
+    facts = service.daily_facts('unused', date(2026, 9, 10), {
+        'excluded_apps': [], 'excluded_words': [],
+    })
+
+    assert len(facts) == 1
+    assert facts[0]['title'] == 'DayLens report fix'
+    assert facts[0]['engaged_seconds'] == 300
+
+
+def test_scheduler_reconsiders_legacy_skipped_days_after_fact_source_fix(tmp_path, monkeypatch):
+    import json
+    from daylens.services import intelligence_report_schedule as schedule
+    from daylens.services.intelligence_state import atomic_json
+
+    directory = tmp_path / 'ai'
+    save_settings(directory, {'enabled': True, 'reports_enabled': True})
+    atomic_json(directory / 'report_schedule.json', {
+        'version': 1,
+        'started_on': '2026-09-08',
+        'done': {'daily:2026-09-08': 'skipped'},
+    })
+    monkeypatch.setattr(schedule, 'read_key', lambda: 'dummy')
+    monkeypatch.setattr(schedule, 'ensure_native_report', lambda *args: tmp_path / 'daily.md')
+    monkeypatch.setattr(schedule, 'attach_summary', lambda *args: None)
+    calls = []
+
+    def generate(db, kind, day, **kwargs):
+        calls.append((kind, day))
+        return dict(status='ready', period=day.isoformat(), kind=kind,
+                    captured_at='2026-09-10T12:00:00', facts=[], topics=[], observations=[])
+
+    schedule.run_scheduled_reviews(
+        'unused', tmp_path, directory=directory, generator=generate,
+        now=datetime(2026, 9, 9, 9),
+    )
+
+    assert calls == [('daily', date(2026, 9, 8))]
+    state = json.loads((directory / 'report_schedule.json').read_text(encoding='utf-8'))
+    assert state['done']['daily:2026-09-08'] == 'ready'
+
+
 def test_section_preserved_across_native_refresh(tmp_path):
     from daylens import exporter
     from daylens.services.report_sections import attach_summary

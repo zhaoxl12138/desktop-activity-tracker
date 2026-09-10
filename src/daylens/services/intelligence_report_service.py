@@ -25,7 +25,8 @@ def daily_facts(db_path, day, settings):
         seen.add(identity)
         if session.get('category_key') not in WORK_CATEGORY_KEYS:
             continue
-        context = title_context(session.get('process_name'), session.get('window_title'), settings, 'review-v1')
+        title = session.get('normalized_title') or session.get('window_title')
+        context = title_context(session.get('process_name'), title, settings, 'review-v1')
         seconds = session.get('engaged_seconds')
         if context is None or type(seconds) is not int or seconds <= 0:
             continue

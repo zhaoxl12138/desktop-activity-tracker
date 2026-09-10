@@ -16,6 +16,7 @@ from .intelligence_state import atomic_json, load_settings
 from .report_sections import REPORT_WRITE_LOCK, attach_summary
 
 _RUN_LOCK = threading.Lock()
+FACT_SOURCE_VERSION = 'normalized-title-v2'
 
 
 def due_periods(start: date, now: datetime):
@@ -91,7 +92,17 @@ def _run(db_path, reports_dir, now, directory, generate):
             return {'generated_paths': [], 'status': '自动汇总状态损坏，已暂停以避免重复请求'}
     else:
         start = now.date()
-        state = {'version': 1, 'started_on': start.isoformat(), 'done': {}}
+        state = {'version': 1, 'started_on': start.isoformat(), 'done': {},
+                 'fact_source_version': FACT_SOURCE_VERSION}
+        atomic_json(state_path, state)
+    if state.get('fact_source_version') != FACT_SOURCE_VERSION:
+        # Older builds read a field that the range query did not return, so
+        # genuinely populated periods were recorded as empty. Reconsider only
+        # those skipped periods; ready/failed requests retain their once-only
+        # guarantees and real empty periods are skipped again without an API call.
+        state['done'] = {key: value for key, value in state['done'].items()
+                         if value != 'skipped'}
+        state['fact_source_version'] = FACT_SOURCE_VERSION
         atomic_json(state_path, state)
     due = due_periods(start, now)
     generated = []
