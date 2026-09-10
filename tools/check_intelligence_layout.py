@@ -33,7 +33,7 @@ def main():
         reports = root / 'reports'
         reports.mkdir()
         with patch('daylens.gui.widgets.intelligence_settings.get_data_dir', return_value=directory), \
-                patch('daylens.gui.widgets.intelligence_settings.credentials.read_key', return_value=None):
+                patch('daylens.gui.widgets.intelligence_settings.credentials.read_key', return_value='configured-not-rendered'):
             window = MainWindow(str(root), config, str(db_path), str(config_path), str(reports), DummyWorker())
         window.show()
         window.resize(1280, 720)

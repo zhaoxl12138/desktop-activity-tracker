@@ -53,10 +53,10 @@ class IntelligenceSettings(QGroupBox):
         root.addLayout(row)
         self.key = QLineEdit()
         self.key.setEchoMode(QLineEdit.Password)
-        self.key.setPlaceholderText('输入API密钥，仅存Windows凭据管理器')
         self.key.setMaxLength(512)
         root.addWidget(self.key)
-        self.key_state = QLabel('已保存密钥' if credentials.read_key() else '尚未配置密钥')
+        self.key_state = QLabel()
+        self._refresh_key_display(bool(credentials.read_key()))
         root.addWidget(self.key_state)
         row = QHBoxLayout()
         self.save_key_button = QPushButton('保存密钥')
@@ -104,11 +104,19 @@ class IntelligenceSettings(QGroupBox):
         if callable(reload):
             reload()
 
+    def _refresh_key_display(self, saved: bool) -> None:
+        self.key.clear()
+        if saved:
+            self.key.setPlaceholderText('••••••••••••••••（已保存）')
+            self.key_state.setText('密钥已安全保存，输入新密钥可替换')
+        else:
+            self.key.setPlaceholderText('输入API密钥，仅存Windows凭据管理器')
+            self.key_state.setText('尚未配置密钥')
+
     def _save_key(self):
         try:
             credentials.save_key(self.key.text())
-            self.key.clear()
-            self.key_state.setText('已保存密钥')
+            self._refresh_key_display(True)
             self._reload_worker()
         except Exception as exc:
             QMessageBox.warning(self, '密钥保存失败', str(exc))
@@ -116,8 +124,7 @@ class IntelligenceSettings(QGroupBox):
     def _delete_key(self):
         try:
             credentials.delete_key()
-            self.key.clear()
-            self.key_state.setText('尚未配置密钥')
+            self._refresh_key_display(False)
             self.enabled.setChecked(False)
             self._save()
         except Exception as exc:
