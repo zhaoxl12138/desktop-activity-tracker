@@ -136,6 +136,22 @@ def test_pending_ai_result_is_visible_without_changing_fallback_category(monkeyp
     assert snapshot['classification_detail']['source'] == 'AI待识别'
 
 
+def test_high_confidence_fallback_ai_result_stays_unclassified(monkeypatch):
+    monkeypatch.setattr('daylens.session_tracker._get_cursor_pos', lambda: (0, 0))
+    monkeypatch.setattr('daylens.session_tracker._get_keyboard_snapshot', lambda: bytes(256))
+    tracker = SessionTracker({'tracker': {'sample_interval_seconds': 1}}, Classifier())
+    tracker.intelligence = Intelligence()
+    tracker.intelligence.decision = {
+        'category': 'other', 'certainty': 'high', 'reason': '信息不足',
+    }
+
+    snapshot = tracker.tick(0, {'process_name': 'chrome.exe', 'window_title': 'Unknown', 'pid': 5})
+
+    assert snapshot['category_key'] == 'browser_general'
+    assert snapshot['classification_detail']['source'] == 'AI待确认'
+    assert snapshot['classification_detail']['suggested_category'] == 'other'
+
+
 def test_ai_classified_video_counts_only_detected_playback(monkeypatch):
     monkeypatch.setattr('daylens.session_tracker._get_cursor_pos', lambda: (0, 0))
     monkeypatch.setattr('daylens.session_tracker._get_keyboard_snapshot', lambda: bytes(256))

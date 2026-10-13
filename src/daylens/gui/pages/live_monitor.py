@@ -24,6 +24,21 @@ from .. import style as ui_style
 from ..style import COLORS, get_category_color
 
 
+def classification_label(category_name: str, detail: dict) -> str:
+    source = str(detail.get('source') or '规则')
+    if source == 'AI待识别':
+        return '待识别'
+    if source == 'AI待确认':
+        suggested = str(detail.get('suggested_category') or '')
+        if suggested and suggested not in {'other', 'browser_general'}:
+            label = normalize_category_display_name(suggested, '')
+            return f'待确认 · 建议{label}'
+        return '待确认'
+    if source != '规则':
+        return f'{category_name} · {source}'
+    return category_name
+
+
 class LiveMonitorPage(QWidget):
     """Realtime foreground-window monitor."""
 
@@ -230,11 +245,9 @@ class LiveMonitorPage(QWidget):
 
         self.lbl_process.setText(proc)
         self.lbl_title.setText(title)
-        self.lbl_category.setText(cat_name)
         detail = sample.get('classification_detail') or {}
         source = detail.get('source', '规则')
-        if source != '规则':
-            self.lbl_category.setText(f'{cat_name} · {source}')
+        self.lbl_category.setText(classification_label(cat_name, detail))
         reason = str(detail.get('reason') or '')
         # Qt tooltips can interpret HTML; escape all model-controlled text.
         import html
