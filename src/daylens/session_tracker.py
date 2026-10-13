@@ -144,6 +144,11 @@ _ACTIVITY_DOMAINS: dict[str, set[str]] = {
     "social":       {"social"},
 }
 
+_AI_APPLIED_CATEGORIES = {
+    "coding", "reading", "office", "ai_tools", "creative",
+    "social", "tools", "gaming", "video",
+}
+
 def _get_domain(category_key: str) -> str:
     if not category_key:
         return "idle"
@@ -719,8 +724,7 @@ class SessionTracker:
                 if ((ai_decision or {}).get('certainty') == 'high'
                         and (base_category in ('browser_general', 'other')
                              or (ai_decision or {}).get('source') == '手动')
-                        and base_category != 'video'
-                        and proposed in ('coding', 'reading', 'office', 'ai_tools', 'creative', 'social', 'tools')
+                        and proposed in _AI_APPLIED_CATEGORIES
                         and proposed in getattr(self.classifier, 'categories', {})):
                     category = self.classifier.categories[proposed]
                     cat_key = proposed
@@ -739,8 +743,16 @@ class SessionTracker:
                 cat_key = self._current.category_key
                 cat_name = self._current.category_name
                 active_rule = self._current.active_rule
+        if cat_key != base_category:
+            ai_source = (ai_decision or {}).get('source', 'AI')
+        elif (ai_decision or {}).get('status') == 'pending':
+            ai_source = 'AI待识别'
+        elif ai_decision:
+            ai_source = 'AI待确认'
+        else:
+            ai_source = '规则'
         self._ai_display = {
-            'source': (ai_decision or {}).get('source', 'AI') if cat_key != base_category else '规则',
+            'source': ai_source,
             'base_category': base_category,
             'reason': (ai_decision or {}).get('reason', ''),
             'suggested_category': (ai_decision or {}).get('category', ''),
