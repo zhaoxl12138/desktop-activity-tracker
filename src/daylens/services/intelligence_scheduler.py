@@ -38,6 +38,16 @@ class IntelligenceScheduler:
         self.thread = None
         self.current_identity = None
 
+    @staticmethod
+    def _pending_decision(reason=''):
+        return {
+            'status': 'pending',
+            'source': 'AI待识别',
+            'category': '',
+            'certainty': '',
+            'reason': reason,
+        }
+
     def _load_cache(self):
         path = self.directory / 'classification_cache.json'
         try:
@@ -114,7 +124,7 @@ class IntelligenceScheduler:
                 self.active.clear()
                 self.pending.clear()
             if identity in self.attempted:
-                return None
+                return self._pending_decision(self.error)
             self.active[identity] = self.active.get(identity, 0) + max(0, min(5, active_seconds))
             self.active.move_to_end(identity)
             if len(self.active) > 256:
@@ -122,7 +132,7 @@ class IntelligenceScheduler:
             if self.active[identity] >= 30 and identity not in self.pending and len(self.pending) < 30:
                 self.pending[identity] = (context, self.clock())
                 self.wakeup.set()
-            return None
+            return self._pending_decision(self.error)
 
     def process_pending(self, *, force=False):
         """Worker-side one-batch operation, also deterministically testable."""

@@ -22,6 +22,16 @@ def see(scheduler, title='HAL3 Request', seconds=1):
     return scheduler.observe('chrome.exe', title, 'browser_general', 'v1', active_seconds=seconds)
 
 
+def assert_pending(decision, reason=''):
+    assert decision == {
+        'status': 'pending',
+        'source': 'AI待识别',
+        'category': '',
+        'certainty': '',
+        'reason': reason,
+    }
+
+
 def test_only_thirty_active_seconds_qualifies_and_single_title_flushes(tmp_path):
     now = [0]
     scheduler, provider = build(tmp_path, lambda: now[0])
@@ -50,7 +60,7 @@ def test_five_titles_share_call_and_cache_survives_restart(tmp_path):
     assert len(provider.calls[0]) == 5
     restarted = IntelligenceScheduler(tmp_path, provider=provider)
     assert see(restarted, title='HAL3 0')['category'] == 'coding'
-    assert see(restarted, title='unrelated') is None
+    assert_pending(see(restarted, title='unrelated'))
 
 
 def test_disable_during_request_ignores_result(tmp_path):
@@ -116,5 +126,27 @@ def test_queue_is_bounded_and_late_result_stays_with_its_title(tmp_path):
             see(scheduler, title=f'Title {n}', seconds=5)
     assert len(scheduler.pending) == 30
     scheduler.process_pending(force=True)
-    assert see(scheduler, title='unrelated') is None
+    assert_pending(see(scheduler, title='unrelated'))
     assert see(scheduler, title='Title 0')['category'] == 'coding'
+
+
+def test_eligible_uncached_title_exposes_pending_state(tmp_path):
+    scheduler, _provider = build(tmp_path)
+
+    assert_pending(see(scheduler, seconds=1))
+
+
+def test_cached_medium_result_remains_a_suggestion(tmp_path):
+    scheduler, _provider = build(tmp_path)
+    context = title_context('chrome.exe', 'HAL3 Request', scheduler.settings, 'v1')
+    scheduler.cache[context['id']] = {
+        'category': 'reading',
+        'certainty': 'medium',
+        'reason': '标题含义不充分',
+    }
+
+    decision = see(scheduler)
+
+    assert decision['category'] == 'reading'
+    assert decision['certainty'] == 'medium'
+    assert decision['reason'] == '标题含义不充分'
