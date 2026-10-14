@@ -193,7 +193,7 @@ def test_backlog_preserves_dependencies_and_skips_empty_days(tmp_path, monkeypat
     assert state['done'] == {'daily:2026-05-30': 'skipped'}
 
 
-def test_failed_cached_period_never_retries_network_and_state_visible(tmp_path, monkeypatch):
+def test_failed_period_does_not_retry_same_day_and_stops_after_next_day_failure(tmp_path, monkeypatch):
     from daylens.services import intelligence_report_schedule as schedule
     directory = tmp_path / 'ai'
     save_settings(directory, {'enabled': True, 'reports_enabled': True})
@@ -202,11 +202,101 @@ def test_failed_cached_period_never_retries_network_and_state_visible(tmp_path, 
     def generate(*a, **k):
         calls.append(a)
         return {'status': 'failed'}
-    for hour in (23, 23):
-        schedule.run_scheduled_reviews('unused', tmp_path, directory=directory,
-                    generator=generate, now=datetime(2026, 9, 8, hour))
+    schedule.run_scheduled_reviews('unused', tmp_path, directory=directory,
+                                   generator=generate, now=datetime(2026, 9, 8, 23))
+    schedule.run_scheduled_reviews('unused', tmp_path, directory=directory,
+                                   generator=generate, now=datetime(2026, 9, 8, 23, 30))
     assert len(calls) == 1
+    schedule.run_scheduled_reviews('unused', tmp_path, directory=directory,
+                                   generator=generate, now=datetime(2026, 9, 9, 9))
+    assert len(calls) == 2
     assert '未完成 1 份' in schedule.schedule_status(directory)
+
+
+def test_failed_period_retries_next_day_and_can_recover(tmp_path, monkeypatch):
+    import json
+    from daylens.services import intelligence_report_schedule as schedule
+    directory = tmp_path / 'ai'
+    save_settings(directory, {'enabled': True, 'reports_enabled': True})
+    monkeypatch.setattr(schedule, 'read_key', lambda: 'dummy')
+    monkeypatch.setattr(schedule, 'ensure_native_report', lambda *args: tmp_path / 'daily.md')
+    monkeypatch.setattr(schedule, 'attach_summary', lambda *args: None)
+    calls = []
+
+    def generate(*args, **kwargs):
+        calls.append(kwargs.get('retry_failed', False))
+        if len(calls) == 1:
+            return {'status': 'failed'}
+        return dict(status='ready', period='2026-09-08', kind='daily',
+                    captured_at='2026-09-09T09:00:00', facts=[], topics=[], observations=[])
+
+    schedule.run_scheduled_reviews('unused', tmp_path, directory=directory,
+                                   generator=generate, now=datetime(2026, 9, 8, 23))
+    schedule.run_scheduled_reviews('unused', tmp_path, directory=directory,
+                                   generator=generate, now=datetime(2026, 9, 9, 9))
+
+    state = json.loads((directory / 'report_schedule.json').read_text(encoding='utf-8'))
+    assert calls == [False, True]
+    assert state['done']['daily:2026-09-08'] == 'ready'
+    assert state['failures'] == {}
+
+
+def test_legacy_failed_period_is_migrated_to_one_retry(tmp_path, monkeypatch):
+    import json
+    from daylens.services import intelligence_report_schedule as schedule
+    from daylens.services.intelligence_state import atomic_json
+    directory = tmp_path / 'ai'
+    save_settings(directory, {'enabled': True, 'reports_enabled': True})
+    atomic_json(directory / 'report_schedule.json', {
+        'version': 1,
+        'started_on': '2026-09-08',
+        'done': {'daily:2026-09-08': 'failed'},
+        'fact_source_version': schedule.FACT_SOURCE_VERSION,
+    })
+    monkeypatch.setattr(schedule, 'read_key', lambda: 'dummy')
+    monkeypatch.setattr(schedule, 'ensure_native_report', lambda *args: tmp_path / 'daily.md')
+    monkeypatch.setattr(schedule, 'attach_summary', lambda *args: None)
+    calls = []
+
+    def generate(*args, **kwargs):
+        calls.append(kwargs.get('retry_failed', False))
+        return dict(status='ready', period='2026-09-08', kind='daily',
+                    captured_at='2026-09-09T09:00:00', facts=[], topics=[], observations=[])
+
+    schedule.run_scheduled_reviews('unused', tmp_path, directory=directory,
+                                   generator=generate, now=datetime(2026, 9, 9, 9))
+
+    state = json.loads((directory / 'report_schedule.json').read_text(encoding='utf-8'))
+    assert calls == [True]
+    assert state['done']['daily:2026-09-08'] == 'ready'
+    assert state['retry_policy_version'] == 1
+
+
+def test_deferred_retry_keeps_failure_attempt_available(tmp_path, monkeypatch):
+    import json
+    from daylens.services import intelligence_report_schedule as schedule
+    from daylens.services.intelligence_client import RequestDeferred
+    directory = tmp_path / 'ai'
+    save_settings(directory, {'enabled': True, 'reports_enabled': True})
+    monkeypatch.setattr(schedule, 'read_key', lambda: 'dummy')
+    calls = []
+
+    def generate(*args, **kwargs):
+        calls.append(kwargs.get('retry_failed', False))
+        if len(calls) == 1:
+            return {'status': 'failed'}
+        raise RequestDeferred('daily budget unavailable before send')
+
+    schedule.run_scheduled_reviews('unused', tmp_path, directory=directory,
+                                   generator=generate, now=datetime(2026, 9, 8, 23))
+    schedule.run_scheduled_reviews('unused', tmp_path, directory=directory,
+                                   generator=generate, now=datetime(2026, 9, 9, 9))
+
+    state = json.loads((directory / 'report_schedule.json').read_text(encoding='utf-8'))
+    assert calls == [False, True]
+    assert state['failures']['daily:2026-09-08']['attempts'] == 1
+    assert 'daily:2026-09-08' not in state['done']
+    assert state['pending'] == 1
 
 
 def test_month_end_includes_unfinished_week_daily_summaries(tmp_path):

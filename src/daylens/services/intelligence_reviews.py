@@ -97,10 +97,11 @@ class IntelligenceReviews:
                     facts.append(_compressed_summary(summary, 'daily', period))
         return facts
 
-    def generate(self, kind, day, facts):
+    def generate(self, kind, day, facts, *, retry_failed=False):
         destination = self.path(kind, day)
         existing = self.load(kind, day)
-        if existing is not None:
+        if (existing is not None
+                and not (retry_failed and existing.get('status') == 'failed')):
             return existing
         if not isinstance(facts, list) or not facts:
             raise NoReviewData('没有可用于复盘的数据')

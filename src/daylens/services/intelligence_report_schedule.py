@@ -17,6 +17,7 @@ from .report_sections import REPORT_WRITE_LOCK, attach_summary
 
 _RUN_LOCK = threading.Lock()
 FACT_SOURCE_VERSION = 'normalized-title-v2'
+RETRY_POLICY_VERSION = 1
 
 
 def due_periods(start: date, now: datetime):
@@ -88,12 +89,23 @@ def _run(db_path, reports_dir, now, directory, generate):
                 raise ValueError()
             if any(v not in ('ready', 'skipped', 'failed') for v in state['done'].values()):
                 raise ValueError()
+            failures = state.get('failures', {})
+            if not isinstance(failures, dict):
+                raise ValueError()
+            for value in failures.values():
+                if (not isinstance(value, dict)
+                        or type(value.get('attempts')) is not int
+                        or value['attempts'] != 1
+                        or not isinstance(value.get('retry_on'), str)):
+                    raise ValueError()
+                date.fromisoformat(value['retry_on'])
         except (ValueError, TypeError, KeyError):
             return {'generated_paths': [], 'status': '自动汇总状态损坏，已暂停以避免重复请求'}
     else:
         start = now.date()
         state = {'version': 1, 'started_on': start.isoformat(), 'done': {},
-                 'fact_source_version': FACT_SOURCE_VERSION}
+                 'fact_source_version': FACT_SOURCE_VERSION,
+                 'retry_policy_version': RETRY_POLICY_VERSION, 'failures': {}}
         atomic_json(state_path, state)
     if state.get('fact_source_version') != FACT_SOURCE_VERSION:
         # Older builds read a field that the range query did not return, so
@@ -104,6 +116,18 @@ def _run(db_path, reports_dir, now, directory, generate):
                          if value != 'skipped'}
         state['fact_source_version'] = FACT_SOURCE_VERSION
         atomic_json(state_path, state)
+    if state.get('retry_policy_version') != RETRY_POLICY_VERSION:
+        failures = state.setdefault('failures', {})
+        for identity, outcome in list(state['done'].items()):
+            if outcome == 'failed':
+                failures[identity] = {
+                    'attempts': 1,
+                    'retry_on': now.date().isoformat(),
+                }
+                del state['done'][identity]
+        state['retry_policy_version'] = RETRY_POLICY_VERSION
+        atomic_json(state_path, state)
+    failures = state.setdefault('failures', {})
     due = due_periods(start, now)
     generated = []
     deferred_kinds = set()
@@ -115,18 +139,36 @@ def _run(db_path, reports_dir, now, directory, generate):
             identity = _identity(kind, day)
             if identity in state['done'] or kind in deferred_kinds:
                 continue
+            failure = failures.get(identity)
+            if failure and now.date() < date.fromisoformat(failure['retry_on']):
+                continue
             if any(_depends_on(kind, day, k, d) and _identity(k, d) not in state['done'] for k, d in due):
                 continue
             try:
-                result = generate(db_path, kind, day, directory=directory)
+                result = generate(
+                    db_path,
+                    kind,
+                    day,
+                    directory=directory,
+                    retry_failed=bool(failure),
+                )
                 if result.get('status') != 'ready':
-                    state['done'][identity] = 'failed'
-                    status = '部分智能汇总未完成，未重复请求；原生报告可用'
+                    if failure:
+                        state['done'][identity] = 'failed'
+                        failures.pop(identity, None)
+                        status = '部分智能汇总重试后仍未完成；原生报告可用'
+                    else:
+                        failures[identity] = {
+                            'attempts': 1,
+                            'retry_on': (now.date() + timedelta(days=1)).isoformat(),
+                        }
+                        status = '部分智能汇总未完成，将于次日低频补生成'
                 else:
                     path = ensure_native_report(db_path, reports_dir, kind, day)
                     attach_summary(path, render_review(result))
                     generated.append(str(path))
                     state['done'][identity] = 'ready'
+                    failures.pop(identity, None)
             except NoReviewData:
                 state['done'][identity] = 'skipped'
             except RequestDeferred:

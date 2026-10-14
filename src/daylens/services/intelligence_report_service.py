@@ -44,7 +44,14 @@ def daily_facts(db_path, day, settings):
     return sorted(grouped.values(), key=lambda x: -x['engaged_seconds'])[:20]
 
 
-def generate_budget_review(db_path, kind, day: date | None = None, *, directory=None):
+def generate_budget_review(
+    db_path,
+    kind,
+    day: date | None = None,
+    *,
+    directory=None,
+    retry_failed=False,
+):
     directory = Path(directory or Path(get_data_dir()) / 'intelligence')
     settings = load_settings(directory)
     if not settings['enabled'] or not settings['reports_enabled']:
@@ -55,12 +62,27 @@ def generate_budget_review(db_path, kind, day: date | None = None, *, directory=
     provider = DeepSeekProvider(IntelligenceBudget(directory / 'budget.json', settings['monthly_budget_micros']), read_key)
     reviews = IntelligenceReviews(directory, provider)
     existing = reviews.load(kind, day)
-    if existing is not None:
+    if (existing is not None
+            and not (retry_failed and existing.get('status') == 'failed')):
         return existing
     facts = daily_facts(db_path, day, settings) if kind == 'daily' else reviews.compressed_facts(kind, day)
     # Session references remain local. Opaque fact IDs are sufficient in prompts.
     payload_facts = [{k: v for k, v in f.items() if k != 'session_refs'} for f in facts]
-    result = reviews.generate(kind, day, payload_facts)
+    try:
+        result = reviews.generate(
+            kind,
+            day,
+            payload_facts,
+            retry_failed=retry_failed,
+        )
+    except RuntimeError:
+        # A transmitted request writes a durable failed marker before this
+        # service returns. Let the scheduler apply its one-next-day-retry
+        # policy without losing the original failure state.
+        failed = reviews.load(kind, day)
+        if failed and failed.get('status') == 'failed':
+            return failed
+        raise
     # Preserve the locally obtained references separately from model output.
     if kind == 'daily' and result.get('status') == 'ready':
         from .intelligence_state import atomic_json

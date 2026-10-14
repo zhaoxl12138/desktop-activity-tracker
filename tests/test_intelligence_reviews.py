@@ -47,3 +47,32 @@ def test_fake_evidence_rejected_and_no_automatic_retry(tmp_path):
     with pytest.raises(RuntimeError):
         reviews.generate('daily', day, [{'id': 's1'}])
     assert reviews.generate('daily', day, [{'id': 's1'}])['status'] == 'failed'
+
+
+def test_failed_review_retries_only_when_explicitly_allowed(tmp_path):
+    class FailOnceProvider(Provider):
+        def request_json(self, prompt, payload, **kwargs):
+            self.calls.append(payload)
+            if len(self.calls) == 1:
+                raise RuntimeError('temporary provider failure')
+            return {
+                'observations': [
+                    {'text': '处理Camera技术资料', 'evidence_ids': [payload['facts'][0]['id']]},
+                ],
+                'topics': [
+                    {'name': 'Camera学习', 'evidence_ids': [payload['facts'][0]['id']]},
+                ],
+            }
+
+    provider = FailOnceProvider()
+    reviews = IntelligenceReviews(tmp_path, provider)
+    day = date(2026, 9, 8)
+    facts = [{'id': 's1', 'title': 'Camera', 'engaged_seconds': 60}]
+
+    with pytest.raises(RuntimeError):
+        reviews.generate('daily', day, facts)
+    assert reviews.generate('daily', day, facts)['status'] == 'failed'
+    result = reviews.generate('daily', day, facts, retry_failed=True)
+
+    assert result['status'] == 'ready'
+    assert len(provider.calls) == 2
