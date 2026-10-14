@@ -295,6 +295,7 @@ def test_deferred_retry_keeps_failure_attempt_available(tmp_path, monkeypatch):
     state = json.loads((directory / 'report_schedule.json').read_text(encoding='utf-8'))
     assert calls == [False, True]
     assert state['failures']['daily:2026-09-08']['attempts'] == 1
+    assert state['failures']['daily:2026-09-08']['retry_on'] == '2026-09-10'
     assert 'daily:2026-09-08' not in state['done']
     assert state['pending'] == 1
 

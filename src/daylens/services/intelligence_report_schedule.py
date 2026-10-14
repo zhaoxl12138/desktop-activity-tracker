@@ -172,6 +172,10 @@ def _run(db_path, reports_dir, now, directory, generate):
             except NoReviewData:
                 state['done'][identity] = 'skipped'
             except RequestDeferred:
+                if failure:
+                    failure['retry_on'] = (
+                        now.date() + timedelta(days=1)
+                    ).isoformat()
                 deferred_kinds.add(kind)
                 status = '额度或调用条件暂不满足，待后续补生成'
             except Exception:
