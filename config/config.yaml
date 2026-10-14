@@ -565,6 +565,12 @@ categories:
       - 第\d+节
       - Lesson\s*\d+
       - P\d+
+  gaming:
+    display_name: 游戏娱乐
+    active_rule: interactive_required
+    match:
+      process_names: []
+      title_keywords: []
   video:
     display_name: 视频与游戏
     active_rule: passive_allowed

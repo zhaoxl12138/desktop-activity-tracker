@@ -1,6 +1,8 @@
 from dataclasses import replace
 from datetime import datetime, timedelta
+from pathlib import Path
 
+from daylens.classifier import Classifier as ConfigClassifier
 from daylens.session_tracker import SessionTracker
 
 
@@ -101,6 +103,28 @@ def test_high_confidence_gaming_category_applies_to_unknown_title(monkeypatch):
     snapshot = tracker.tick(0, {'process_name': 'unknown.exe', 'window_title': 'Game', 'pid': 2})
 
     assert snapshot['category_key'] == 'gaming'
+    assert snapshot['classification_detail']['source'] == 'AI'
+
+
+def test_shipped_config_accepts_high_confidence_ai_gaming(monkeypatch):
+    monkeypatch.setattr('daylens.session_tracker._get_cursor_pos', lambda: (0, 0))
+    monkeypatch.setattr('daylens.session_tracker._get_keyboard_snapshot', lambda: bytes(256))
+    config_path = Path(__file__).parents[1] / 'config' / 'config.yaml'
+    classifier = ConfigClassifier(str(config_path))
+    tracker = SessionTracker({'tracker': {'sample_interval_seconds': 1}}, classifier)
+    tracker.intelligence = Intelligence()
+    tracker.intelligence.decision = {
+        'category': 'gaming', 'certainty': 'high', 'reason': 'Game executable',
+    }
+
+    snapshot = tracker.tick(
+        0,
+        {'process_name': 'LostCastle2.exe', 'window_title': 'LostCastle2', 'pid': 22},
+    )
+
+    assert classifier.categories['gaming']['active_rule'] == 'interactive_required'
+    assert snapshot['category_key'] == 'gaming'
+    assert snapshot['category_name'] == '游戏娱乐'
     assert snapshot['classification_detail']['source'] == 'AI'
 
 
