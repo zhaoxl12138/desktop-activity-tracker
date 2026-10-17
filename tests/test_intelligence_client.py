@@ -13,7 +13,14 @@ def response(items, finish='stop'):
 
 
 ITEM = {'id': 'title1', 'category': 'coding', 'certainty': 'high', 'reason': 'Camera HAL技术学习'}
-CONTEXT = [{'id': 'title1', 'app': 'chrome.exe', 'title': 'HAL3 Request / Result'}]
+CONTEXT = [{
+    'id': 'title1', 'app': 'chrome.exe', 'title': 'HAL3 Request / Result',
+    'base_category': 'browser_general',
+    'recent_titles': [{
+        'app': 'chrome.exe', 'title': 'Android Camera course',
+        'active_seconds': 42, 'confirmed_category': 'reading',
+    }],
+}]
 
 
 def test_batched_json_non_thinking_and_usage(tmp_path):
@@ -26,6 +33,7 @@ def test_batched_json_non_thinking_and_usage(tmp_path):
     assert client.classify(CONTEXT)['title1']['category'] == 'coding'
     assert sent[0]['thinking'] == {'type': 'disabled'}
     assert sent[0]['max_tokens'] == 512
+    assert 'recent_titles' in sent[0]['messages'][0]['content']
     assert budget.snapshot()['cost_micros'] == 3300
 
 

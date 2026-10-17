@@ -144,6 +144,45 @@ def test_medium_confidence_result_stays_fallback_and_is_marked_for_confirmation(
     assert snapshot['classification_detail']['suggested_category'] == 'reading'
 
 
+def test_medium_result_with_confirmed_evidence_is_applied(monkeypatch):
+    monkeypatch.setattr('daylens.session_tracker._get_cursor_pos', lambda: (0, 0))
+    monkeypatch.setattr('daylens.session_tracker._get_keyboard_snapshot', lambda: bytes(256))
+    tracker = SessionTracker({'tracker': {'sample_interval_seconds': 1}}, Classifier())
+    tracker.intelligence = Intelligence()
+    tracker.intelligence.decision = {
+        'status': 'applied', 'source': 'AI', 'category': 'reading',
+        'suggested_category': 'reading', 'certainty': 'medium',
+        'reason': '近期已确认课程标题', 'evidence': ['recent_confirmed'],
+        'pattern_id': '', 'apply': True,
+    }
+
+    snapshot = tracker.tick(0, {'process_name': 'chrome.exe', 'window_title': '学习中心', 'pid': 3})
+
+    assert snapshot['category_key'] == 'reading'
+    assert snapshot['classification_detail']['source'] == 'AI'
+    assert snapshot['classification_detail']['final_category'] == 'reading'
+    assert snapshot['classification_detail']['evidence'] == ['recent_confirmed']
+
+
+def test_manual_pattern_can_override_a_known_local_category(monkeypatch):
+    monkeypatch.setattr('daylens.session_tracker._get_cursor_pos', lambda: (0, 0))
+    monkeypatch.setattr('daylens.session_tracker._get_keyboard_snapshot', lambda: bytes(256))
+    tracker = SessionTracker({'tracker': {'sample_interval_seconds': 1}}, Classifier())
+    tracker.intelligence = Intelligence()
+    tracker.intelligence.decision = {
+        'status': 'applied', 'source': '人工模式', 'category': 'reading',
+        'suggested_category': 'reading', 'certainty': 'high',
+        'reason': '命中用户确认的相似标题模式', 'evidence': ['manual_pattern'],
+        'pattern_id': 'pattern-1', 'apply': True,
+    }
+
+    snapshot = tracker.tick(0, {'process_name': 'WINWORD.EXE', 'window_title': '课程笔记', 'pid': 7})
+
+    assert snapshot['category_key'] == 'reading'
+    assert snapshot['classification_detail']['source'] == '人工模式'
+    assert snapshot['classification_detail']['pattern_id'] == 'pattern-1'
+
+
 def test_pending_ai_result_is_visible_without_changing_fallback_category(monkeypatch):
     monkeypatch.setattr('daylens.session_tracker._get_cursor_pos', lambda: (0, 0))
     monkeypatch.setattr('daylens.session_tracker._get_keyboard_snapshot', lambda: bytes(256))

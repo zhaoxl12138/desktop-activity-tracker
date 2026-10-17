@@ -720,10 +720,15 @@ class SessionTracker:
                     active_seconds=self.sample_interval if prior_active else 0,
                 )
                 proposed = (ai_decision or {}).get('category')
-                # Media gating stays under existing rules in this release.
-                if ((ai_decision or {}).get('certainty') == 'high'
+                decision_source = (ai_decision or {}).get('source')
+                explicitly_applied = (ai_decision or {}).get('apply') is True
+                legacy_high = ((ai_decision or {}).get('apply') is None
+                               and (ai_decision or {}).get('certainty') == 'high')
+                # The scheduler owns evidence policy. Legacy high-confidence
+                # decisions remain compatible with older tests/state.
+                if ((explicitly_applied or legacy_high)
                         and (base_category in ('browser_general', 'other')
-                             or (ai_decision or {}).get('source') == '手动')
+                             or decision_source in ('手动', '人工模式'))
                         and proposed in _AI_APPLIED_CATEGORIES
                         and proposed in getattr(self.classifier, 'categories', {})):
                     category = self.classifier.categories[proposed]
@@ -736,7 +741,8 @@ class SessionTracker:
         if (self._current is not None and self._current.process_name == process_name
                 and self._current.window_title == raw_title
                 and self._current.category_key != cat_key
-                and (cat_key != base_category or previous_ai.get('source') in ('AI', '手动'))):
+                and (cat_key != base_category
+                     or previous_ai.get('source') in ('AI', '手动', '人工模式'))):
             # This is reclassification of the same page, not a user task switch:
             # bypass cross-group grace, and preserve already recorded counters.
             if not self.finish_current('ai_classification'):
@@ -754,9 +760,13 @@ class SessionTracker:
         self._ai_display = {
             'source': ai_source,
             'base_category': base_category,
+            'final_category': cat_key,
             'reason': (ai_decision or {}).get('reason', ''),
-            'suggested_category': (ai_decision or {}).get('category', ''),
+            'suggested_category': (ai_decision or {}).get(
+                'suggested_category', (ai_decision or {}).get('category', '')),
             'certainty': (ai_decision or {}).get('certainty', ''),
+            'evidence': list((ai_decision or {}).get('evidence') or []),
+            'pattern_id': (ai_decision or {}).get('pattern_id', ''),
         }
 
         norm_title = normalize_window_title(process_name, raw_title)

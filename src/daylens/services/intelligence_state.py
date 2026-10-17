@@ -90,7 +90,7 @@ def title_context(process, title, settings, rule_version):
         return None
     # Identity is a local hash of the full title. Redacted titles may look the
     # same but must not share corrections (e.g. two different private documents).
-    fingerprint = '|'.join((process, identity_title.casefold(), str(rule_version), 'flash:classify-v1'))
+    fingerprint = '|'.join((process, identity_title.casefold(), str(rule_version), 'flash:classify-v2'))
     identity = hashlib.sha256(fingerprint.encode('utf-8')).hexdigest()[:24]
     return {'id': identity, 'app': process[:80], 'title': title[:180]}
 
@@ -119,3 +119,12 @@ def save_override(directory, process, title, category):
     overrides[context['id']] = {'category': category, 'certainty': 'high',
                                 'reason': '用户指定当前应用与标题', 'source': '手动'}
     atomic_json(Path(directory) / 'manual_decisions.json', overrides)
+    # Exact identity remains for privacy-sensitive titles; the explainable,
+    # same-application pattern lets a correction help closely related pages.
+    from .intelligence_evidence import save_pattern
+    try:
+        save_pattern(directory, process, title, category)
+    except ValueError:
+        # A sparse/private title can still be corrected exactly without
+        # creating an unsafe broad similarity rule.
+        pass

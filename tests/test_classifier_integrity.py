@@ -1,6 +1,7 @@
 from copy import deepcopy
 from pathlib import Path
 import re
+import sys
 
 import pytest
 import yaml
@@ -260,6 +261,16 @@ def test_rule_fingerprint_is_stable_for_equivalent_rule_mappings():
 
     assert fingerprint == Classifier.rule_fingerprint(config_b)
     assert re.fullmatch(r"rules-[0-9a-f]{12}", fingerprint)
+
+
+def test_rule_fingerprint_changes_when_classification_policy_changes(monkeypatch):
+    config = _fingerprint_config()
+    original = Classifier.rule_fingerprint(config)
+
+    monkeypatch.setattr(sys.modules[Classifier.__module__],
+                        'CLASSIFICATION_POLICY_VERSION', 'test-next-policy')
+
+    assert Classifier.rule_fingerprint(config) != original
 
 
 @pytest.mark.parametrize(

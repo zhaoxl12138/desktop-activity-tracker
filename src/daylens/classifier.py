@@ -6,6 +6,9 @@ import os
 import re
 import yaml
 
+
+CLASSIFICATION_POLICY_VERSION = "ai-title-evidence-v2"
+
 from . import get_app_root
 
 # Categories that represent productive work — when they compete with
@@ -110,7 +113,7 @@ class Classifier:
         """Return a deterministic version for the effective classifier rules."""
         canonical = _canonical_rules(config)
         payload = json.dumps(
-            canonical,
+            {"policy_version": CLASSIFICATION_POLICY_VERSION, "rules": canonical},
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),

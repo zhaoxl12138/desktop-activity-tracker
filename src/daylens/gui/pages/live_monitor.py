@@ -39,6 +39,20 @@ def classification_label(category_name: str, detail: dict) -> str:
     return category_name
 
 
+def review_row_values(review: dict) -> tuple[str, str, str, str, str]:
+    certainty = {'high': '高', 'medium': '中', 'low': '低', 'conflict': '冲突'}.get(
+        str(review.get('certainty') or ''), '--')
+    category = normalize_category_display_name(
+        str(review.get('suggested_category') or 'other'), '')
+    return (
+        str(review.get('app') or ''),
+        str(review.get('title') or ''),
+        f'{category} · {certainty}',
+        str(review.get('reason') or ''),
+        f"{int(review.get('occurrences') or 0)}次 · {fmt_seconds(int(review.get('active_seconds') or 0))}",
+    )
+
+
 class LiveMonitorPage(QWidget):
     """Realtime foreground-window monitor."""
 
@@ -55,8 +69,17 @@ class LiveMonitorPage(QWidget):
         layout.addWidget(self._build_current_session_card())
         self.correct_button = QPushButton('纠正当前分类')
         self.correct_button.clicked.connect(self._correct_current)
-        layout.addWidget(self.correct_button, 0, Qt.AlignLeft)
+        self.manage_patterns_button = QPushButton('管理已确认模式')
+        self.manage_patterns_button.clicked.connect(self._manage_patterns)
+        correction_actions = QHBoxLayout()
+        correction_actions.addWidget(self.correct_button)
+        correction_actions.addWidget(self.manage_patterns_button)
+        correction_actions.addStretch()
+        layout.addLayout(correction_actions)
+        layout.addWidget(self._build_review_card())
         layout.addWidget(self._build_history_card(), 1)
+        self._review_mtime = None
+        self.refresh_reviews(force=True)
 
     def _correct_current(self):
         if not self._samples:
@@ -79,6 +102,39 @@ class LiveMonitorPage(QWidget):
             self.classification_corrected.emit()
         except Exception:
             QMessageBox.warning(self, '保存失败', '无法保存此标题的分类纠正')
+
+    def _manage_patterns(self):
+        from ...services.intelligence_evidence import (
+            delete_pattern, load_patterns, set_pattern_enabled,
+        )
+        patterns = load_patterns(self._review_directory())
+        if not patterns:
+            QMessageBox.information(self, '已确认模式', '还没有可管理的相似标题模式。')
+            return
+        labels = []
+        by_label = {}
+        for pattern in patterns:
+            state = '启用' if pattern.get('enabled', True) else '停用'
+            category = normalize_category_display_name(str(pattern.get('category') or ''), '')
+            label = f"[{state}] {category} · {str(pattern.get('example') or '')[:70]}"
+            labels.append(label)
+            by_label[label] = pattern
+        selected, ok = QInputDialog.getItem(
+            self, '管理已确认模式', '选择模式：', labels, 0, False)
+        if not ok:
+            return
+        pattern = by_label[selected]
+        toggle = '停用' if pattern.get('enabled', True) else '启用'
+        action, ok = QInputDialog.getItem(
+            self, '模式操作', '选择操作：', [toggle, '删除'], 0, False)
+        if not ok:
+            return
+        if action == '删除':
+            delete_pattern(self._review_directory(), pattern['id'])
+        else:
+            set_pattern_enabled(
+                self._review_directory(), pattern['id'], not pattern.get('enabled', True))
+        self.classification_corrected.emit()
 
     def _build_current_session_card(self):
         card = QFrame()
@@ -180,6 +236,121 @@ class LiveMonitorPage(QWidget):
 
         return card
 
+    def _build_review_card(self):
+        card = QFrame()
+        card.setObjectName('dashboardCard')
+        card.setStyleSheet(ui_style.get_dashboard_card_style())
+        root = QVBoxLayout(card)
+        root.setContentsMargins(18, 14, 18, 14)
+        root.setSpacing(10)
+
+        header = QHBoxLayout()
+        title = QLabel('待确认分类')
+        title.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {COLORS['text']};")
+        header.addWidget(title)
+        header.addStretch()
+        hint = QLabel('只影响确认后的记录')
+        hint.setStyleSheet(f"font-size: 12px; color: {COLORS['text_secondary']};")
+        header.addWidget(hint)
+        root.addLayout(header)
+
+        self.review_table = QTableWidget()
+        self.review_table.setColumnCount(5)
+        self.review_table.setHorizontalHeaderLabels(['应用', '标题', 'AI建议', '依据', '累计'])
+        self.review_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.review_table.verticalHeader().setVisible(False)
+        self.review_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.review_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.review_table.setMaximumHeight(180)
+        self.review_table.setStyleSheet(ui_style.get_table_style())
+        root.addWidget(self.review_table)
+
+        actions = QHBoxLayout()
+        self.accept_review_button = QPushButton('接受建议')
+        self.choose_review_button = QPushButton('选择分类')
+        self.ignore_review_button = QPushButton('忽略')
+        self.accept_review_button.clicked.connect(self._accept_review)
+        self.choose_review_button.clicked.connect(self._choose_review)
+        self.ignore_review_button.clicked.connect(self._ignore_review)
+        actions.addWidget(self.accept_review_button)
+        actions.addWidget(self.choose_review_button)
+        actions.addWidget(self.ignore_review_button)
+        actions.addStretch()
+        root.addLayout(actions)
+        self.review_card = card
+        return card
+
+    @staticmethod
+    def _review_directory():
+        from pathlib import Path
+        from ... import get_data_dir
+        return Path(get_data_dir()) / 'intelligence'
+
+    def refresh_reviews(self, *, force=False):
+        from ...services.intelligence_evidence import ReviewQueue
+        path = self._review_directory() / 'classification_reviews.json'
+        try:
+            mtime = path.stat().st_mtime_ns
+        except OSError:
+            mtime = None
+        if not force and mtime == self._review_mtime:
+            return
+        self._review_mtime = mtime
+        self._review_rows = ReviewQueue(self._review_directory()).items()
+        self.review_table.setRowCount(len(self._review_rows))
+        for row_index, review in enumerate(self._review_rows):
+            for column, value in enumerate(review_row_values(review)):
+                item = QTableWidgetItem(value)
+                if column == 0:
+                    item.setData(Qt.UserRole, review.get('id'))
+                self.review_table.setItem(row_index, column, item)
+        self.review_card.setVisible(bool(self._review_rows))
+
+    def _selected_review(self):
+        row = self.review_table.currentRow()
+        if row < 0 or row >= len(getattr(self, '_review_rows', [])):
+            return None
+        return dict(self._review_rows[row])
+
+    def _resolve_review(self, category):
+        review = self._selected_review()
+        if review is None:
+            return
+        try:
+            from ...services.intelligence_evidence import ReviewQueue
+            ReviewQueue(self._review_directory()).resolve(review['id'], category)
+            self._review_mtime = None
+            self.refresh_reviews(force=True)
+            self.classification_corrected.emit()
+        except Exception:
+            QMessageBox.warning(self, '保存失败', '无法保存此标题的分类确认')
+
+    def _accept_review(self):
+        review = self._selected_review()
+        if review is not None:
+            self._resolve_review(str(review.get('suggested_category') or ''))
+
+    def _choose_review(self):
+        review = self._selected_review()
+        if review is None:
+            return
+        choices = {'技术学习 / 开发': 'coding', '阅读学习': 'reading', '办公 / 求职': 'office',
+                   'AI工具': 'ai_tools', '设计创作': 'creative', '社交通讯': 'social',
+                   '系统工具': 'tools', '游戏娱乐': 'gaming', '影音娱乐': 'video'}
+        selected, ok = QInputDialog.getItem(
+            self, '确认分类', '为相似标题选择分类（仅以后生效）：', list(choices), 0, False)
+        if ok:
+            self._resolve_review(choices[selected])
+
+    def _ignore_review(self):
+        review = self._selected_review()
+        if review is None:
+            return
+        from ...services.intelligence_evidence import ReviewQueue
+        ReviewQueue(self._review_directory()).ignore(review['id'])
+        self._review_mtime = None
+        self.refresh_reviews(force=True)
+
     def _make_badge(self, text: str, color: str):
         label = QLabel(text)
         label.setAlignment(Qt.AlignCenter)
@@ -228,6 +399,7 @@ class LiveMonitorPage(QWidget):
         self._samples.insert(0, sample)
         if len(self._samples) > 20:
             self._samples = self._samples[:20]
+        self.refresh_reviews()
 
         proc = sample.get("process_name", "--")
         title = (sample.get("window_title", "--") or "--")[:90]
@@ -335,8 +507,13 @@ class LiveMonitorPage(QWidget):
                 str(row_cat_key),
                 str(item.get("category_name", "") or ""),
             )
-            category_item = QTableWidgetItem(f"● {category_name}")
+            detail = item.get('classification_detail') or {}
+            category_item = QTableWidgetItem(f"● {classification_label(category_name, detail)}")
             category_item.setForeground(QBrush(QColor(row_color)))
-            category_item.setToolTip(f"分类颜色：{row_color}")
+            import html
+            reason = html.escape(str(detail.get('reason') or ''))
+            evidence = html.escape('、'.join(str(value) for value in detail.get('evidence') or []))
+            category_item.setToolTip(
+                f"分类来源：{detail.get('source', '规则')}\n{reason}\n{evidence}".strip())
             self.table.setItem(row, 3, category_item)
             self.table.setItem(row, 4, QTableWidgetItem(is_effective))

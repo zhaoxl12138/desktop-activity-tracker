@@ -1,15 +1,20 @@
 from daylens.services.intelligence_scheduler import IntelligenceScheduler
 from daylens.services.intelligence_state import DEFAULT_SETTINGS, save_settings, title_context
 from daylens.services.intelligence_state import save_override
+from daylens.services.intelligence_evidence import ReviewQueue, load_patterns
+from daylens.services.intelligence_state import atomic_json
 
 
 class FakeProvider:
     def __init__(self):
         self.calls = []
+        self.category = 'coding'
+        self.certainty = 'high'
 
     def classify(self, items):
         self.calls.append(items)
-        return {x['id']: {'category': 'coding', 'certainty': 'high', 'reason': '技术学习'} for x in items}
+        return {x['id']: {'category': self.category, 'certainty': self.certainty,
+                          'reason': '技术学习'} for x in items}
 
 
 def build(tmp_path, clock=lambda: 0):
@@ -29,6 +34,10 @@ def assert_pending(decision, reason=''):
         'category': '',
         'certainty': '',
         'reason': reason,
+        'suggested_category': '',
+        'evidence': [],
+        'pattern_id': '',
+        'apply': False,
     }
 
 
@@ -150,3 +159,113 @@ def test_cached_medium_result_remains_a_suggestion(tmp_path):
     assert decision['category'] == 'reading'
     assert decision['certainty'] == 'medium'
     assert decision['reason'] == '标题含义不充分'
+
+
+def test_manual_similar_pattern_has_priority_even_over_known_local_rule(tmp_path):
+    save_override(tmp_path, 'chrome.exe', '学习中心 - 视频课程 - 自考公共课', 'reading')
+    scheduler = IntelligenceScheduler(tmp_path, provider=FakeProvider())
+
+    decision = scheduler.observe(
+        'chrome.exe', '学习中心 - 视频课程 - 自考专业课', 'office', 'v1', active_seconds=1,
+    )
+
+    assert decision['apply'] is True
+    assert decision['category'] == 'reading'
+    assert decision['source'] == '人工模式'
+    assert decision['pattern_id']
+
+
+def test_ai_context_contains_only_recent_redacted_titles_from_same_app(tmp_path):
+    scheduler, provider = build(tmp_path)
+    scheduler.observe('edge.exe', 'Other app secret', 'browser_general', 'v1', active_seconds=1)
+    for index in range(7):
+        scheduler.observe(
+            'chrome.exe', f'Lesson {index} alice@example.com https://private/{index}',
+            'browser_general', 'v1', active_seconds=1,
+        )
+    for _ in range(30):
+        scheduler.observe('chrome.exe', 'Learning hub', 'browser_general', 'v1', active_seconds=1)
+    scheduler.process_pending(force=True)
+
+    sent = next(item for item in provider.calls[0] if item['title'] == 'Learning hub')
+    assert sent['base_category'] == 'browser_general'
+    assert 1 <= len(sent['recent_titles']) <= 5
+    assert all(row['app'] == 'chrome.exe' for row in sent['recent_titles'])
+    assert all('example.com' not in row['title'] and 'private/' not in row['title']
+               for row in sent['recent_titles'])
+    assert all(set(row) == {'app', 'title', 'active_seconds', 'confirmed_category'}
+               for row in sent['recent_titles'])
+    stored = __import__('json').loads(
+        (tmp_path / 'classification_cache.json').read_text(encoding='utf-8'))
+    cached_context = stored[sent['id']]['context']
+    assert set(cached_context) == {'id', 'app', 'title', 'base_category'}
+
+
+def test_medium_ai_result_applies_only_with_confirmed_recent_evidence(tmp_path):
+    save_override(tmp_path, 'chrome.exe', 'Python课程中心', 'reading')
+    scheduler, provider = build(tmp_path)
+    scheduler.reload()
+    provider.category = 'reading'
+    provider.certainty = 'medium'
+    scheduler.observe('chrome.exe', 'Python课程中心', 'browser_general', 'v1', active_seconds=5)
+    for _ in range(6):
+        scheduler.observe('chrome.exe', '考试安排中心', 'browser_general', 'v1', active_seconds=5)
+    scheduler.process_pending(force=True)
+
+    decision = scheduler.observe(
+        'chrome.exe', '考试安排中心', 'browser_general', 'v1', active_seconds=1,
+    )
+    assert decision['apply'] is True
+    assert decision['category'] == 'reading'
+    assert 'recent_confirmed' in decision['evidence']
+
+
+def test_uncertain_ai_result_is_saved_for_review_without_applying(tmp_path):
+    scheduler, provider = build(tmp_path)
+    provider.category = 'reading'
+    provider.certainty = 'medium'
+    for _ in range(30):
+        see(scheduler, title='Ambiguous learning portal')
+    scheduler.process_pending(force=True)
+
+    decision = see(scheduler, title='Ambiguous learning portal')
+    rows = ReviewQueue(tmp_path).items()
+    assert decision['apply'] is False
+    assert decision['source'] == 'AI待确认'
+    assert rows[0]['suggested_category'] == 'reading'
+    assert rows[0]['certainty'] == 'medium'
+
+
+def test_cache_drops_expired_entries_and_is_bounded(tmp_path):
+    entries = {
+        f'id-{index}': {
+            'category': 'reading', 'certainty': 'high', 'reason': '课程',
+            'cached_at': '2026-10-17T08:00:00',
+        }
+        for index in range(1005)
+    }
+    entries['expired'] = {
+        'category': 'reading', 'certainty': 'high', 'reason': '旧记录',
+        'cached_at': '2020-01-01T00:00:00',
+    }
+    atomic_json(tmp_path / 'classification_cache.json', entries)
+
+    scheduler = IntelligenceScheduler(tmp_path, provider=FakeProvider())
+
+    assert len(scheduler.cache) == 1000
+    assert 'expired' not in scheduler.cache
+
+
+def test_pattern_usage_metadata_is_persisted_without_sampling_thread_io(tmp_path):
+    save_override(tmp_path, 'chrome.exe', '学习中心 - 视频课程 - 自考公共课', 'reading')
+    scheduler = IntelligenceScheduler(tmp_path, provider=FakeProvider())
+
+    scheduler.observe(
+        'chrome.exe', '学习中心 - 视频课程 - 自考专业课',
+        'browser_general', 'v1', active_seconds=1,
+    )
+    scheduler.close()
+
+    pattern = load_patterns(tmp_path)[0]
+    assert pattern['hit_count'] == 1
+    assert pattern['last_used_at'] >= pattern['created_at']
