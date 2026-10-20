@@ -8,6 +8,16 @@
 
 **Tech Stack:** Python 3.14, PySide6, JSON state files, pytest, PyInstaller.
 
+## Execution record — 2026-10-20
+
+- Implementation committed as `a0da2e9` on `main`.
+- Five new regression tests include actual Qt modal save/cancel clicks and the complete three-dialog pattern-edit flow, using temporary state directories.
+- Full suite: 933 passed. `python tests/test_gui_smoke.py`, `compileall`, diff validation, and packaged Qt smoke passed.
+- Dialog rendering verified with Microsoft YaHei loaded for offscreen screenshots.
+- Canonical release updated after a successful maintenance shutdown. Previous release retained at `release_backup_20261020_correction`; database remains `data/usage.db`.
+- Native desktop UI click verification could not finish: Windows screenshot capture timed out and accessibility clicks returned `coordinate input geometry is unavailable`. Packaged app startup, main-window accessibility, and continued sampling were verified; automated dialog interactions ran against the source widgets, not the packaged native window.
+- Existing unrelated changes in `today_overview.py` and `test_top_app_icons.py` were preserved.
+
 ---
 
 ## File structure
