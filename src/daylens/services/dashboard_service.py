@@ -1517,11 +1517,8 @@ def build_distribution_sections(stats: dict, effective_seconds: int) -> list[dic
     ]
     if category_totals['finance']:
         sections.append({'category_key': 'finance', 'label': '投资理财', 'seconds': category_totals['finance']})
-    # The fourth row is intentionally dynamic: show the day's leading useful
-    # residual category instead of presenting browser, tools and the true
-    # fallback bucket as one misleading "其他" value.  Dashboard snapshots are
-    # refreshed every five seconds, so this switches naturally whenever the
-    # cumulative leader changes without an additional database query or timer.
+    # Show only the leading residual category with its own duration. The total
+    # remains the denominator, including residual categories omitted here.
     dynamic_candidates = [
         {
             "category_key": "browser_general",
@@ -1543,17 +1540,8 @@ def build_distribution_sections(stats: dict, effective_seconds: int) -> list[dic
         dynamic_candidates,
         key=lambda item: int(item["seconds"]),
     )
-    nonzero_dynamic = [
-        item for item in dynamic_candidates if int(item["seconds"]) > 0
-    ]
-    if nonzero_dynamic:
-        dynamic_section = dict(dynamic_section)
-        dynamic_section["seconds"] = sum(
-            int(item["seconds"]) for item in nonzero_dynamic
-        )
-        if len(nonzero_dynamic) > 1:
-            dynamic_section["label"] = f"{dynamic_section['label']}等"
-        sections.append(dynamic_section)
+    if int(dynamic_section['seconds']) > 0:
+        sections.append(dict(dynamic_section))
     return sections
 
 

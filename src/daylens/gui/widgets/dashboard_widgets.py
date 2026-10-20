@@ -3222,6 +3222,19 @@ class DistributionLegend(QWidget):
 
             for parts, (name, seconds, color) in zip(self._row_parts, normalized):
                 self._update_row(parts, name, seconds, color, total)
+            # Font/DPI and duration length determine the space needed; use one
+            # common width so every row's duration and percentage stay aligned.
+            for parts in self._row_parts:
+                parts['time'].ensurePolished()
+                parts['pct'].ensurePolished()
+            time_width = max((
+                parts['time'].fontMetrics().horizontalAdvance(parts['time'].text()) + 12
+                for parts in self._row_parts
+            ), default=60)
+            for parts in self._row_parts:
+                parts['time'].setFixedWidth(max(60, time_width))
+                pct = parts['pct']
+                pct.setFixedWidth(max(36, pct.fontMetrics().horizontalAdvance(pct.text()) + 8))
         finally:
             self.setUpdatesEnabled(True)
             self.update()

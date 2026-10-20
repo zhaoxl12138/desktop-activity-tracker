@@ -749,10 +749,10 @@ def test_distribution_sections_show_browser_when_it_leads_dynamic_slot():
     ]
     assert sections[-1] == {
         "category_key": "browser_general",
-        "label": "浏览器等",
-        "seconds": 3000,
+        "label": "浏览器",
+        "seconds": 1500,
     }
-    assert sum(item["seconds"] for item in sections) == 13200
+    assert sum(item["seconds"] for item in sections) == 11700
 
 
 def test_distribution_sections_show_tools_when_it_leads_dynamic_slot():
@@ -768,10 +768,10 @@ def test_distribution_sections_show_tools_when_it_leads_dynamic_slot():
 
     assert sections[-1] == {
         "category_key": "tools",
-        "label": "系统工具等",
-        "seconds": 960,
+        "label": "系统工具",
+        "seconds": 720,
     }
-    assert sum(item["seconds"] for item in sections) == 1560
+    assert sum(item["seconds"] for item in sections) == 1320
 
 
 def test_distribution_sections_show_true_other_when_it_is_only_residual():

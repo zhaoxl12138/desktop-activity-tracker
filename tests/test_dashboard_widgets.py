@@ -196,6 +196,21 @@ def test_distribution_legend_updates_rows_in_place_without_focusable_flash_widge
     app.processEvents()
 
 
+def test_distribution_time_column_fits_long_values_and_aligns_rows():
+    app = _app()
+    legend = dashboard_widgets.DistributionLegend()
+    legend.resize(640, 220)
+    legend.show()
+    legend.set_items([('工作学习', 123 * 3600 + 34 * 60, '#00ff00'),
+                      ('其他', 2573, '#00ffff')], 500000)
+    app.processEvents()
+    labels = [parts['time'] for parts in legend._row_parts]
+    assert labels[0].width() == labels[1].width()
+    for label in labels:
+        assert label.width() >= label.fontMetrics().horizontalAdvance(label.text()) + 12
+    legend.close()
+
+
 def test_timeline_widget_expand_and_collapse():
     app = _app()
     widget = TimelineWidget(max_rows=2)
