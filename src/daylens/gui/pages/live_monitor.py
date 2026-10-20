@@ -341,8 +341,9 @@ class LiveMonitorPage(QWidget):
             self._review_mtime = None
             self.refresh_reviews(force=True)
             self.classification_corrected.emit()
-        except Exception:
-            QMessageBox.warning(self, '保存失败', '无法保存此标题的分类确认')
+            self.correction_status.setText('分类已确认，后续记录生效')
+        except Exception as exc:
+            QMessageBox.warning(self, '保存失败', f'无法保存此标题的分类确认：{exc}')
 
     def _accept_review(self):
         review = self._selected_review()

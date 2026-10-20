@@ -1475,6 +1475,7 @@ def resolve_display_name(
 
 def category_seconds(stats: dict) -> dict[str, int]:
     totals = {
+        "finance": 0,
         "work": 0,
         "social": 0,
         "entertainment": 0,
@@ -1485,7 +1486,9 @@ def category_seconds(stats: dict) -> dict[str, int]:
     for item in stats.get("by_category", []):
         seconds = parse_nonnegative_int(item.get("effective_seconds")) or 0
         category_key = item.get("category_key")
-        if category_key in WORK_KEYS:
+        if category_key == 'finance':
+            totals['finance'] += seconds
+        elif category_key in WORK_KEYS:
             totals["work"] += seconds
         elif category_key == "social":
             totals["social"] += seconds
@@ -1512,6 +1515,8 @@ def build_distribution_sections(stats: dict, effective_seconds: int) -> list[dic
         {"category_key": "video", "label": "娱乐休闲", "seconds": category_totals["entertainment"]},
         {"category_key": "social", "label": "社交通讯", "seconds": category_totals["social"]},
     ]
+    if category_totals['finance']:
+        sections.append({'category_key': 'finance', 'label': '投资理财', 'seconds': category_totals['finance']})
     # The fourth row is intentionally dynamic: show the day's leading useful
     # residual category instead of presenting browser, tools and the true
     # fallback bucket as one misleading "其他" value.  Dashboard snapshots are

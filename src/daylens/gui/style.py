@@ -114,6 +114,7 @@ def refresh_category_colors() -> None:
     CATEGORY_COLOR_MAP.update(
         {
             "work": COLORS["coding_green"],
+            "finance": "#D8B45B",
             "ai_tools": COLORS["ai_blue"],
             "coding": COLORS["coding_green"],
             "reading": COLORS["reading_blue"],

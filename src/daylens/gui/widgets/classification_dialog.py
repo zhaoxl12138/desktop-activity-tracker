@@ -8,6 +8,7 @@ CATEGORY_CHOICES = (
     ('办公 / 求职', 'office'), ('AI工具', 'ai_tools'),
     ('设计创作', 'creative'), ('社交通讯', 'social'),
     ('系统工具', 'tools'), ('游戏娱乐', 'gaming'),
+    ('投资理财', 'finance'),
     ('影音娱乐', 'video'), ('浏览器', 'browser_general'), ('其他', 'other'),
 )
 

@@ -211,6 +211,7 @@ class ReviewQueue:
         old = self._items.get(identity, {})
         self._items[identity] = {
             "id": identity,
+            "manual_id": str(context.get('manual_id') or old.get('manual_id') or '')[:24],
             "app": str(context.get("app") or "")[:80],
             "title": redact_title(context.get("title") or ""),
             "suggested_category": str(context.get("category") or ""),
@@ -236,6 +237,20 @@ class ReviewQueue:
         row = self._items.get(str(identity))
         if row is None:
             raise KeyError(identity)
-        pattern = save_pattern(self.path.parent, row["app"], row["title"], category)
+        from .intelligence_state import save_override, load_overrides, title_context, DEFAULT_SETTINGS
+        # Confirmation always saves an exact decision. Similarity is optional.
+        save_override(self.path.parent, row['app'], row['title'], category)
+        if row.get('manual_id'):
+            overrides = load_overrides(self.path.parent)
+            context = title_context(row['app'], row['title'], dict(DEFAULT_SETTINGS), 'manual-v1')
+            decision = dict(overrides[context['id']])
+            overrides[row['manual_id']] = decision
+            # The redacted representation must not become a shared exact key.
+            if context['id'] != row['manual_id']:
+                overrides.pop(context['id'], None)
+            atomic_json(self.path.parent / 'manual_decisions.json', overrides)
+        pattern = next((item for item in load_patterns(self.path.parent)
+                        if item.get('app') == row['app'] and item.get('example') == row['title']),
+                       {'category': category, 'source': '手动'})
         self.ignore(identity)
         return pattern

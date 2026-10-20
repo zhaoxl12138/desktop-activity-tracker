@@ -18,6 +18,7 @@ _LEARNING_CATEGORIES = {"reading", "coding", "ai_tools", "office", "creative"}
 # Stable tie-breaking for categories with equally specific matches. This is
 # the built-in rule order; title matches apply content-is-king separately.
 _CATEGORY_PRIORITY = (
+    "finance",
     "ai_tools",
     "coding",
     "office",

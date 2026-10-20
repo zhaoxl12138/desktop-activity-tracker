@@ -202,6 +202,12 @@ categories:
         - "360ChromeX.exe"
 
   # ── 兜底 ──────────────────────────────────────────────
+  finance:
+    display_name: 投资理财
+    active_rule: interactive_required
+    match:
+      process_names: [hexin.exe, 股票盯盘.exe]
+      title_keywords: [同花顺, 东方财富, 雪球, 股票 AI 助手, 股票AI助手]
   other:
     display_name: "其他"
     active_rule: "interactive_required"

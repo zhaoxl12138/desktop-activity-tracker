@@ -47,6 +47,12 @@ def fmt_seconds(total_seconds):
 # tools, browser_general, other
 
 _DEFAULT_CATEGORIES = {
+    'finance': {
+        'display_name': '投资理财',
+        'active_rule': 'interactive_required',
+        'process_names': ['hexin.exe', '股票盯盘.exe'],
+        'title_keywords': ['同花顺', '东方财富', '雪球', '股票 AI 助手', '股票AI助手'],
+    },
     "ai_tools": {
         "display_name": "AI工具",
         "active_rule": "interactive_required",
@@ -153,12 +159,14 @@ _DEFAULT_CATEGORIES = {
 }
 
 _CATEGORY_ORDER = [
+    'finance',
     "ai_tools", "coding", "office", "reading", "video", "creative",
     "social", "tools", "browser_general", "other",
 ]
 
 # Track which fields comment each category header
 _CATEGORY_COMMENTS = {
+    'finance': '投资理财',
     "ai_tools": "AI 工具",
     "coding": "编程开发",
     "office": "办公套件",
@@ -176,6 +184,8 @@ def normalize_category_bucket_key(category_key: str, category_name: str = "") ->
     """Map fine-grained categories into UI-facing buckets."""
     key = (category_key or "").strip()
     name = (category_name or "").strip()
+    if key == 'finance':
+        return 'finance'
     if key in WORK_CATEGORY_KEYS or name in {"学习/工作", "工作学习", "办公"}:
         return "work"
     if key in ENTERTAINMENT_CATEGORY_KEYS or name in {"视频娱乐", "视频与游戏", "娱乐休闲"}:
@@ -192,6 +202,8 @@ def normalize_category_bucket_key(category_key: str, category_name: str = "") ->
 def normalize_category_display_name(category_key: str, category_name: str = "") -> str:
     """Return the unified UI label for category displays."""
     bucket = normalize_category_bucket_key(category_key, category_name)
+    if bucket == 'finance':
+        return '投资理财'
     if bucket == "work":
         return "工作学习"
     if bucket == "entertainment":

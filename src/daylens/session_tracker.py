@@ -146,12 +146,14 @@ _ACTIVITY_DOMAINS: dict[str, set[str]] = {
 
 _AI_APPLIED_CATEGORIES = {
     "coding", "reading", "office", "ai_tools", "creative",
-    "social", "tools", "gaming", "video",
+    "social", "tools", "gaming", "video", "finance", "browser_general", "other",
 }
 
 def _get_domain(category_key: str) -> str:
     if not category_key:
         return "idle"
+    if category_key == 'finance':
+        return 'finance'
     for domain, keys in _ACTIVITY_DOMAINS.items():
         if category_key in keys:
             return domain

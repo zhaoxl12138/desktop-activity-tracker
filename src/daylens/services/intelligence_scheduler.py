@@ -236,6 +236,7 @@ class IntelligenceScheduler:
                 return None
             identity = context['id']
             context['base_category'] = base_category
+            context['manual_id'] = manual_context['id'] if manual_context else ''
             context['recent_titles'] = self._recent_context(process)
             self.current_identity = identity
             if identity in self.cache:
@@ -271,7 +272,10 @@ class IntelligenceScheduler:
             self.attempted.update(c['id'] for c in batch)
             generation = self.generation
         try:
-            result = self.provider.classify(batch)
+            result = self.provider.classify([
+                {key: value for key, value in context.items() if key != 'manual_id'}
+                for context in batch
+            ])
             if not isinstance(result, dict):
                 return
             with self.lock:
