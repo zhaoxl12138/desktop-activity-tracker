@@ -123,7 +123,9 @@ def save_override(directory, process, title, category):
     # same-application pattern lets a correction help closely related pages.
     from .intelligence_evidence import save_pattern
     try:
-        save_pattern(directory, process, title, category)
+        pattern = save_pattern(directory, process, title, category)
+        overrides[context['id']]['pattern_id'] = pattern['id']
+        atomic_json(Path(directory) / 'manual_decisions.json', overrides)
     except ValueError:
         # A sparse/private title can still be corrected exactly without
         # creating an unsafe broad similarity rule.

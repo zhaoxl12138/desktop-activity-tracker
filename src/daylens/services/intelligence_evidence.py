@@ -111,6 +111,30 @@ def set_pattern_enabled(directory, pattern_id: str, enabled: bool) -> bool:
     return changed
 
 
+def update_pattern_category(directory, pattern_id: str, category: str) -> bool:
+    """Keep pattern identity and matching exact manual decisions consistent."""
+    if category not in LEGAL_CATEGORIES:
+        raise ValueError('不支持的分类')
+    patterns = load_patterns(directory)
+    row = next((item for item in patterns if item.get('id') == pattern_id), None)
+    if row is None:
+        return False
+    if row.get('category') == category:
+        return True
+    from .intelligence_state import load_overrides, title_context, DEFAULT_SETTINGS
+    overrides = load_overrides(directory)
+    context = title_context(row.get('app'), row.get('example'), dict(DEFAULT_SETTINGS), 'manual-v1')
+    for identity, decision in overrides.items():
+        if decision.get('pattern_id') == pattern_id or (context and identity == context['id']):
+            decision['category'] = category
+    # Write exact decisions first: these take precedence in the classifier.
+    if overrides:
+        atomic_json(Path(directory) / 'manual_decisions.json', overrides)
+    row['category'] = category
+    save_patterns(directory, patterns)
+    return True
+
+
 def delete_pattern(directory, pattern_id: str) -> bool:
     patterns = load_patterns(directory)
     kept = [row for row in patterns if row.get("id") != pattern_id]

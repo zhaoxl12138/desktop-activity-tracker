@@ -15,13 +15,14 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QPushButton,
-    QInputDialog,
+    QDialog,
     QMessageBox,
 )
 
 from ...utils import fmt_seconds, normalize_category_display_name
 from .. import style as ui_style
 from ..style import COLORS, get_category_color
+from ..widgets.classification_dialog import ClassificationDialog, ChoiceDialog, CATEGORY_CHOICES
 
 
 def classification_label(category_name: str, detail: dict) -> str:
@@ -74,6 +75,10 @@ class LiveMonitorPage(QWidget):
         correction_actions = QHBoxLayout()
         correction_actions.addWidget(self.correct_button)
         correction_actions.addWidget(self.manage_patterns_button)
+        self.correction_status = QLabel('可选择下方记录后纠正分类')
+        self.correction_status.setTextFormat(Qt.PlainText)
+        self.correction_status.setWordWrap(True)
+        correction_actions.addWidget(self.correction_status, 1)
         correction_actions.addStretch()
         layout.addLayout(correction_actions)
         layout.addWidget(self._build_review_card())
@@ -83,58 +88,72 @@ class LiveMonitorPage(QWidget):
 
     def _correct_current(self):
         if not self._samples:
+            self.correction_status.setText('暂无可纠正的前台记录')
             return
-        sample = dict(self._samples[0])
-        if sample.get('category_key') == 'video':
-            QMessageBox.information(self, '媒体分类保护', '视频类别涉及播放计时，请通过规则管理调整。')
+        row = self.table.currentRow()
+        sample = dict(self._samples[row if 0 <= row < len(self._samples) else 0])
+        dialog = ClassificationDialog(parent=self, app_name=sample.get('process_name', ''),
+                                      title=sample.get('window_title', ''),
+                                      current_category=sample.get('category_key', 'other'))
+        if dialog.exec() != QDialog.Accepted:
             return
-        choices = {'技术学习 / 开发': 'coding', '阅读学习': 'reading', '办公 / 求职': 'office',
-                   'AI工具': 'ai_tools', '设计创作': 'creative', '社交通讯': 'social', '系统工具': 'tools'}
-        selected, ok = QInputDialog.getItem(self, '纠正分类', '仅用于当前应用与标题，后续记录生效：', list(choices), 0, False)
-        if not ok:
-            return
+        category = dialog.selected_category()
         try:
-            from pathlib import Path
-            from ... import get_data_dir
             from ...services.intelligence_state import save_override
-            save_override(Path(get_data_dir()) / 'intelligence', sample.get('process_name'),
-                          sample.get('window_title'), choices[selected])
+            save_override(self._review_directory(), sample.get('process_name'),
+                          sample.get('window_title'), category)
             self.classification_corrected.emit()
-        except Exception:
-            QMessageBox.warning(self, '保存失败', '无法保存此标题的分类纠正')
+            self.correction_status.setText(f'已纠正为{dict((key, name) for name, key in CATEGORY_CHOICES)[category]}，后续记录生效')
+        except Exception as exc:
+            QMessageBox.warning(self, '保存失败', f'无法保存此标题的分类纠正：{exc}')
 
     def _manage_patterns(self):
         from ...services.intelligence_evidence import (
-            delete_pattern, load_patterns, set_pattern_enabled,
+            delete_pattern, load_patterns, set_pattern_enabled, update_pattern_category,
         )
         patterns = load_patterns(self._review_directory())
         if not patterns:
             QMessageBox.information(self, '已确认模式', '还没有可管理的相似标题模式。')
             return
         labels = []
-        by_label = {}
+        by_id = {}
         for pattern in patterns:
             state = '启用' if pattern.get('enabled', True) else '停用'
             category = normalize_category_display_name(str(pattern.get('category') or ''), '')
             label = f"[{state}] {category} · {str(pattern.get('example') or '')[:70]}"
-            labels.append(label)
-            by_label[label] = pattern
-        selected, ok = QInputDialog.getItem(
-            self, '管理已确认模式', '选择模式：', labels, 0, False)
-        if not ok:
+            labels.append((f"{pattern.get('app', '')} · {label}", pattern['id']))
+            by_id[pattern['id']] = pattern
+        picker = ChoiceDialog(self, heading='管理已确认模式', description='选择需要修改的模式', choices=labels)
+        picker.buttons.button(picker.buttons.StandardButton.Save).setText('下一步')
+        if picker.exec() != QDialog.Accepted:
             return
-        pattern = by_label[selected]
+        pattern = by_id[picker.selected_category()]
         toggle = '停用' if pattern.get('enabled', True) else '启用'
-        action, ok = QInputDialog.getItem(
-            self, '模式操作', '选择操作：', [toggle, '删除'], 0, False)
-        if not ok:
+        actions = ChoiceDialog(self, heading='模式操作', description=pattern.get('example', ''),
+                               choices=[('修改分类', 'edit'), (toggle, 'toggle'), ('删除', 'delete')])
+        actions.buttons.button(actions.buttons.StandardButton.Save).setText('确定')
+        if actions.exec() != QDialog.Accepted:
             return
-        if action == '删除':
-            delete_pattern(self._review_directory(), pattern['id'])
-        else:
-            set_pattern_enabled(
-                self._review_directory(), pattern['id'], not pattern.get('enabled', True))
-        self.classification_corrected.emit()
+        try:
+            action = actions.selected_category()
+            if action == 'edit':
+                dialog = ClassificationDialog(parent=self, app_name=pattern.get('app', ''),
+                    title=pattern.get('example', ''), current_category=pattern['category'])
+                if dialog.exec() != QDialog.Accepted:
+                    return
+                changed = update_pattern_category(self._review_directory(), pattern['id'], dialog.selected_category())
+            elif action == 'delete':
+                if QMessageBox.question(self, '删除模式', '确定删除此模式？', QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+                    return
+                changed = delete_pattern(self._review_directory(), pattern['id'])
+            else:
+                changed = set_pattern_enabled(self._review_directory(), pattern['id'], not pattern.get('enabled', True))
+            if not changed:
+                raise ValueError('模式已不存在，请重新打开列表')
+            self.classification_corrected.emit()
+            self.correction_status.setText('模式已更新，后续记录生效')
+        except Exception as exc:
+            QMessageBox.warning(self, '保存失败', f'模式未能更新：{exc}')
 
     def _build_current_session_card(self):
         card = QFrame()
@@ -334,13 +353,10 @@ class LiveMonitorPage(QWidget):
         review = self._selected_review()
         if review is None:
             return
-        choices = {'技术学习 / 开发': 'coding', '阅读学习': 'reading', '办公 / 求职': 'office',
-                   'AI工具': 'ai_tools', '设计创作': 'creative', '社交通讯': 'social',
-                   '系统工具': 'tools', '游戏娱乐': 'gaming', '影音娱乐': 'video'}
-        selected, ok = QInputDialog.getItem(
-            self, '确认分类', '为相似标题选择分类（仅以后生效）：', list(choices), 0, False)
-        if ok:
-            self._resolve_review(choices[selected])
+        dialog = ClassificationDialog(parent=self, app_name=review.get('app', ''),
+            title=review.get('title', ''), current_category=review.get('suggested_category', 'other'))
+        if dialog.exec() == QDialog.Accepted:
+            self._resolve_review(dialog.selected_category())
 
     def _ignore_review(self):
         review = self._selected_review()
