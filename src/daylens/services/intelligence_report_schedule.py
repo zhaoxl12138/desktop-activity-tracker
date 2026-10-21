@@ -67,7 +67,8 @@ def _depends_on(kind, day, other_kind, other_day):
 
 def run_scheduled_reviews(db_path, reports_dir, *, now=None, directory=None, generator=None):
     now = now or datetime.now()
-    directory = Path(directory or Path(get_data_dir()) / 'intelligence')
+    from ..app_paths import AppPaths
+    directory = Path(directory or AppPaths.from_database(db_path).intelligence_dir)
     settings = load_settings(directory)
     if not settings['enabled'] or not settings['reports_enabled']:
         return {'generated_paths': [], 'status': '自动智能汇总未开启'}

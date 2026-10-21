@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 import time
 from typing import Callable
 
@@ -62,6 +63,8 @@ class DashboardRefreshController(QObject):
         self._worker: _DashboardQueryWorker | None = None
         self._pending = False
         self.latest_generation = 0
+        self._context_day = date.today()
+        self._last_published_payload: dict[str, object] | None = None
 
         self.timer = QTimer(self)
         self.timer.setInterval(max(1, int(interval_ms)))
@@ -86,11 +89,24 @@ class DashboardRefreshController(QObject):
     def request_refresh(self) -> None:
         if self._closing or not self._foreground:
             return
-        self.latest_generation += 1
+        if self._context_day != date.today():
+            self.invalidate_context()
+            return
         if self._worker is not None:
             self._pending = True
             return
+        self.latest_generation += 1
         self._start_worker(self.latest_generation)
+
+    def invalidate_context(self) -> None:
+        self._context_day = date.today()
+        self.latest_generation += 1
+        if self._closing or not self._foreground:
+            return
+        if self._worker is not None:
+            self._pending = True
+        else:
+            self._start_worker(self.latest_generation)
 
     def shutdown(self, timeout_ms: int = 5_000) -> bool:
         self._closing = True
@@ -126,6 +142,9 @@ class DashboardRefreshController(QObject):
         worker.start()
 
     def _on_completed(self, generation: int, payload: object) -> None:
+        if self._context_day != date.today():
+            self.invalidate_context()
+            return
         if (
             self._closing
             or not self._foreground
@@ -133,6 +152,9 @@ class DashboardRefreshController(QObject):
             or not isinstance(payload, dict)
         ):
             return
+        if payload == self._last_published_payload:
+            return
+        self._last_published_payload = payload
         self.snapshot_ready.emit(
             DashboardSnapshot(
                 generation=generation,
@@ -160,4 +182,5 @@ class DashboardRefreshController(QObject):
         if self._closing or not self._foreground or not self._pending:
             return
         self._pending = False
+        self.latest_generation += 1
         self._start_worker(self.latest_generation)

@@ -7,31 +7,18 @@ import re
 import yaml
 
 
-CLASSIFICATION_POLICY_VERSION = "ai-title-evidence-v2"
+CLASSIFICATION_POLICY_VERSION = "ai-title-evidence-v3-registry"
 
 from . import get_app_root
 
 # Categories that represent productive work — when they compete with
 # video/entertainment, they win (content-is-king principle).
-_LEARNING_CATEGORIES = {"reading", "coding", "ai_tools", "office", "creative"}
+from .category_registry import group_keys, RULE_PRIORITY_IDS
+_LEARNING_CATEGORIES = group_keys('work') - {'work'}
 
 # Stable tie-breaking for categories with equally specific matches. This is
 # the built-in rule order; title matches apply content-is-king separately.
-_CATEGORY_PRIORITY = (
-    "finance",
-    "ai_tools",
-    "coding",
-    "office",
-    "reading",
-    "video",
-    "creative",
-    "gaming",
-    "social",
-    "tools",
-    "browser_general",
-    "other",
-    "idle_leave",
-)
+_CATEGORY_PRIORITY = RULE_PRIORITY_IDS
 _CATEGORY_PRIORITY_RANK = {
     key: index for index, key in enumerate(_CATEGORY_PRIORITY)
 }

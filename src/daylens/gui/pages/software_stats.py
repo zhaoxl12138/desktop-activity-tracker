@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 from ...services import software_stats_service
 from .. import style as ui_style
+from ..dashboard_refresh_controller import DashboardRefreshController
 from ..style import COLORS, get_category_color
 
 
@@ -101,20 +102,30 @@ class SoftwareStatsPage(QWidget):
         )
         layout.addWidget(self.table, 1)
 
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.refresh)
-        self.timer.setInterval(30000)
+        self._refresh_controller = DashboardRefreshController(
+            lambda: {
+                "rows": software_stats_service.load_software_rows(
+                    self.db_path, self.display_name_mapping
+                )
+            },
+            interval_ms=30_000,
+            parent=self,
+        )
+        self._refresh_controller.snapshot_ready.connect(
+            lambda snapshot: self._apply_rows(list(snapshot.payload.get("rows", [])))
+        )
+        self._refresh_controller.failed.connect(self._show_refresh_error)
+        self.timer = self._refresh_controller.timer
 
     def activate(self, force: bool = False) -> None:
         self._is_active = True
-        if not self.timer.isActive():
-            self.timer.start()
-        if force or self._last_rows_signature is None:
-            self.refresh()
+        self._refresh_controller.set_foreground(True)
+        if force:
+            self._refresh_controller.request_refresh()
 
     def deactivate(self) -> None:
         self._is_active = False
-        self.timer.stop()
+        self._refresh_controller.set_foreground(False)
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -125,10 +136,27 @@ class SoftwareStatsPage(QWidget):
         super().hideEvent(event)
 
     def refresh(self):
+        """Synchronous compatibility hook used by tests and explicit tools."""
         if not self._is_active:
             return
         try:
             rows = software_stats_service.load_software_rows(self.db_path, self.display_name_mapping)
+            self._apply_rows(rows)
+        except Exception as exc:
+            self._show_refresh_error(str(exc))
+
+    def _apply_rows(self, rows):
+        selected_key = None
+        selected = self.table.currentRow()
+        if selected >= 0:
+            first = self.table.item(selected, 0)
+            second = self.table.item(selected, 1)
+            selected_key = (
+                first.text() if first else "",
+                second.text() if second else "",
+            )
+        scroll_value = self.table.verticalScrollBar().value()
+        try:
             signature = tuple(
                 (row.get("software"), row.get("title"), row.get("category_key"),
                  row.get("duration"), row.get("percent"))
@@ -151,12 +179,23 @@ class SoftwareStatsPage(QWidget):
                 self.table.setItem(index, 2, cat_item)
                 self.table.setItem(index, 3, QTableWidgetItem(str(row["duration"])))
                 self.table.setItem(index, 4, QTableWidgetItem(str(row["percent"])))
+                if selected_key == (str(row["software"]), str(row["title"])):
+                    self.table.selectRow(index)
+            self.table.verticalScrollBar().setValue(scroll_value)
         except Exception as exc:
-            import sys
-            import traceback
+            self._show_refresh_error(str(exc))
 
-            print(f"[SoftwareStats] refresh error: {exc}", file=sys.stderr)
-            traceback.print_exc()
+    def _show_refresh_error(self, message: str) -> None:
+        self.status_label.setStyleSheet(
+            f"font-size: 12px; color: {COLORS['danger_red']}; font-weight: 600;"
+        )
+        self.status_label.setText(f"加载失败: {message}")
+
+    def shutdown(self, timeout_ms: int = 5_000) -> bool:
+        return self._refresh_controller.shutdown(timeout_ms)
+
+    def resume(self) -> None:
+        self._refresh_controller.resume(self._is_active)
 
     def _export_csv(self):
         path, _ = QFileDialog.getSaveFileName(

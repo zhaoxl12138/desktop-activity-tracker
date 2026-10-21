@@ -105,12 +105,14 @@ def main():
         window.show()
         app.processEvents()
 
-        window.resize(1280, 780)
+        window.resize(1280, 720)
         app.processEvents()
         assert window.width() == 1280, f"responsive width mismatch: {window.width()}"
-        assert window.height() == 780, f"responsive height mismatch: {window.height()}"
-        assert window.stack.count() == 7, f"unexpected page count: {window.stack.count()}"
-        assert window.nav_list.count() == 7, f"unexpected nav count: {window.nav_list.count()}"
+        assert window.height() == 720, f"responsive height mismatch: {window.height()}"
+        assert window.stack.count() == 6, f"unexpected page count: {window.stack.count()}"
+        assert window.nav_list.count() == 6, f"unexpected nav count: {window.nav_list.count()}"
+        assert window.lbl_page_hint.isVisible(), "today status hint should be visible"
+        assert window.lbl_page_hint.fullText() == "等待首次采样"
         assert window.chk_dark_mode.isChecked() is True, "dark mode toggle should default on"
         assert window.sidebar_quit_btn.text(), "sidebar quit button should exist"
         assert window.sidebar_record_status.text(), "sidebar record status should exist"
@@ -128,16 +130,13 @@ def main():
         app.processEvents()
         assert window.chk_dark_mode.isChecked() is True, "dark mode toggle should switch on"
 
-        nav_titles = [window.nav_list.item(i).text() for i in range(window.nav_list.count())]
-        assert nav_titles == [
-            "今日概览",
-            "实时监控",
-            "软件统计",
-            "分类统计",
-            "日报/周报",
-            "规则管理",
-            "设置中心",
-        ], f"unexpected nav titles: {nav_titles}"
+        nav_keys = [
+            window.nav_list.item(i).data(Qt.UserRole)["key"]
+            for i in range(window.nav_list.count())
+        ]
+        assert nav_keys == [
+            "today", "stats", "rules", "reports", "settings", "live"
+        ], f"unexpected navigation: {nav_keys}"
 
         forbidden_text = [
             "开机自启动",

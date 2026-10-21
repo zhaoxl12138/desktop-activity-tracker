@@ -31,7 +31,12 @@ from PySide6.QtWidgets import (
 
 from ..utils import fmt_seconds
 from ..services.dashboard_service import load_today_snapshot, resolve_display_name
-from ..services.shell_service import load_poetry_hint
+from ..services.daily_observation import (
+    candidate_observations,
+    generate_daily_observation,
+    load_daily_observation,
+)
+from ..services.intelligence_state import load_settings as load_intelligence_settings
 from ..services.reports_service import (
     ReportJob,
     execute_report_job,
@@ -51,19 +56,20 @@ from .pages.reports import ReportsPage
 from .pages.rule_config import RuleConfigPage
 from .pages.settings import SettingsPage
 from .pages.software_stats import SoftwareStatsPage
+from .pages.statistics import StatisticsPage
 from .pages.today_overview import TodayOverviewPage
 from .widgets.elided_label import ElidedLabel
+from .widgets.ui_primitives import PageHeader, StatusBadge
 from . import style as ui_style
 
 
 NAV_ITEMS = [
-    ("今日概览", "today", "聚焦今天的使用结构、效率与提醒"),
-    ("实时监控", "live", "查看当前前台窗口与记录状态"),
-    ("软件统计", "software", "分析软件使用时长与使用结构"),
-    ("分类统计", "category", "查看分类维度的时间分布"),
-    ("日报/周报", "reports", "生成日报与周报"),
-    ("规则管理", "rules", "管理分类规则与计时策略"),
+    ("今日概览", "today", "今天的活动结构与节奏"),
+    ("统计", "stats", "按软件或分类查看时间统计"),
+    ("分类管理", "rules", "待确认、人工纠错与本地规则"),
+    ("报告中心", "reports", "查看日报、周报与月报"),
     ("设置中心", "settings", "管理基础配置与数据路径"),
+    ("实时监控", "live", "诊断当前窗口与记录状态"),
 ]
 
 DISPLAY_NAME_MAPPING = {
@@ -101,12 +107,12 @@ class MainWindow(QMainWindow):
         self.config_path = config_path
         self.reports_dir = reports_dir
         self.worker = worker
+        from ..app_paths import AppPaths
+        self.paths = getattr(worker, 'paths', None) or AppPaths.from_database(db_path, program_dir=app_root, reports_dir=reports_dir)
         self._theme_rebuilding = False
         self._last_sample: dict | None = None
         self._recording_health = getattr(worker, "health", None)
         self._current_nav_key: str | None = None
-        self._last_poetry_refresh = 0.0
-        self._poetry_interval = 1800
         self._dashboard_snapshot: DashboardSnapshot | None = None
         self.current_theme = ui_style.apply_theme(self.config.get("theme", "dark"))
         self.background_tasks = BackgroundTaskQueue(parent=self)
@@ -118,7 +124,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("DayLens")
         self.setStyleSheet(ui_style.get_global_style() + ui_style.get_input_style())
         self.resize(self.FIXED_SIZE)
-        self.setMinimumSize(QSize(1100, 700))
+        self.setMinimumSize(QSize(800, 650))
         self.setWindowFlags(
             Qt.Window
             | Qt.WindowMinimizeButtonHint
@@ -176,12 +182,13 @@ class MainWindow(QMainWindow):
         self.display_name_mapping = display_name_mapping
         self.pages = {
             "today": TodayOverviewPage(self.db_path, display_name_mapping),
-            "live": LiveMonitorPage(),
+            "live": LiveMonitorPage(paths=self.paths, categories=self.config.get('categories', {})),
             "software": SoftwareStatsPage(self.db_path, self.reports_dir, display_name_mapping),
             "category": CategoryStatsPage(self.db_path),
             "reports": ReportsPage(
                 self.db_path, self.reports_dir,
                 self.config.get("obsidian_output_path", "").strip(),
+                paths=self.paths,
             ),
             "rules": RuleConfigPage(
                 self.config_path,
@@ -195,11 +202,26 @@ class MainWindow(QMainWindow):
                 self.reports_dir,
                 self.worker,
                 self.background_tasks,
+                paths=self.paths,
             ),
         }
+        self.pages["stats"] = StatisticsPage(
+            self.pages["software"], self.pages["category"]
+        )
+        self.pages["today"].top_app_card.activated.connect(
+            lambda: self.navigate_to("stats", tab="software")
+        )
+        from .pages.classification_management import ClassificationManagementPage
+        live = self.pages['live']
+        self.pages['rules'] = ClassificationManagementPage(live, self.pages['rules'])
+        live.manage_patterns_button.clicked.disconnect()
+        live.manage_patterns_button.setText('打开分类管理')
+        live.manage_patterns_button.clicked.connect(lambda: self.nav_list.setCurrentRow(
+            next(i for i, item in enumerate(NAV_ITEMS) if item[1]=='rules')))
         self.pages["settings"].config_saved.connect(self._apply_saved_config)
         if callable(getattr(self.worker, 'reload_intelligence', None)):
-            self.pages['live'].classification_corrected.connect(self.worker.reload_intelligence)
+            self.pages['live'].classification_corrected.connect(
+                lambda: self.worker.reload_intelligence())
         self.pages["settings"].restart_requested.connect(self._restart_app)
         for _, key, _ in NAV_ITEMS:
             self.stack.addWidget(self.pages[key])
@@ -224,7 +246,7 @@ class MainWindow(QMainWindow):
         self.page_scroll = QScrollArea()
         self.page_scroll.setObjectName("pageScroll")
         self.page_scroll.setWidgetResizable(True)
-        self.page_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.page_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.page_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.page_scroll.setFrameShape(QFrame.NoFrame)
         self.page_scroll.setWidget(self.stack)
@@ -236,10 +258,11 @@ class MainWindow(QMainWindow):
 
     def _build_sidebar(self) -> QWidget:
         frame = QFrame()
-        frame.setFixedWidth(254)
+        frame.setFixedWidth(176)
         frame.setStyleSheet(f"background: {ui_style.COLORS['sidebar_bg']};")
 
         layout = QVBoxLayout(frame)
+        self._sidebar_layout = layout
         layout.setContentsMargins(16, 18, 16, 14)
         layout.setSpacing(0)
 
@@ -292,7 +315,7 @@ class MainWindow(QMainWindow):
         status_layout.setContentsMargins(16, 14, 16, 14)
         status_layout.setSpacing(8)
 
-        self.sidebar_record_status = QLabel("🟢 正在记录")
+        self.sidebar_record_status = QLabel("记录中")
         self.sidebar_record_status.setStyleSheet(
             f"font-size: 14px; color: {ui_style.COLORS['success_green']}; font-weight: 800;"
         )
@@ -321,6 +344,7 @@ class MainWindow(QMainWindow):
             f"font-size: 11px; color: {ui_style.COLORS['text_muted']};"
         )
         status_layout.addWidget(self.sidebar_sample_time)
+        self.sidebar_status_card = status_card
         layout.addWidget(status_card)
         layout.addSpacing(14)
 
@@ -335,75 +359,45 @@ class MainWindow(QMainWindow):
         bar = QFrame()
         bar.setObjectName("topBar")
         bar.setStyleSheet(ui_style.get_top_bar_style())
-        bar.setMinimumHeight(140)
+        bar.setMinimumHeight(92)
+        bar.setMaximumHeight(112)
 
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(34, 24, 34, 20)
-        layout.setSpacing(24)
+        layout.setContentsMargins(24, 12, 24, 12)
+        layout.setSpacing(18)
 
-        title_wrap = QVBoxLayout()
-        title_wrap.setSpacing(8)
-
-        brand_row = QHBoxLayout()
-        brand_row.setSpacing(10)
         icon_label = QLabel()
-        icon_label.setFixedSize(34, 34)
+        icon_label.setFixedSize(30, 30)
         icon_path = os.path.join(self.app_root, "assets", "icon.ico")
         if os.path.exists(icon_path):
-            pixmap = QPixmap(icon_path).scaled(34, 34, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            pixmap = QPixmap(icon_path).scaled(30, 30, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             icon_label.setPixmap(pixmap)
-        brand_row.addWidget(icon_label)
+        layout.addWidget(icon_label)
 
-        brand = QLabel("DayLens")
-        brand.setStyleSheet(
-            f"font-size: 22px; font-weight: 900; color: {ui_style.COLORS['text']};"
-        )
-        brand_row.addWidget(brand)
-        brand_row.addStretch()
-        title_wrap.addLayout(brand_row)
+        self._page_header = PageHeader("今日概览", self._today_text())
+        self.lbl_page_title = self._page_header.title_label
+        self.lbl_today = self._page_header.subtitle_label
+        layout.addWidget(self._page_header, 1)
 
-        top_line = QHBoxLayout()
-        top_line.setSpacing(12)
-
-        self.lbl_page_title = QLabel("今日概览")
-        self.lbl_page_title.setStyleSheet(
-            f"font-size: 34px; font-weight: 900; color: {ui_style.COLORS['text']};"
-        )
-        top_line.addWidget(self.lbl_page_title)
-
-        self.lbl_today = QLabel(self._today_text())
-        self.lbl_today.setStyleSheet(
-            f"font-size: 14px; color: {ui_style.COLORS['text_secondary']}; font-weight: 600;"
-        )
-        top_line.addWidget(self.lbl_today)
-        top_line.addStretch()
-        title_wrap.addLayout(top_line)
-
-        self.lbl_page_hint = ElidedLabel(
-            "聚焦今天的使用结构、效率与提醒",
-            max_lines=2,
-        )
-        self.lbl_page_hint.setMinimumHeight(42)
-        self.lbl_page_hint.setMaximumHeight(56)
-        self.lbl_page_hint.setSizePolicy(
-            QSizePolicy.Expanding, QSizePolicy.Minimum
-        )
+        self.lbl_page_hint = ElidedLabel("", max_lines=1)
+        self.lbl_page_hint.setTextFormat(Qt.PlainText)
         self.lbl_page_hint.setStyleSheet(
             f"font-size: 12px; color: {ui_style.COLORS['text_secondary']};"
         )
-        hint_line = QHBoxLayout()
-        hint_line.addWidget(self.lbl_page_hint)
-        hint_line.addStretch()
-        title_wrap.addLayout(hint_line)
-        layout.addLayout(title_wrap)
+        self._page_header.layout().addWidget(self.lbl_page_hint)
+        self.lbl_page_hint.hide()
 
         self.capsule_values: dict[str, QLabel] = {}
         self.capsule_labels: dict[str, QLabel] = {}
         self.capsule_icons: dict[str, QLabel] = {}
-        layout.addStretch()
         self._summary_capsule = self._build_summary_capsules()
         layout.addWidget(self._summary_capsule)
-        layout.addStretch()
+
+        self.top_record_status = StatusBadge("待恢复", "neutral")
+        layout.addWidget(self.top_record_status)
+        self.top_data_status = StatusBadge("", "neutral")
+        self.top_data_status.hide()
+        layout.addWidget(self.top_data_status)
 
         self.btn_pause = QPushButton("暂停记录")
         self.btn_pause.setStyleSheet(ui_style.get_button_secondary_style())
@@ -428,34 +422,23 @@ class MainWindow(QMainWindow):
             QFrame {{
                 background: {ui_style.COLORS['panel_bg']};
                 border: 1px solid {ui_style.COLORS['border']};
-                border-radius: 18px;
+                border-radius: 10px;
             }}
             """
         )
         layout = QGridLayout(capsule)
-        layout.setContentsMargins(20, 12, 20, 12)
-        layout.setHorizontalSpacing(24)
-        layout.setVerticalSpacing(10)
+        layout.setContentsMargins(12, 7, 12, 7)
+        layout.setHorizontalSpacing(0)
+        layout.setVerticalSpacing(0)
         self._summary_capsule_grid = layout
         self.summary_capsule_items: list[QFrame] = []
-
-        for index, (emoji, label, key) in enumerate(
-            [
-                ("⚡", "参与时长", "total"),
-                ("💼", "工作学习", "work"),
-                ("📺", "娱乐休闲", "ent"),
-                ("💬", "社交通讯", "social"),
-            ]
-        ):
-            item, value_label, icon_label, text_label = self._make_capsule(emoji, label)
-            item.setMinimumWidth(150)
-            item.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-            layout.addWidget(item, 0, index)
-            layout.setColumnStretch(index, 1)
-            self.summary_capsule_items.append(item)
-            self.capsule_values[key] = value_label
-            self.capsule_icons[key] = icon_label
-            self.capsule_labels[key] = text_label
+        item, value_label, icon_label, text_label = self._make_capsule("", "有效活动")
+        item.setMinimumWidth(118)
+        layout.addWidget(item, 0, 0)
+        self.summary_capsule_items.append(item)
+        self.capsule_values["total"] = value_label
+        self.capsule_icons["total"] = icon_label
+        self.capsule_labels["total"] = text_label
         return capsule
 
     def _make_capsule(self, emoji: str, label_text: str) -> tuple[QFrame, QLabel, QLabel, QLabel]:
@@ -471,30 +454,26 @@ class MainWindow(QMainWindow):
         )
         h = QVBoxLayout(capsule)
         h.setContentsMargins(8, 4, 8, 4)
-        h.setSpacing(4)
-        h.setAlignment(Qt.AlignHCenter)
+        h.setSpacing(1)
+        h.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
         emoji_lbl = QLabel(emoji)
-        emoji_lbl.setStyleSheet("font-size: 24px; background: transparent;")
-        emoji_lbl.setAlignment(Qt.AlignHCenter)
-        h.addWidget(emoji_lbl, 0, Qt.AlignHCenter)
+        emoji_lbl.hide()
 
         text_lbl = QLabel(label_text)
         text_lbl.setStyleSheet(
-            f"font-size: 12px; color: {ui_style.COLORS['text']};"
+            f"font-size: 12px; color: {ui_style.COLORS['text_secondary']};"
             " font-weight: 700; background: transparent;"
         )
-        text_lbl.setAlignment(Qt.AlignHCenter)
-        h.addWidget(text_lbl, 0, Qt.AlignHCenter)
+        h.addWidget(text_lbl)
 
         value_lbl = QLabel("--")
         value_lbl.setStyleSheet(
-            f"font-size: 23px; color: {ui_style.COLORS['text']};"
+            f"font-size: 20px; color: {ui_style.COLORS['text']};"
             " font-weight: 900; background: transparent;"
         )
-        value_lbl.setAlignment(Qt.AlignHCenter)
-        value_lbl.setMinimumHeight(30)
-        h.addWidget(value_lbl, 0, Qt.AlignHCenter)
+        value_lbl.setMinimumHeight(24)
+        h.addWidget(value_lbl)
 
         return capsule, value_lbl, emoji_lbl, text_lbl
 
@@ -548,26 +527,59 @@ class MainWindow(QMainWindow):
     def _update_responsive_top_bar(self) -> None:
         if not hasattr(self, "_summary_capsule_grid"):
             return
-        compact = self.width() < 1400
-        if getattr(self, "_top_bar_compact", None) == compact:
-            return
+        compact = self.width() < 1150
         self._top_bar_compact = compact
-
-        grid = self._summary_capsule_grid
-        for item in self.summary_capsule_items:
-            grid.removeWidget(item)
-        for index, item in enumerate(self.summary_capsule_items):
-            row = index // 2 if compact else 0
-            column = index % 2 if compact else index
-            grid.addWidget(item, row, column)
-        for column in range(4):
-            grid.setColumnStretch(column, 1 if column < (2 if compact else 4) else 0)
-
         self._top_action_layout.setDirection(
-            QBoxLayout.TopToBottom if compact else QBoxLayout.LeftToRight
+            QBoxLayout.LeftToRight
         )
-        self._top_bar.setMinimumHeight(154 if compact else 140)
-        self._summary_capsule_grid.invalidate()
+        # Decide against the logical content width the expanded sidebar would
+        # leave.  This avoids keeping a wide sidebar when it would force the
+        # dashboard itself into the compact range.
+        sidebar_compact = (self.width() - 176) < 1150
+        self._sidebar.setFixedWidth(64 if sidebar_compact else 176)
+        self._sidebar_layout.setContentsMargins(
+            4 if sidebar_compact else 16,
+            12 if sidebar_compact else 18,
+            4 if sidebar_compact else 16,
+            10 if sidebar_compact else 14,
+        )
+        if sidebar_compact:
+            self.nav_list.setStyleSheet(
+                f"QListWidget {{ background: transparent; border: none; outline: none; padding: 2px; "
+                f"color: {ui_style.COLORS['text_secondary']}; }} "
+                "QListWidget::item { height: 46px; padding: 0; margin: 3px 0; border-radius: 9px; "
+                f"color: {ui_style.COLORS['text_secondary']}; font-weight: 700; }} "
+                f"QListWidget::item:hover {{ background: {ui_style.COLORS['sidebar_hover']}; color: white; }} "
+                f"QListWidget::item:selected {{ background: {ui_style.COLORS['sidebar_active']}; color: white; "
+                "border: 1px solid #6EA8FF; }"
+            )
+            self.nav_list.setFont(QFont("Microsoft YaHei", 9))
+        else:
+            self.nav_list.setStyleSheet(ui_style.get_sidebar_style())
+            self.nav_list.setFont(QFont("Microsoft YaHei", 11))
+        for index in range(self.nav_list.count()):
+            item = self.nav_list.item(index)
+            data = item.data(Qt.UserRole) or {}
+            title = str(data.get("title", ""))
+            item.setText(title[:2] if sidebar_compact else title)
+            item.setTextAlignment(
+                Qt.AlignCenter if sidebar_compact else (Qt.AlignLeft | Qt.AlignVCenter)
+            )
+            item.setToolTip(title if sidebar_compact else str(data.get("hint", "")))
+        self.chk_dark_mode.setVisible(not sidebar_compact)
+        self.sidebar_status_card.setVisible(not sidebar_compact)
+        for widget in (
+            self.sidebar_record_value,
+            self.sidebar_record_streak,
+            self.sidebar_version,
+            self.sidebar_sample_time,
+            self.sidebar_quit_btn,
+        ):
+            widget.setVisible(not sidebar_compact)
+        content_width = max(0, self.width() - self._sidebar.width())
+        today_page = self.pages.get("today")
+        if today_page is not None and hasattr(today_page, "set_content_width"):
+            today_page.set_content_width(content_width)
 
     def _apply_window_chrome_theme(self) -> None:
         if sys.platform != "win32":
@@ -628,12 +640,14 @@ class MainWindow(QMainWindow):
             if nav_key == key:
                 self.stack.setCurrentIndex(index)
                 self.lbl_page_title.setText(title)
+                self.lbl_today.setText(self._today_text() if key == "today" else hint)
+                self._summary_capsule.setVisible(key == "today")
                 self._current_nav_key = key
                 if key == "today":
                     self.pages["today"].activate(force=previous_key != "today")
-                    self._set_random_poetry(force=True)
+                    self._show_daily_observation()
                 else:
-                    self.lbl_page_hint.setText(hint)
+                    self.lbl_page_hint.hide()
                     page = self.pages.get(key)
                     if page is not None and hasattr(page, "activate"):
                         page.activate(force=previous_key != key)
@@ -642,6 +656,20 @@ class MainWindow(QMainWindow):
                         self.pages["live"].on_sample_updated(self._last_sample)
                     self.pages["today"].on_sample_updated(self._last_sample)
                 break
+
+    def navigate_to(self, key: str, *, tab: str | None = None) -> None:
+        """Navigate by stable page key; optional tab keeps callers index-free."""
+        if key in {"software", "category"}:
+            tab = key
+            key = "stats"
+        if key == "stats" and tab:
+            self.pages["stats"].select_tab(tab)
+        row = next(
+            (index for index, (_title, nav_key, _hint) in enumerate(NAV_ITEMS) if nav_key == key),
+            -1,
+        )
+        if row >= 0:
+            self.nav_list.setCurrentRow(row)
 
     def _on_sample(self, sample) -> None:
         self._last_sample = sample
@@ -652,6 +680,10 @@ class MainWindow(QMainWindow):
 
     def _connect_recording_worker(self, worker) -> None:
         worker.sample_updated.connect(self._on_sample)
+        applied = getattr(worker, 'classification_applied', None)
+        if applied is not None:
+            applied.connect(self.pages['live'].on_classification_applied)
+            applied.connect(self.pages['rules'].on_classification_applied)
         health_updated = getattr(worker, "health_updated", None)
         if health_updated is not None:
             health_updated.connect(self._on_recording_health)
@@ -660,35 +692,82 @@ class MainWindow(QMainWindow):
         self._recording_health = health
         self._update_recording_health_ui()
 
+    def _show_daily_observation(self) -> None:
+        label = getattr(self, "lbl_page_hint", None)
+        if label is None:
+            return
+        if self._current_nav_key != "today":
+            label.hide()
+            return
+        snapshot = getattr(self, "_dashboard_snapshot", None)
+        payload = getattr(snapshot, "payload", None)
+        day = payload.get("today") if isinstance(payload, dict) else None
+        if day != datetime.now().date().isoformat():
+            label.hide()
+            return
+        observation = load_daily_observation(self.paths.intelligence_dir, day)
+        if observation is None:
+            label.hide()
+            return
+        as_of = observation.get("as_of")
+        prefix = f"AI观察 · 截至{as_of}" if isinstance(as_of, str) and len(as_of) == 5 else "AI观察"
+        full_text = f"{prefix} · {observation['text']}"
+        label.setText(full_text)
+        label.setPersistentToolTip(f"{full_text}\n由今日汇总数据生成；仅作为观察，不代表工作质量评价")
+        label.setStyleSheet(
+            f"font-size: 12px; color: {ui_style.COLORS['text_secondary']};"
+        )
+        label.show()
+
+    def _maybe_generate_daily_observation(self, payload: dict) -> None:
+        day = payload.get("today")
+        if day != datetime.now().date().isoformat():
+            return
+        settings = load_intelligence_settings(self.paths.intelligence_dir)
+        if not settings["enabled"] or not settings["reports_enabled"]:
+            return
+        if load_daily_observation(self.paths.intelligence_dir, day) is not None:
+            return
+        if not candidate_observations(payload):
+            return
+        directory = self.paths.intelligence_dir
+        self.background_tasks.submit(
+            f"observation:{day}",
+            lambda: generate_daily_observation(directory, payload),
+        )
+
     def _update_recording_health_ui(self) -> None:
         health = getattr(self, "_recording_health", None)
         if health is None:
             return
         status = getattr(health, "status", "starting")
         status_styles = {
-            "starting": ("🔵 启动中 (starting)", ui_style.COLORS["primary"]),
-            "running": ("🟢 正在记录 (running)", ui_style.COLORS["success_green"]),
-            "paused": ("🟡 暂停记录 (paused)", ui_style.COLORS["warning_yellow"]),
-            "delayed": ("🟡 写入延迟 (write delayed)", ui_style.COLORS["warning_yellow"]),
-            "sample_delayed": (
-                "🟡 采样延迟 (sample delayed)",
-                ui_style.COLORS["warning_yellow"],
-            ),
-            "degraded": ("🟠 降级运行 (degraded)", ui_style.COLORS["warning_yellow"]),
-            "stopped": ("⚪ 已停止 (stopped)", ui_style.COLORS["text_muted"]),
-            "fatal": ("🔴 记录错误 (fatal)", ui_style.COLORS["danger_red"]),
+            "starting": ("待恢复", ui_style.COLORS["primary"]),
+            "running": ("记录中", ui_style.COLORS["success_green"]),
+            "paused": ("已暂停", ui_style.COLORS["warning_yellow"]),
+            "delayed": ("正在保存", ui_style.COLORS["warning_yellow"]),
+            "sample_delayed": ("待恢复", ui_style.COLORS["warning_yellow"]),
+            "degraded": ("待恢复", ui_style.COLORS["warning_yellow"]),
+            "stopped": ("待恢复", ui_style.COLORS["text_muted"]),
+            "fatal": ("记录异常", ui_style.COLORS["danger_red"]),
         }
         text, color = status_styles.get(
             status,
             (f"⚪ {status}", ui_style.COLORS["text_muted"]),
         )
         error = str(getattr(health, "error", "") or "").strip()
-        if error and status in {"sample_delayed", "degraded", "fatal"}:
-            text = f"{text} · {error}"
         self.sidebar_record_status.setText(text)
         self.sidebar_record_status.setStyleSheet(
             f"font-size: 14px; color: {color}; font-weight: 800;"
         )
+        if error and hasattr(self.sidebar_record_status, "setToolTip"):
+            self.sidebar_record_status.setToolTip(error)
+        top_status = getattr(self, "top_record_status", None)
+        if top_status is not None:
+            top_status.setText(text)
+            kind = "success" if status == "running" else "error" if status == "fatal" else "warning" if status in {"paused", "delayed", "sample_delayed", "degraded"} else "neutral"
+            top_status.set_kind(kind)
+            top_status.setToolTip(error)
         last_sample_at = getattr(health, "last_sample_at", None)
         sample_text = (
             last_sample_at.strftime("%H:%M:%S")
@@ -725,13 +804,13 @@ class MainWindow(QMainWindow):
             self.worker.resume()
             self.btn_pause.setText("暂停记录")
             self.btn_pause.setStyleSheet(ui_style.get_button_secondary_style())
-            text = "正在记录"
+            text = "记录中"
             color = ui_style.COLORS["success_green"]
         else:
             self.worker.pause()
             self.btn_pause.setText("继续记录")
             self.btn_pause.setStyleSheet(ui_style.get_button_primary_style())
-            text = "暂停记录"
+            text = "已暂停"
             color = ui_style.COLORS["warning_yellow"]
 
         prefix = "🟢" if self.worker.is_paused() is False else "🟡"
@@ -739,20 +818,33 @@ class MainWindow(QMainWindow):
         self.sidebar_record_status.setStyleSheet(
             f"font-size: 14px; color: {color}; font-weight: 800;"
         )
+        self.top_record_status.setText(text)
+        self.top_record_status.set_kind("success" if not self.worker.is_paused() else "warning")
 
     def _on_dashboard_snapshot(self, snapshot: DashboardSnapshot) -> None:
         if not isinstance(snapshot, DashboardSnapshot):
             return
         self.pages["today"].apply_snapshot(snapshot.payload)
         self._dashboard_snapshot = snapshot
+        self.top_data_status.hide()
         self._update_top_bar()
+        self._show_daily_observation()
+        self._maybe_generate_daily_observation(snapshot.payload)
 
-    @staticmethod
-    def _on_dashboard_refresh_failed(message: str) -> None:
+    def _on_dashboard_refresh_failed(self, message: str) -> None:
         print(f"[DashboardRefresh] {message}", file=sys.stderr)
+        if hasattr(self, "top_data_status"):
+            snapshot = getattr(self, "_dashboard_snapshot", None)
+            loaded_at = getattr(snapshot, "loaded_at", None)
+            suffix = time.strftime("%H:%M", time.localtime(loaded_at)) if loaded_at else "--:--"
+            self.top_data_status.setText(f"读取失败 · 上次 {suffix}")
+            self.top_data_status.set_kind("error")
+            self.top_data_status.setToolTip(str(message))
+            self.top_data_status.show()
 
     def _update_top_bar(self) -> None:
-        self.lbl_today.setText(self._today_text())
+        if self._current_nav_key == "today":
+            self.lbl_today.setText(self._today_text())
         today = datetime.now().strftime("%Y-%m-%d")
         today_page = self.pages.get("today")
         if (
@@ -768,42 +860,10 @@ class MainWindow(QMainWindow):
                 "entertainment_seconds": 0,
                 "social_seconds": 0,
             }
-        primary_seconds = int(
-            getattr(today_page, "last_shell_primary_seconds", 0)
-            if today_page is not None and today_page.last_stats_date == today
-            else 0
-        )
-        primary_label = str(
-            getattr(today_page, "last_shell_primary_label", "参与时长")
-            if today_page is not None and today_page.last_stats_date == today
-            else "参与时长"
-        )
-        self.capsule_labels["total"].setText(primary_label)
+        primary_seconds = int(summary.get("effective_seconds", 0) or 0)
+        self.capsule_labels["total"].setText("有效活动")
         self.capsule_values["total"].setText(fmt_seconds(primary_seconds))
-        self.capsule_values["work"].setText(fmt_seconds(summary["work_seconds"]))
-        self.capsule_values["ent"].setText(fmt_seconds(summary["entertainment_seconds"]))
-        self.capsule_values["social"].setText(fmt_seconds(summary["social_seconds"]))
         self._update_sidebar_status_card()
-        if self._current_nav_key == "today":
-            self._set_random_poetry(force=False)
-
-    def _set_random_poetry(self, force: bool = False) -> None:
-        """Set lbl_page_hint to two random poetry lines from the database.
-
-        Args:
-            force: If True, refresh immediately. If False, only refresh if
-                   _poetry_interval seconds have passed since last refresh.
-        """
-        if not force:
-            now = __import__("time").time()
-            if now - self._last_poetry_refresh < self._poetry_interval:
-                return
-            self._last_poetry_refresh = now
-        for _title, nav_key, hint in NAV_ITEMS:
-            if nav_key == self._current_nav_key:
-                self.lbl_page_hint.setText(load_poetry_hint(self.db_path, hint))
-                return
-        self.lbl_page_hint.setText("聚焦今天的使用结构、效率与提醒")
 
     def _quick_report(self) -> None:
         job = ReportJob(
@@ -863,6 +923,9 @@ class MainWindow(QMainWindow):
     def _on_background_task_completed(self, key: str, result: object) -> None:
         import sys
 
+        if key.startswith("observation:"):
+            self._show_daily_observation()
+            return
         if key == "report:quick":
             button = getattr(self, "btn_report", None)
             if button is not None:
@@ -910,6 +973,11 @@ class MainWindow(QMainWindow):
 
     def _apply_saved_config(self, config: dict) -> None:
         self.config = config
+        MainWindow._show_daily_observation(self)
+        refresh = getattr(self, 'dashboard_refresh', None)
+        invalidate = getattr(refresh, 'invalidate_context', None)
+        if callable(invalidate):
+            invalidate()
         obsidian_path = config.get("obsidian_output_path", "").strip()
         reports_page = self.pages.get("reports")
         if reports_page is not None:
@@ -1015,6 +1083,9 @@ class MainWindow(QMainWindow):
                 timer.stop()
         refresh = getattr(window, "dashboard_refresh", None)
         completed = True if refresh is None else bool(refresh.shutdown(timeout_ms=5_000))
+        statistics_page = getattr(window, "pages", {}).get("stats")
+        if completed and statistics_page is not None and hasattr(statistics_page, "shutdown"):
+            completed = bool(statistics_page.shutdown(timeout_ms=5_000))
         tasks = getattr(window, "background_tasks", None)
         if completed and tasks is not None:
             completed = bool(tasks.shutdown(timeout_ms=5_000))
@@ -1029,6 +1100,9 @@ class MainWindow(QMainWindow):
         foreground = bool(is_visible()) if callable(is_visible) else True
         if refresh is not None:
             refresh.resume(foreground)
+        statistics_page = getattr(window, "pages", {}).get("stats")
+        if statistics_page is not None and hasattr(statistics_page, "resume"):
+            statistics_page.resume()
         tasks = getattr(window, "background_tasks", None)
         if tasks is not None:
             tasks.resume()
@@ -1049,6 +1123,7 @@ class MainWindow(QMainWindow):
             self.config_path,
             self.db_path,
             self.config,
+            paths=self.paths,
         )
         self._connect_recording_worker(replacement)
         self._recording_health = replacement.health
@@ -1057,6 +1132,9 @@ class MainWindow(QMainWindow):
             page = self.pages.get(page_key)
             if page is not None and hasattr(page, "worker"):
                 page.worker = replacement
+                intelligence_settings = getattr(page,'intelligence_settings',None)
+                if intelligence_settings is not None:
+                    intelligence_settings.worker = replacement
         replacement.start()
         return replacement
 

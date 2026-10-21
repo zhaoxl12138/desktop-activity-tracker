@@ -151,7 +151,10 @@ def test_goal_boundaries_default_and_are_saved(tmp_path, monkeypatch):
 def test_main_window_propagates_saved_config_to_live_consumers():
     reports_page = SimpleNamespace(obsidian_path="old")
     tray = SimpleNamespace(config={"obsidian_output_path": "old"})
-    holder = SimpleNamespace(config={}, pages={"reports": reports_page}, tray=tray)
+    holder = SimpleNamespace(
+        config={}, pages={"reports": reports_page}, tray=tray,
+        _update_current_status_hint=lambda: None,
+    )
     config = {"obsidian_output_path": "E:/vault/reports"}
 
     MainWindow._apply_saved_config(holder, config)

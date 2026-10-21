@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .intelligence_state import atomic_json
 from .intelligence_client import RequestDeferred
+from .intelligence_privacy import privacy_revision
 
 
 class NoReviewData(ValueError):
@@ -47,9 +48,14 @@ def _compressed_summary(summary, source, period):
 
 
 class IntelligenceReviews:
-    def __init__(self, directory, provider):
+    def __init__(self, directory, provider, *, privacy_settings=None):
         self.directory = Path(directory) / 'reviews'
         self.provider = provider
+        self.privacy_settings = privacy_settings
+
+    def _privacy_allowed(self, summary):
+        return (self.privacy_settings is None or
+                summary.get('privacy_revision') == privacy_revision(self.privacy_settings))
 
     def path(self, kind, day):
         return self.directory / f'{kind}-{review_period(kind, day)}.json'
@@ -79,7 +85,7 @@ class IntelligenceReviews:
                 continue
             seen.add(period)
             summary = self.load(source, candidate)
-            if not summary or summary.get('status') != 'ready':
+            if not summary or summary.get('status') != 'ready' or not self._privacy_allowed(summary):
                 continue
             # Weeks spanning months are explicitly labeled, never represented
             # as an exact calendar-month total.
@@ -92,7 +98,7 @@ class IntelligenceReviews:
                 if review_period('weekly', candidate) in covered:
                     continue
                 summary = self.load('daily', candidate)
-                if summary and summary.get('status') == 'ready':
+                if summary and summary.get('status') == 'ready' and self._privacy_allowed(summary):
                     period = candidate.isoformat()
                     facts.append(_compressed_summary(summary, 'daily', period))
         return facts
@@ -113,6 +119,8 @@ class IntelligenceReviews:
         # cannot create duplicate once-per-period calls after uncertain outcomes.
         marker = {'status': 'pending', 'kind': kind, 'period': review_period(kind, day),
                   'captured_at': datetime.now().isoformat(timespec='seconds')}
+        if self.privacy_settings is not None:
+            marker['privacy_revision'] = privacy_revision(self.privacy_settings)
         atomic_json(destination, marker)
         try:
             result = self.provider.request_json(

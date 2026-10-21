@@ -12,6 +12,8 @@ from .intelligence_client import DeepSeekProvider
 from .intelligence_credentials import read_key
 from .intelligence_reviews import IntelligenceReviews
 from .intelligence_state import load_settings, title_context
+from .intelligence_privacy import report_facts, privacy_revision
+from .intelligence_client import RequestDeferred
 
 
 def daily_facts(db_path, day, settings):
@@ -24,6 +26,8 @@ def daily_facts(db_path, day, settings):
             continue
         seen.add(identity)
         if session.get('category_key') not in WORK_CATEGORY_KEYS:
+            continue
+        if title_context(session.get('process_name'), session.get('window_title') or session.get('normalized_title'), settings, 'privacy') is None:
             continue
         title = session.get('normalized_title') or session.get('window_title')
         context = title_context(session.get('process_name'), title, settings, 'review-v1')
@@ -52,7 +56,8 @@ def generate_budget_review(
     directory=None,
     retry_failed=False,
 ):
-    directory = Path(directory or Path(get_data_dir()) / 'intelligence')
+    from ..app_paths import AppPaths
+    directory = Path(directory or AppPaths.from_database(db_path).intelligence_dir)
     settings = load_settings(directory)
     if not settings['enabled'] or not settings['reports_enabled']:
         raise ValueError('请先在设置中心开启智能增强和智能复盘')
@@ -60,7 +65,17 @@ def generate_budget_review(
         raise ValueError('请先配置DeepSeek API密钥')
     day = day or date.today()
     provider = DeepSeekProvider(IntelligenceBudget(directory / 'budget.json', settings['monthly_budget_micros']), read_key)
-    reviews = IntelligenceReviews(directory, provider)
+    def outbound_boundary(_kind, payload):
+        current = load_settings(directory)
+        if (not current['enabled'] or not current['reports_enabled']
+                or privacy_revision(current) != privacy_revision(settings)):
+            raise RequestDeferred('隐私设置已变化，等待重新构建汇总')
+        safe = report_facts(payload.get('facts', []), current)
+        if not safe:
+            raise RequestDeferred('没有允许发送的汇总事实')
+        return dict(payload, facts=safe)
+    provider.privacy_filter = outbound_boundary
+    reviews = IntelligenceReviews(directory, provider, privacy_settings=settings)
     existing = reviews.load(kind, day)
     if (existing is not None
             and not (retry_failed and existing.get('status') == 'failed')):
@@ -94,9 +109,10 @@ def generate_budget_review(
 def render_review(result):
     if result.get('status') != 'ready':
         return '该周期智能复盘未完成，已保留调用状态以避免重复扣费。原生报告仍然可用。'
+    from ..time_model import TIME_DEFINITION
     lines = [f"智能复盘 · {result['period']}",
              f"生成于 {result.get('captured_at', '未知')}（按当时已记录数据汇总）", '',
-             '仅覆盖已纳入的记录/摘要，不代表全部时间；解释由AI生成。', '']
+             '仅覆盖已纳入的记录/摘要，不代表全部时间；解释由AI生成。', TIME_DEFINITION, '']
     facts = {f['id']: f for f in result.get('facts', [])}
     for topic in result.get('topics', []):
         refs = topic['evidence_ids']

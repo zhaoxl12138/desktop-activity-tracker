@@ -18,6 +18,7 @@ class ElidedLabel(QLabel):
     ) -> None:
         self._full_text = str(text or "")
         self._max_lines = max(1, int(max_lines))
+        self._persistent_tooltip: str | None = None
         super().__init__("", parent)
         self.setWordWrap(self._max_lines > 1)
         self._apply_elision()
@@ -36,6 +37,11 @@ class ElidedLabel(QLabel):
 
     def maxLines(self) -> int:  # noqa: N802
         return self._max_lines
+
+    def setPersistentToolTip(self, tooltip: str | None) -> None:  # noqa: N802
+        """Keep diagnostic details through later text elision and resizes."""
+        self._persistent_tooltip = tooltip
+        self._apply_elision()
 
     def minimumSizeHint(self) -> QSize:  # noqa: N802
         margins = self.contentsMargins()
@@ -64,5 +70,7 @@ class ElidedLabel(QLabel):
         display_text = "\n".join(display_lines)
         QLabel.setText(self, display_text)
         self.setToolTip(
-            self._full_text if display_text != self._full_text else ""
+            self._persistent_tooltip
+            if self._persistent_tooltip is not None
+            else self._full_text if display_text != self._full_text else ""
         )

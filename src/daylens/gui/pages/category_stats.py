@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 from ...services import category_stats_service
 from ...utils import fmt_seconds
+from ..dashboard_refresh_controller import DashboardRefreshController
 from ..style import CATEGORY_COLOR_MAP, COLORS
 from ..widgets.elided_label import ElidedLabel
 
@@ -245,20 +246,26 @@ class CategoryStatsPage(QWidget):
         self.total_label.setStyleSheet(f"font-size: 13px; color: {COLORS['text_secondary']}; padding: 4px 0;")
         layout.addWidget(self.total_label)
 
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.refresh)
-        self.timer.setInterval(30000)
+        self._refresh_controller = DashboardRefreshController(
+            lambda: category_stats_service.load_category_summary(self.db_path),
+            interval_ms=30_000,
+            parent=self,
+        )
+        self._refresh_controller.snapshot_ready.connect(
+            lambda snapshot: self._apply_summary(snapshot.payload)
+        )
+        self._refresh_controller.failed.connect(self._show_refresh_error)
+        self.timer = self._refresh_controller.timer
 
     def activate(self, force: bool = False) -> None:
         self._is_active = True
-        if not self.timer.isActive():
-            self.timer.start()
-        if force or self._last_signature is None:
-            self.refresh()
+        self._refresh_controller.set_foreground(True)
+        if force:
+            self._refresh_controller.request_refresh()
 
     def deactivate(self) -> None:
         self._is_active = False
-        self.timer.stop()
+        self._refresh_controller.set_foreground(False)
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -269,11 +276,19 @@ class CategoryStatsPage(QWidget):
         super().hideEvent(event)
 
     def refresh(self):
+        """Synchronous compatibility hook used by tests and explicit tools."""
         if not self._is_active:
             return
         self.error_lbl.hide()
         try:
             summary = category_stats_service.load_category_summary(self.db_path)
+            self._apply_summary(summary)
+        except Exception as exc:
+            self._show_refresh_error(str(exc))
+
+    def _apply_summary(self, summary):
+        self.error_lbl.hide()
+        try:
             self._current_date = str(summary["today"])
             categories = list(summary["categories"])
             total_eff = int(summary["total_effective_seconds"])
@@ -330,10 +345,17 @@ class CategoryStatsPage(QWidget):
                     self.cards_container.removeWidget(card)
                     self.cards_container.insertWidget(0, card)
         except Exception as exc:
-            import traceback
+            self._show_refresh_error(str(exc))
 
-            self.error_lbl.setText(f"加载失败: {exc}\n{traceback.format_exc()}")
-            self.error_lbl.show()
+    def _show_refresh_error(self, message: str) -> None:
+        self.error_lbl.setText(f"加载失败: {message}")
+        self.error_lbl.show()
+
+    def shutdown(self, timeout_ms: int = 5_000) -> bool:
+        return self._refresh_controller.shutdown(timeout_ms)
+
+    def resume(self) -> None:
+        self._refresh_controller.resume(self._is_active)
 
     def _clear_all_cards(self):
         while self.cards_container.count():

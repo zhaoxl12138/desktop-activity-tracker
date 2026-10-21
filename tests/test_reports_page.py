@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import date, timedelta
 from pathlib import Path
 
 from PySide6.QtCore import QItemSelectionModel, Qt
@@ -28,6 +29,17 @@ def _create_report(reports_dir: Path, subdir: str, filename: str, content: str =
     return path
 
 
+def _create_report_series(reports_dir: Path, subdir: str, count: int) -> None:
+    start = date(2026, 1, 1)
+    for offset in range(count):
+        date_str = (start + timedelta(days=offset)).isoformat()
+        _create_report(
+            reports_dir,
+            subdir,
+            f"{date_str[:4]}/{date_str[:7]}/{date_str}.md",
+        )
+
+
 def _select_rows(table: QTableWidget, rows: list[int]) -> None:
     selection_model = table.selectionModel()
     for row in rows:
@@ -53,6 +65,77 @@ def test_reports_page_starts_with_disabled_selection_actions(tmp_path: Path):
     assert not page.btn_open.isEnabled()
     assert not page.btn_sync_selected.isEnabled()
     assert "选择一份报告" in page.detail_title.text()
+
+
+def test_reports_page_paginates_all_report_types_and_restores_each_page(
+    tmp_path: Path,
+):
+    reports_dir = tmp_path / "reports"
+    _create_report_series(reports_dir, "daily", 142)
+    _create_report_series(reports_dir, "weekly", 52)
+    _create_report_series(reports_dir, "monthly", 2)
+
+    app = _app()
+    page = ReportsPage(str(tmp_path / "usage.db"), str(reports_dir))
+    page.show()
+    app.processEvents()
+
+    assert page.tab_daily.rowCount() == 50
+    assert page.tabs.tabText(0) == "日报  142"
+    assert page.page_status.text() == "第 1 / 3 页 · 共 142 份"
+    assert not page.btn_previous_page.isEnabled()
+    assert page.btn_next_page.isEnabled()
+
+    page.btn_next_page.click()
+    page.btn_next_page.click()
+    app.processEvents()
+    assert page.tab_daily.rowCount() == 42
+    assert page.page_status.text() == "第 3 / 3 页 · 共 142 份"
+    assert page.btn_previous_page.isEnabled()
+    assert not page.btn_next_page.isEnabled()
+
+    page.tabs.setCurrentWidget(page.tab_weekly)
+    app.processEvents()
+    assert page.tab_weekly.rowCount() == 50
+    assert page.tabs.tabText(1) == "周报  52"
+    assert page.page_status.text() == "第 1 / 2 页 · 共 52 份"
+
+    page.tabs.setCurrentWidget(page.tab_daily)
+    app.processEvents()
+    assert page.tab_daily.rowCount() == 42
+    assert page.page_status.text() == "第 3 / 3 页 · 共 142 份"
+
+
+def test_report_page_change_clears_selection_and_refresh_clamps_removed_page(
+    tmp_path: Path,
+):
+    reports_dir = tmp_path / "reports"
+    _create_report_series(reports_dir, "daily", 101)
+    app = _app()
+    page = ReportsPage(str(tmp_path / "usage.db"), str(reports_dir))
+    page.show()
+    app.processEvents()
+
+    page.tab_daily.selectRow(0)
+    app.processEvents()
+    assert page.selected_report is not None
+
+    page.btn_next_page.click()
+    page.btn_next_page.click()
+    app.processEvents()
+    assert page.selected_report is None
+    assert page.tab_daily.rowCount() == 1
+
+    report_files = sorted((reports_dir / "daily").rglob("*.md"))
+    for path in report_files[:60]:
+        path.unlink()
+    page.refresh()
+    app.processEvents()
+
+    assert page.page_status.text() == "第 1 / 1 页 · 共 41 份"
+    assert page.tab_daily.rowCount() == 41
+    assert not page.btn_previous_page.isEnabled()
+    assert not page.btn_next_page.isEnabled()
 
 
 def test_selecting_report_updates_detail_panel_and_actions(tmp_path: Path):

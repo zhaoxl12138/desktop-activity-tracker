@@ -22,7 +22,8 @@ class IntelligenceSettings(QGroupBox):
     def __init__(self, worker=None, parent=None, *, directory=None):
         super().__init__('DeepSeek · 省钱模式', parent)
         self.worker = worker
-        self.directory = Path(directory or Path(get_data_dir()) / 'intelligence')
+        paths = getattr(worker, 'paths', None)
+        self.directory = Path(directory or (paths.intelligence_dir if paths else Path(get_data_dir()) / 'intelligence'))
         self.results = queue.Queue()
         settings = load_settings(self.directory)
         root = QVBoxLayout(self)
@@ -65,12 +66,6 @@ class IntelligenceSettings(QGroupBox):
         for button in (self.save_key_button, self.delete_key_button, self.test_button):
             row.addWidget(button)
         root.addLayout(row)
-        self.apps = QLineEdit(', '.join(settings['excluded_apps']))
-        self.apps.setPlaceholderText('排除应用：用逗号分隔进程名，例如 secret.exe')
-        root.addWidget(self.apps)
-        self.words = QLineEdit(', '.join(settings['excluded_words']))
-        self.words.setPlaceholderText('排除标题关键词：用逗号分隔，例如 客户名称, 私人')
-        root.addWidget(self.words)
         self.save_button = QPushButton('保存智能设置')
         root.addWidget(self.save_button)
         self.usage = QLabel('')
@@ -84,7 +79,7 @@ class IntelligenceSettings(QGroupBox):
         for button in (self.save_key_button, self.delete_key_button, self.test_button):
             button.setStyleSheet(ui_style.get_button_secondary_style())
         self.save_button.setStyleSheet(ui_style.get_button_primary_style())
-        for edit in (self.key, self.apps, self.words, self.budget):
+        for edit in (self.key, self.budget):
             edit.setStyleSheet(ui_style.get_input_style())
         for label in (self.key_state, self.usage, self.status, hint):
             label.setStyleSheet(f"color: {ui_style.COLORS['text_secondary']}; font-size: 12px;")
@@ -137,8 +132,6 @@ class IntelligenceSettings(QGroupBox):
                 'classification_enabled': self.classification.isChecked(),
                 'reports_enabled': self.reports.isChecked(),
                 'monthly_budget_micros': round(self.budget.value() * 1_000_000),
-                'excluded_apps': [x.strip() for x in self.apps.text().replace('，', ',').split(',') if x.strip()],
-                'excluded_words': [x.strip() for x in self.words.text().replace('，', ',').split(',') if x.strip()],
             })
             self._reload_worker()
             self.status.setText('智能设置已保存；只影响后续记录')

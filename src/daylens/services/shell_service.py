@@ -1,4 +1,4 @@
-"""Shell-level helpers for top bar, tray tooltip, poetry, and quick reports."""
+"""Shell-level helpers for top bar, tray tooltip, and quick reports."""
 
 from __future__ import annotations
 
@@ -20,29 +20,6 @@ def load_shell_summary(db_path: str, stats: dict | None = None) -> dict[str, int
         "entertainment_seconds": int(category_totals["entertainment"]),
         "social_seconds": int(category_totals["social"]),
     }
-
-
-def load_poetry_hint(db_path: str, fallback_hint: str) -> str:
-    try:
-        row = database.get_random_poetry(db_path)
-    except Exception:
-        row = None
-    if row:
-        author = str(row.get("author", "") or "").strip()
-        raw = str(row.get("content", "") or "").replace("\r", "\n")
-        lines = [
-            " ".join(line.split())
-            for line in raw.split("\n")
-            if line.strip()
-        ]
-        lines = [line for line in lines if line]
-        if not lines:
-            return fallback_hint
-        if len(lines) == 1:
-            return f"{lines[0]} ——{author}" if author else lines[0]
-        suffix = f" ——{author}" if author else ""
-        return "\n".join(lines[:1] + [lines[1] + suffix])
-    return fallback_hint
 
 
 def generate_daily_report(db_path: str, reports_dir: str, obsidian_path: str = "") -> tuple[str, str | None]:

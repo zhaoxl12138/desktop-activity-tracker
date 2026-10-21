@@ -58,17 +58,24 @@ class LiveMonitorPage(QWidget):
     """Realtime foreground-window monitor."""
 
     classification_corrected = Signal()
+    management_requested = Signal()
 
-    def __init__(self):
+    def __init__(self, *, paths=None, categories=None):
         super().__init__()
+        self.paths = paths
+        self.categories = categories or {}
+        if paths is not None:
+            self._review_directory = lambda: paths.intelligence_dir
         self._samples = []
+        self._selected_sample = None
+        self._sample_sequence = 0
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(22, 18, 22, 18)
         layout.setSpacing(14)
 
         layout.addWidget(self._build_current_session_card())
-        self.correct_button = QPushButton('纠正当前分类')
+        self.correct_button = QPushButton('纠正所选记录')
         self.correct_button.clicked.connect(self._correct_current)
         self.manage_patterns_button = QPushButton('管理已确认模式')
         self.manage_patterns_button.clicked.connect(self._manage_patterns)
@@ -79,10 +86,15 @@ class LiveMonitorPage(QWidget):
         self.correction_status.setTextFormat(Qt.PlainText)
         self.correction_status.setWordWrap(True)
         correction_actions.addWidget(self.correction_status, 1)
+        self.apply_retry_button = QPushButton('重试应用')
+        self.apply_retry_button.clicked.connect(self.classification_corrected.emit)
+        self.apply_retry_button.hide()
+        correction_actions.addWidget(self.apply_retry_button)
         correction_actions.addStretch()
         layout.addLayout(correction_actions)
         layout.addWidget(self._build_review_card())
         layout.addWidget(self._build_history_card(), 1)
+        self.table.itemSelectionChanged.connect(self._capture_selected_sample)
         self._review_mtime = None
         self.refresh_reviews(force=True)
 
@@ -91,19 +103,19 @@ class LiveMonitorPage(QWidget):
             self.correction_status.setText('暂无可纠正的前台记录')
             return
         row = self.table.currentRow()
-        sample = dict(self._samples[row if 0 <= row < len(self._samples) else 0])
+        sample = dict(self._selected_sample or self._samples[row if 0 <= row < len(self._samples) else 0])
         dialog = ClassificationDialog(parent=self, app_name=sample.get('process_name', ''),
                                       title=sample.get('window_title', ''),
-                                      current_category=sample.get('category_key', 'other'))
+                                      current_category=sample.get('category_key', 'other'), categories=self.categories)
         if dialog.exec() != QDialog.Accepted:
             return
         category = dialog.selected_category()
         try:
             from ...services.intelligence_state import save_override
             save_override(self._review_directory(), sample.get('process_name'),
-                          sample.get('window_title'), category)
-            self.classification_corrected.emit()
-            self.correction_status.setText(f'已纠正为{dict((key, name) for name, key in CATEGORY_CHOICES)[category]}，后续记录生效')
+                          sample.get('window_title'), category, scope=dialog.selected_scope(), categories=self.categories)
+            from ...category_registry import category_choices
+            self._decision_saved(f'已纠正为{dict((key, name) for name, key in category_choices(self.categories))[category]}')
         except Exception as exc:
             QMessageBox.warning(self, '保存失败', f'无法保存此标题的分类纠正：{exc}')
 
@@ -150,8 +162,7 @@ class LiveMonitorPage(QWidget):
                 changed = set_pattern_enabled(self._review_directory(), pattern['id'], not pattern.get('enabled', True))
             if not changed:
                 raise ValueError('模式已不存在，请重新打开列表')
-            self.classification_corrected.emit()
-            self.correction_status.setText('模式已更新，后续记录生效')
+            self._decision_saved('模式已更新')
         except Exception as exc:
             QMessageBox.warning(self, '保存失败', f'模式未能更新：{exc}')
 
@@ -197,6 +208,8 @@ class LiveMonitorPage(QWidget):
             f"font-size: 22px; font-weight: 800; color: {COLORS['text']};"
         )
         root.addWidget(self.lbl_title)
+        from ...time_model import TIME_DEFINITION
+        card.setToolTip(TIME_DEFINITION)
 
         meta_row = QHBoxLayout()
         meta_row.setSpacing(10)
@@ -227,6 +240,19 @@ class LiveMonitorPage(QWidget):
         root.addLayout(grid)
 
         return card
+
+    def _decision_saved(self, message):
+        from ...services.classification_state_service import state_revision
+        self._expected_revision = state_revision(self._review_directory())
+        self._saved_message = message
+        self.correction_status.setText(message + '，已保存，等待应用到后续记录')
+        self.apply_retry_button.show()
+        self.classification_corrected.emit()
+
+    def on_classification_applied(self, revision):
+        if revision >= getattr(self, '_expected_revision', float('inf')):
+            self.correction_status.setText(self._saved_message + '，已对后续记录生效')
+            self.apply_retry_button.hide()
 
     def _build_history_card(self):
         card = QFrame()
@@ -315,6 +341,8 @@ class LiveMonitorPage(QWidget):
         if not force and mtime == self._review_mtime:
             return
         self._review_mtime = mtime
+        previous = self._selected_review()
+        previous_id = previous.get('id') if previous else None
         self._review_rows = ReviewQueue(self._review_directory()).items()
         self.review_table.setRowCount(len(self._review_rows))
         for row_index, review in enumerate(self._review_rows):
@@ -324,6 +352,13 @@ class LiveMonitorPage(QWidget):
                     item.setData(Qt.UserRole, review.get('id'))
                 self.review_table.setItem(row_index, column, item)
         self.review_card.setVisible(bool(self._review_rows))
+        if previous_id:
+            selected = next((i for i, r in enumerate(self._review_rows) if r.get('id') == previous_id), None)
+            if selected is None:
+                self.review_table.setCurrentCell(-1, -1)
+                self.review_table.clearSelection()
+            else:
+                self.review_table.selectRow(selected)
 
     def _selected_review(self):
         row = self.review_table.currentRow()
@@ -331,17 +366,16 @@ class LiveMonitorPage(QWidget):
             return None
         return dict(self._review_rows[row])
 
-    def _resolve_review(self, category):
+    def _resolve_review(self, category, *, scope='similar'):
         review = self._selected_review()
         if review is None:
             return
         try:
             from ...services.intelligence_evidence import ReviewQueue
-            ReviewQueue(self._review_directory()).resolve(review['id'], category)
+            ReviewQueue(self._review_directory()).resolve(review['id'], category, scope=scope, categories=self.categories)
             self._review_mtime = None
             self.refresh_reviews(force=True)
-            self.classification_corrected.emit()
-            self.correction_status.setText('分类已确认，后续记录生效')
+            self._decision_saved('分类已确认')
         except Exception as exc:
             QMessageBox.warning(self, '保存失败', f'无法保存此标题的分类确认：{exc}')
 
@@ -355,9 +389,9 @@ class LiveMonitorPage(QWidget):
         if review is None:
             return
         dialog = ClassificationDialog(parent=self, app_name=review.get('app', ''),
-            title=review.get('title', ''), current_category=review.get('suggested_category', 'other'))
+            title=review.get('title', ''), current_category=review.get('suggested_category', 'other'), categories=self.categories)
         if dialog.exec() == QDialog.Accepted:
-            self._resolve_review(dialog.selected_category())
+            self._resolve_review(dialog.selected_category(), scope=dialog.selected_scope())
 
     def _ignore_review(self):
         review = self._selected_review()
@@ -412,7 +446,15 @@ class LiveMonitorPage(QWidget):
         layout.addWidget(value_label)
         return tile
 
+    def _capture_selected_sample(self):
+        row = self.table.currentRow()
+        if 0 <= row < len(self._samples):
+            self._selected_sample = dict(self._samples[row])
+
     def on_sample_updated(self, sample):
+        sample = dict(sample)
+        self._sample_sequence += 1
+        sample['_sample_id'] = self._sample_sequence
         self._samples.insert(0, sample)
         if len(self._samples) > 20:
             self._samples = self._samples[:20]
@@ -508,6 +550,7 @@ class LiveMonitorPage(QWidget):
                 """
             )
 
+        self.table.blockSignals(True)
         self.table.setRowCount(len(self._samples))
         for row, item in enumerate(self._samples):
             timestamp = item.get("timestamp", "")
@@ -534,3 +577,13 @@ class LiveMonitorPage(QWidget):
                 f"分类来源：{detail.get('source', '规则')}\n{reason}\n{evidence}".strip())
             self.table.setItem(row, 3, category_item)
             self.table.setItem(row, 4, QTableWidgetItem(is_effective))
+        if self._selected_sample:
+            selected_id = self._selected_sample.get('_sample_id')
+            selected_row = next((i for i, item in enumerate(self._samples)
+                                 if item.get('_sample_id') == selected_id), None)
+            if selected_row is not None:
+                self.table.selectRow(selected_row)
+            else:
+                self.table.clearSelection()
+                self.correction_status.setText('已固定所选记录，可继续纠正')
+        self.table.blockSignals(False)

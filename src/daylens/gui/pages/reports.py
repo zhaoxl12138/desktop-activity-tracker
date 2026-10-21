@@ -27,15 +27,20 @@ from .. import style as ui_style
 
 
 class ReportsPage(QWidget):
-    def __init__(self, db_path, reports_dir, obsidian_path=""):
+    def __init__(self, db_path, reports_dir, obsidian_path="", *, paths=None):
         super().__init__()
         self.db_path = db_path
         self.reports_dir = reports_dir
+        from ...app_paths import AppPaths
+        self.paths = paths or AppPaths.from_database(db_path, reports_dir=reports_dir)
         self.obsidian_path = obsidian_path
         self.selected_report: dict | None = None
         self.selected_reports: list[dict] = []
         self._is_active = False
         self._last_signature = None
+        self._page_size = 50
+        self._report_pages = {"daily": 1, "weekly": 1, "monthly": 1}
+        self._page_results: dict[str, reports_service.ReportPage] = {}
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 24)
@@ -44,6 +49,8 @@ class ReportsPage(QWidget):
         title = QLabel("报告中心")
         title.setStyleSheet(ui_style.get_section_title())
         layout.addWidget(title)
+        from ...time_model import TIME_DEFINITION
+        title.setToolTip(TIME_DEFINITION)
 
         subtitle = QLabel("生成、查看和导出你的时间报告。")
         subtitle.setStyleSheet(
@@ -165,8 +172,24 @@ class ReportsPage(QWidget):
         self.tabs.addTab(self.tab_daily, "日报")
         self.tabs.addTab(self.tab_weekly, "周报")
         self.tabs.addTab(self.tab_monthly, "月报")
-        self.tabs.currentChanged.connect(self._clear_selection)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
         layout.addWidget(self.tabs)
+
+        pager = QHBoxLayout()
+        pager.setSpacing(10)
+        pager.addStretch()
+        self.btn_previous_page = self._button("上一页", self._previous_page)
+        self.page_status = QLabel("第 1 / 1 页 · 共 0 份")
+        self.page_status.setAlignment(Qt.AlignCenter)
+        self.page_status.setStyleSheet(
+            f"font-size: 12px; color: {ui_style.COLORS['text_secondary']};"
+        )
+        self.btn_next_page = self._button("下一页", self._next_page)
+        pager.addWidget(self.btn_previous_page)
+        pager.addWidget(self.page_status)
+        pager.addWidget(self.btn_next_page)
+        pager.addStretch()
+        layout.addLayout(pager)
         return frame
 
     def _build_detail_panel(self) -> QFrame:
@@ -269,10 +292,10 @@ class ReportsPage(QWidget):
         table.itemDoubleClicked.connect(self._open_selected)
         return table
 
-    def refresh(self):
+    def refresh(self, force_subdir: str | None = None):
         from pathlib import Path
         from ...services.intelligence_report_schedule import schedule_status
-        self.automation_status.setText(schedule_status(Path(self.db_path).resolve().parent / 'intelligence'))
+        self.automation_status.setText(schedule_status(self.paths.intelligence_dir))
         table_specs = [
             (self.tab_daily, "daily", "日报"),
             (self.tab_weekly, "weekly", "周报"),
@@ -281,12 +304,31 @@ class ReportsPage(QWidget):
         current_table = self.tabs.currentWidget()
         current_table_changed = False
         for index, (table, subdir, title) in enumerate(table_specs):
-            rows = reports_service.list_report_rows(self.reports_dir, subdir, limit=50)
+            result = reports_service.list_report_page(
+                self.reports_dir,
+                subdir,
+                page=self._report_pages[subdir],
+                page_size=self._page_size,
+            )
+            self._report_pages[subdir] = result.page
+            self._page_results[subdir] = result
+            rows = result.rows
             signature = tuple(
                 (row.get("filename"), row.get("size_text"), row.get("modified_text"))
                 for row in rows
             )
-            if self._last_signature is not None and self._last_signature[index] == signature:
+            signature = (
+                result.page,
+                result.total_pages,
+                result.total_count,
+                signature,
+            )
+            self.tabs.setTabText(index, f"{title}  {result.total_count}")
+            if (
+                subdir != force_subdir
+                and self._last_signature is not None
+                and self._last_signature[index] == signature
+            ):
                 continue
             selected_paths = self._selected_file_paths(table)
             if table is current_table:
@@ -309,12 +351,48 @@ class ReportsPage(QWidget):
                         QItemSelectionModel.Select | QItemSelectionModel.Rows,
                     )
             table.blockSignals(False)
-            self.tabs.setTabText(index, f"{title}  {len(rows)}")
             if self._last_signature is None:
                 self._last_signature = [None, None, None]
             self._last_signature[index] = signature
         if current_table_changed:
             self._select_from_table(current_table)
+        self._update_pager()
+
+    def _current_subdir(self) -> str:
+        return ("daily", "weekly", "monthly")[self.tabs.currentIndex()]
+
+    def _on_tab_changed(self, *_args) -> None:
+        self._clear_selection()
+        self._update_pager()
+
+    def _previous_page(self) -> None:
+        self._change_page(-1)
+
+    def _next_page(self) -> None:
+        self._change_page(1)
+
+    def _change_page(self, delta: int) -> None:
+        subdir = self._current_subdir()
+        self._report_pages[subdir] += delta
+        self._clear_selection()
+        self.refresh(force_subdir=subdir)
+
+    def _update_pager(self) -> None:
+        result = self._page_results.get(self._current_subdir())
+        if result is None:
+            self.page_status.setText("第 1 / 1 页 · 共 0 份")
+            self.btn_previous_page.setEnabled(False)
+            self.btn_next_page.setEnabled(False)
+            return
+        self.page_status.setText(
+            f"第 {result.page} / {result.total_pages} 页 · 共 {result.total_count} 份"
+        )
+        self.btn_previous_page.setEnabled(
+            result.total_count > 0 and result.page > 1
+        )
+        self.btn_next_page.setEnabled(
+            result.total_count > 0 and result.page < result.total_pages
+        )
 
     @staticmethod
     def _selected_file_paths(table: QTableWidget) -> set[str]:

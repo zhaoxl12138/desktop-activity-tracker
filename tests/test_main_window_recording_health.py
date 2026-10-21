@@ -21,6 +21,7 @@ def test_recording_health_ui_uses_real_sample_time_and_does_not_invent_one():
         sidebar_record_status=Label(),
         sidebar_sample_time=Label(),
         _recording_health=None,
+        _update_current_status_hint=lambda: None,
     )
     window._update_recording_health_ui = lambda: (
         MainWindow._update_recording_health_ui(window)
@@ -35,7 +36,7 @@ def test_recording_health_ui_uses_real_sample_time_and_does_not_invent_one():
     MainWindow._on_recording_health(window, stopped)
 
     assert window.sidebar_sample_time.text.endswith("09:15:30")
-    assert "stopped" in window.sidebar_record_status.text.lower()
+    assert window.sidebar_record_status.text == "待恢复"
 
     MainWindow._update_recording_health_ui(window)
     assert window.sidebar_sample_time.text.endswith("09:15:30")
@@ -46,6 +47,7 @@ def test_recording_health_ui_exposes_delay_and_error_without_sample_time():
         sidebar_record_status=Label(),
         sidebar_sample_time=Label(),
         _recording_health=None,
+        _update_current_status_hint=lambda: None,
     )
     window._update_recording_health_ui = lambda: (
         MainWindow._update_recording_health_ui(window)
@@ -59,6 +61,6 @@ def test_recording_health_ui_exposes_delay_and_error_without_sample_time():
 
     MainWindow._on_recording_health(window, delayed)
 
-    assert "delayed" in window.sidebar_record_status.text.lower()
+    assert window.sidebar_record_status.text == "待恢复"
     assert window.sidebar_sample_time.text.endswith("--")
-    assert "foreground unavailable" in window.sidebar_record_status.text
+    assert "foreground unavailable" not in window.sidebar_record_status.text

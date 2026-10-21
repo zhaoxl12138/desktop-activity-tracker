@@ -11,6 +11,7 @@ from ..runtime import ensure_report_subdirs, load_config, resolve_config_path
 from .bootstrap_runtime_service import (
     load_bootstrap_state,
     prepare_runtime_config,
+    resolve_runtime_paths,
     refresh_custom_rules,
     shutdown_runtime_state,
 )
@@ -91,6 +92,7 @@ def launch_gui() -> None:
 
     config_path = resolve_config_path()
     config = load_config(config_path)
+    paths = resolve_runtime_paths(config)
     config, db_path = prepare_runtime_config(config)
     log_path = configure_app_logging(db_path)
     diagnostics = start_runtime_diagnostics(db_path)
@@ -109,7 +111,7 @@ def launch_gui() -> None:
     from ..gui.worker import RecordingWorker
 
     # Resolve reports_dir from the persistent data directory (alongside DB)
-    reports_dir = os.path.join(os.path.dirname(db_path), "reports")
+    reports_dir = str(paths.reports_dir)
     ensure_report_subdirs(reports_dir)
 
     app = QApplication(sys.argv)
@@ -132,7 +134,7 @@ def launch_gui() -> None:
         wizard.exec()
         refresh_custom_rules(config, db_path)
 
-    worker = RecordingWorker(config_path, db_path, config)
+    worker = RecordingWorker(config_path, db_path, config, paths=paths)
     worker.start()
 
     tray = TrayManager(app, db_path, config, reports_dir)

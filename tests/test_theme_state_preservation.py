@@ -9,7 +9,7 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication
 
 from daylens import database
-from daylens.gui.main_window import MainWindow
+from daylens.gui.main_window import MainWindow, NAV_ITEMS
 
 
 class Worker(QObject):
@@ -85,7 +85,8 @@ def test_theme_switch_preserves_pages_navigation_and_unsaved_rule_state(
         worker,
     )
     window.show()
-    window.nav_list.setCurrentRow(5)
+    rules_row = next(index for index, item in enumerate(NAV_ITEMS) if item[1] == "rules")
+    window.nav_list.setCurrentRow(rules_row)
     app.processEvents()
     rules_page = window.pages["rules"]
     original_pages = dict(window.pages)
@@ -97,7 +98,7 @@ def test_theme_switch_preserves_pages_navigation_and_unsaved_rule_state(
 
     assert window.current_theme == "light"
     assert window._current_nav_key == "rules"
-    assert window.nav_list.currentRow() == 5
+    assert window.nav_list.currentRow() == rules_row
     assert all(window.pages[key] is page for key, page in original_pages.items())
     assert window.pages["rules"].edit_name.text() == "Unsaved theme state"
     assert window.pages["rules"]._dirty is True

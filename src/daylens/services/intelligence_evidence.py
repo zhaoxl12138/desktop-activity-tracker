@@ -5,11 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from functools import wraps
 from datetime import datetime
 from pathlib import Path
 
 from .intelligence_client import LEGAL_CATEGORIES
 from .intelligence_state import atomic_json
+from .classification_state_service import state_operation, state_transaction, read_state, write_state
 
 
 _BROWSER_SUFFIX = re.compile(
@@ -58,21 +60,26 @@ def _pattern_id(process: str, tokens: frozenset[str]) -> str:
 
 def load_patterns(directory) -> list[dict]:
     try:
-        data = json.loads((Path(directory) / "title_patterns.json").read_text(encoding="utf-8"))
+        data = read_state(directory, 'title_patterns.json', {})
         rows = data.get("patterns") if isinstance(data, dict) else None
         if not isinstance(rows, list):
             return []
-        return [row for row in rows if isinstance(row, dict) and row.get("category") in LEGAL_CATEGORIES]
+        from .intelligence_state import _valid_custom
+        return [row for row in rows if isinstance(row, dict) and
+                (row.get("category") in LEGAL_CATEGORIES or _valid_custom(row))]
     except (OSError, ValueError, TypeError):
         return []
 
 
 def save_patterns(directory, patterns: list[dict]) -> None:
-    atomic_json(Path(directory) / "title_patterns.json", {"version": 1, "patterns": patterns})
+    write_state(directory, 'title_patterns.json', {"version": 1, "patterns": patterns})
 
 
-def save_pattern(directory, process, title, category) -> dict:
-    if category not in LEGAL_CATEGORIES or category in {"browser_general", "other"}:
+@state_operation
+def save_pattern(directory, process, title, category, *, categories=None) -> dict:
+    from ..category_registry import category_definition
+    definition = category_definition(category, categories)
+    if definition is None or not definition.manual_allowed or category in {"browser_general", "other"}:
         raise ValueError("不支持的分类")
     app = str(process or "").strip().casefold()
     example = redact_title(title)
@@ -93,13 +100,16 @@ def save_pattern(directory, process, title, category) -> dict:
         "last_used_at": now,
         "hit_count": 0,
     }
+    if category not in LEGAL_CATEGORIES:
+        row.update(custom_category=True, timing_policy_id=definition.timing_policy)
     patterns = [item for item in patterns if item.get("id") != identity]
     patterns.append(row)
     save_patterns(directory, patterns[-100:])
     return row
 
 
-def set_pattern_enabled(directory, pattern_id: str, enabled: bool) -> bool:
+@state_operation
+def set_pattern_enabled(directory, pattern_id: str, enabled: bool, *, include_exact=True) -> bool:
     patterns = load_patterns(directory)
     changed = False
     for row in patterns:
@@ -108,12 +118,29 @@ def set_pattern_enabled(directory, pattern_id: str, enabled: bool) -> bool:
             changed = True
     if changed:
         save_patterns(directory, patterns)
+        if include_exact:
+            _update_linked_decisions(directory, pattern_id, enabled=bool(enabled))
     return changed
 
 
-def update_pattern_category(directory, pattern_id: str, category: str) -> bool:
+def _update_linked_decisions(directory, pattern_id, **fields):
+    from .intelligence_state import load_overrides
+    overrides = load_overrides(directory)
+    changed = False
+    for decision in overrides.values():
+        if decision.get('pattern_id') == pattern_id:
+            decision.update(fields)
+            changed = True
+    if changed:
+        write_state(directory, 'manual_decisions.json', overrides)
+
+
+@state_operation
+def update_pattern_category(directory, pattern_id: str, category: str, *, categories=None) -> bool:
     """Keep pattern identity and matching exact manual decisions consistent."""
-    if category not in LEGAL_CATEGORIES:
+    from ..category_registry import category_definition
+    definition = category_definition(category,categories)
+    if definition is None or not definition.manual_allowed:
         raise ValueError('不支持的分类')
     patterns = load_patterns(directory)
     row = next((item for item in patterns if item.get('id') == pattern_id), None)
@@ -123,24 +150,29 @@ def update_pattern_category(directory, pattern_id: str, category: str) -> bool:
         return True
     from .intelligence_state import load_overrides, title_context, DEFAULT_SETTINGS
     overrides = load_overrides(directory)
-    context = title_context(row.get('app'), row.get('example'), dict(DEFAULT_SETTINGS), 'manual-v1')
     for identity, decision in overrides.items():
-        if decision.get('pattern_id') == pattern_id or (context and identity == context['id']):
+        if decision.get('pattern_id') == pattern_id:
             decision['category'] = category
+            if category not in LEGAL_CATEGORIES:
+                decision.update(custom_category=True, timing_policy_id=definition.timing_policy)
     # Write exact decisions first: these take precedence in the classifier.
     if overrides:
-        atomic_json(Path(directory) / 'manual_decisions.json', overrides)
+        write_state(directory, 'manual_decisions.json', overrides)
     row['category'] = category
+    if category not in LEGAL_CATEGORIES:
+        row.update(custom_category=True, timing_policy_id=definition.timing_policy)
     save_patterns(directory, patterns)
     return True
 
 
+@state_operation
 def delete_pattern(directory, pattern_id: str) -> bool:
     patterns = load_patterns(directory)
     kept = [row for row in patterns if row.get("id") != pattern_id]
     if len(kept) == len(patterns):
         return False
     save_patterns(directory, kept)
+    _update_linked_decisions(directory, pattern_id, enabled=False)
     return True
 
 
@@ -179,6 +211,18 @@ def match_pattern(patterns: list[dict], process, title, *, threshold: float = 0.
     }
 
 
+def _queue_operation(function):
+    @wraps(function)
+    def wrapped(self, *args, **kwargs):
+        with state_transaction(self.path.parent):
+            self._items = self._load()
+            if function.__name__ == 'resolve':
+                from .classification_decisions import decision_command
+                return decision_command(lambda directory: function(self,*args,**kwargs))(self.path.parent)
+            return function(self, *args, **kwargs)
+    return wrapped
+
+
 class ReviewQueue:
     """Bounded local queue of uncertain AI classifications."""
 
@@ -189,23 +233,27 @@ class ReviewQueue:
 
     def _load(self) -> dict[str, dict]:
         try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
+            data = read_state(self.path.parent, self.path.name, {})
+            self._resolved = dict(data.get('resolved', {})) if isinstance(data, dict) else {}
             rows = data.get("items") if isinstance(data, dict) else None
             if not isinstance(rows, list):
                 return {}
             return {row["id"]: row for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str)}
         except (OSError, ValueError, TypeError):
+            self._resolved = {}
             return {}
 
     def _save(self) -> None:
-        atomic_json(self.path, {"version": 1, "items": self.items()})
+        resolved = dict(sorted(self._resolved.items(), key=lambda item:str(item[1]))[-1000:])
+        write_state(self.path.parent, self.path.name, {"version": 1, "items": self.items(), 'resolved':resolved})
 
     def items(self) -> list[dict]:
         return sorted(self._items.values(), key=lambda row: str(row.get("last_seen", "")), reverse=True)
 
+    @_queue_operation
     def upsert(self, context: dict) -> None:
         identity = str(context.get("id") or "")
-        if not identity:
+        if not identity or identity in self._resolved:
             return
         now = datetime.now().isoformat(timespec="microseconds")
         old = self._items.get(identity, {})
@@ -227,19 +275,22 @@ class ReviewQueue:
         self._items = {row["id"]: row for row in ordered}
         self._save()
 
+    @_queue_operation
     def ignore(self, identity: str) -> bool:
         removed = self._items.pop(str(identity), None) is not None
+        self._resolved[str(identity)] = datetime.now().isoformat(timespec='microseconds')
         if removed:
             self._save()
         return removed
 
-    def resolve(self, identity: str, category: str) -> dict:
+    @_queue_operation
+    def resolve(self, identity: str, category: str, *, scope='similar', categories=None) -> dict:
         row = self._items.get(str(identity))
         if row is None:
             raise KeyError(identity)
         from .intelligence_state import save_override, load_overrides, title_context, DEFAULT_SETTINGS
         # Confirmation always saves an exact decision. Similarity is optional.
-        save_override(self.path.parent, row['app'], row['title'], category)
+        save_override(self.path.parent, row['app'], row['title'], category, scope=scope, categories=categories)
         if row.get('manual_id'):
             overrides = load_overrides(self.path.parent)
             context = title_context(row['app'], row['title'], dict(DEFAULT_SETTINGS), 'manual-v1')
@@ -248,7 +299,7 @@ class ReviewQueue:
             # The redacted representation must not become a shared exact key.
             if context['id'] != row['manual_id']:
                 overrides.pop(context['id'], None)
-            atomic_json(self.path.parent / 'manual_decisions.json', overrides)
+            write_state(self.path.parent, 'manual_decisions.json', overrides)
         pattern = next((item for item in load_patterns(self.path.parent)
                         if item.get('app') == row['app'] and item.get('example') == row['title']),
                        {'category': category, 'source': '手动'})

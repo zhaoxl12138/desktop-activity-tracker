@@ -10,15 +10,9 @@ sys.path.insert(0, str(SRC))
 from daylens.gui.pages.today_overview import TodayOverviewPage  # noqa: E402
 
 
-def test_top_app_icon_prefers_desktop_shortcut_icon(monkeypatch):
-    shortcut_icon = r"D:\OfficeSoftware\DayLens\release\DayLens.exe"
+def test_top_app_icon_prefers_builtin_png_without_com_shortcut_scan(monkeypatch):
     cached_png = r"D:\OfficeSoftware\DayLens\assets\icons\daylens.exe.png"
 
-    monkeypatch.setattr(
-        TodayOverviewPage,
-        "_desktop_shortcut_icon_path",
-        staticmethod(lambda process_name: shortcut_icon if process_name == "DayLens.exe" else None),
-    )
     monkeypatch.setattr(
         TodayOverviewPage,
         "_icon_png_path",
@@ -27,14 +21,14 @@ def test_top_app_icon_prefers_desktop_shortcut_icon(monkeypatch):
 
     page = TodayOverviewPage.__new__(TodayOverviewPage)
 
-    assert page._resolve_icon_source("DayLens.exe") == shortcut_icon
+    assert page._resolve_icon_source("DayLens.exe") == cached_png
 
 
-def test_desktop_shortcut_icon_location_strips_resource_index():
-    assert (
-        TodayOverviewPage._parse_icon_location(r"D:\OfficeSoftware\DayLens\release\DayLens.exe,0")
-        == r"D:\OfficeSoftware\DayLens\release\DayLens.exe"
+def test_today_overview_does_not_call_windows_com_for_top_app_icons():
+    source = (SRC / "daylens" / "gui" / "pages" / "today_overview.py").read_text(
+        encoding="utf-8"
     )
+    assert "win32com.client" not in source
 
 
 def test_top_app_uses_resolved_display_icon_process_for_codex():

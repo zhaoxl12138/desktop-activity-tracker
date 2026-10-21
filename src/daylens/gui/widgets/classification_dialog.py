@@ -3,14 +3,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox, QLabel, QVBoxLayout
 from .. import style
 
-CATEGORY_CHOICES = (
-    ('技术学习 / 开发', 'coding'), ('阅读学习', 'reading'),
-    ('办公 / 求职', 'office'), ('AI工具', 'ai_tools'),
-    ('设计创作', 'creative'), ('社交通讯', 'social'),
-    ('系统工具', 'tools'), ('游戏娱乐', 'gaming'),
-    ('投资理财', 'finance'),
-    ('影音娱乐', 'video'), ('浏览器', 'browser_general'), ('其他', 'other'),
-)
+from ...category_registry import category_choices
+CATEGORY_CHOICES = category_choices()
 
 
 class ChoiceDialog(QDialog):
@@ -58,12 +52,18 @@ class ChoiceDialog(QDialog):
 
 
 class ClassificationDialog(ChoiceDialog):
-    def __init__(self, *, app_name, title, current_category, parent=None):
-        super().__init__(parent, heading='纠正分类', description=title, choices=CATEGORY_CHOICES)
+    def __init__(self, *, app_name, title, current_category, parent=None, categories=None):
+        super().__init__(parent, heading='纠正分类', description=title, choices=category_choices(categories))
         self.app_label = self.add_label(f'应用：{app_name}')
         self.root.insertWidget(0, self.app_label)
         index = self.category_combo.findData(current_category)
         self.category_combo.setCurrentIndex(max(0, index))
+        self.add_label('作用范围')
+        self.scope_combo = QComboBox()
+        self.scope_combo.addItem('当前标题及同应用的相似标题', 'similar')
+        self.scope_combo.addItem('仅当前完整标题', 'exact')
+        self.root.addWidget(self.scope_combo)
+        self.add_label('原分类：' + dict((key,name) for name,key in category_choices(categories)).get(current_category, current_category))
         self.add_label('保存后对后续记录生效')
         self.media_hint = self.add_label('影音分类可能影响后续被动播放计时')
         self.category_combo.currentIndexChanged.connect(self._refresh_hint)
@@ -73,3 +73,6 @@ class ClassificationDialog(ChoiceDialog):
 
     def _refresh_hint(self):
         self.media_hint.setVisible(self.selected_category() == 'video')
+
+    def selected_scope(self):
+        return self.scope_combo.currentData()

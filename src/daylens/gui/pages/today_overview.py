@@ -11,10 +11,12 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QFileIconProvider,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QVBoxLayout,
     QWidget,
+    QSizePolicy,
 )
 
 from ... import get_app_root, timeline
@@ -58,47 +60,57 @@ class TodayOverviewPage(QWidget):
         self._icon_cache: dict[str, QIcon | None] = {}
         self._is_active = False
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(18, 18, 18, 18)
-        root.setSpacing(14)
-
-        columns = QHBoxLayout()
-        columns.setSpacing(14)
-        root.addLayout(columns, 1)
+        self._card_grid = QGridLayout(self)
+        self._card_grid.setContentsMargins(18, 18, 18, 18)
+        self._card_grid.setHorizontalSpacing(14)
+        self._card_grid.setVerticalSpacing(14)
+        self._card_grid.setAlignment(Qt.AlignTop)
+        self.layout_mode = ""
 
         self.distribution_card = self._build_distribution_card()
         self.work_analysis_card = self._build_work_analysis_card()
         self.time_stats_card = None
         self.time_stats_ratio_ring = None
 
-        left_panel = QWidget()
-        left_panel.setStyleSheet("background: transparent;")
-        left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(14)
-        left_layout.addWidget(self.distribution_card)
-        left_layout.addWidget(self.work_analysis_card, 1)
-        columns.addWidget(left_panel, 7)
-
-        # Right panel: trend chart + TOP5 in a single vertical layout
-        right_panel = QWidget()
-        right_panel.setStyleSheet("background: transparent;")
-        right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(14)
         self.insight_card = None
         self.rhythm_card = RhythmComparisonCard()
         self.trend_card = self.rhythm_card
         self.classification_notice = self.trend_card.classification_notice
         self.top_app_card = TopAppListWidget()
         self.entertainment_history_card = EntertainmentHistoryCard()
-        right_layout.addWidget(self.trend_card, 2)
-        right_layout.addWidget(self.entertainment_history_card, 1)
-        right_layout.addWidget(self.top_app_card, 1)
-        columns.addWidget(right_panel, 4)
+        self.set_content_width(1200)
 
         self.insight_grid_widget = None
         self.insight_empty_label = None
+
+    def set_content_width(self, width: int) -> None:
+        mode = "wide" if width >= 1150 else "compact" if width >= 850 else "single"
+        if mode == self.layout_mode:
+            return
+        self.layout_mode = mode
+        cards = (
+            self.distribution_card,
+            self.rhythm_card,
+            self.entertainment_history_card,
+            self.work_analysis_card,
+            self.top_app_card,
+        )
+        for card in cards:
+            self._card_grid.removeWidget(card)
+        if mode == "single":
+            for row, card in enumerate(cards):
+                self._card_grid.addWidget(card, row, 0)
+            self._card_grid.setColumnStretch(0, 1)
+            self._card_grid.setColumnStretch(1, 0)
+        else:
+            self._card_grid.addWidget(self.distribution_card, 0, 0)
+            self._card_grid.addWidget(self.work_analysis_card, 1, 0, 2, 1, Qt.AlignTop)
+            self._card_grid.addWidget(self.rhythm_card, 0, 1)
+            self._card_grid.addWidget(self.entertainment_history_card, 1, 1)
+            self._card_grid.addWidget(self.top_app_card, 2, 1)
+            self._card_grid.setColumnStretch(0, 3 if mode == "wide" else 11)
+            self._card_grid.setColumnStretch(1, 2 if mode == "wide" else 9)
+        self.updateGeometry()
 
     def activate(self, force: bool = False) -> None:
         self._is_active = True
@@ -168,7 +180,8 @@ class TodayOverviewPage(QWidget):
         row.addWidget(self.legend_widget, 1)
 
         layout.addLayout(row, 1)
-
+        from ...time_model import TIME_DEFINITION
+        card.setToolTip(TIME_DEFINITION)
         # Status bar: engaged + passive + idle + trust
         status_row = QHBoxLayout()
         status_row.setSpacing(6)
@@ -313,6 +326,7 @@ class TodayOverviewPage(QWidget):
         card = QFrame()
         card.setObjectName("dashboardCard")
         card.setStyleSheet(ui_style.get_dashboard_card_style())
+        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
         layout = QVBoxLayout(card)
         layout.setContentsMargins(14, 10, 14, 8)
@@ -332,7 +346,6 @@ class TodayOverviewPage(QWidget):
         self.session_top3_widget = WorkEpisodeListWidget()
         self.work_episode_widget = self.session_top3_widget
         layout.addWidget(self.session_top3_widget, 0, Qt.AlignTop)
-        layout.addStretch(1)
         return card
 
     def apply_snapshot(self, snapshot: dict[str, object]) -> None:
@@ -387,33 +400,18 @@ class TodayOverviewPage(QWidget):
         }
         self.last_shell_primary_seconds = primary_seconds
         self.last_shell_primary_label = primary_label
-        if uses_engaged:
-            attention_total = engaged_seconds + passive_seconds + idle_seconds
-            donut_segments = [
-                ("参与", engaged_seconds, ui_style.COLORS["success_green"]),
-                ("被动媒体", passive_seconds, ui_style.COLORS["video_orange"]),
-                ("挂机/空闲", idle_seconds, ui_style.COLORS["idle_gray"]),
-            ]
-            self.donut_widget.set_data(
-                attention_total,
-                donut_segments,
-                primary_seconds=primary_seconds,
-                primary_label=primary_label,
-            )
-        else:
-            self.donut_widget.set_data(
-                effective,
-                distribution,
-                primary_seconds=primary_seconds,
-                primary_label=primary_label,
-            )
+        hidden_seconds = max(0, effective-sum(item[1] for item in distribution))
+        donut_segments = list(distribution)
+        if hidden_seconds:
+            donut_segments.append(('未列出分类',hidden_seconds,ui_style.COLORS['idle_gray']))
+        self.donut_widget.set_data(effective,donut_segments,primary_seconds=effective,primary_label='有效活动')
         self.legend_widget.set_items(distribution, effective)
 
         status_label = "参与" if uses_engaged else "有效"
-        self.active_status_label.setText(f"{status_label} {active_ratio}%")
+        self.active_status_label.setText(f"主动参与 {_compact_duration(engaged_seconds)}" if uses_engaged else f"有效活动 {_compact_duration(effective)}")
         self.active_status_label.setToolTip(_compact_duration(primary_seconds))
         if uses_engaged:
-            self.passive_status_label.setText(f"被动媒体 {passive_ratio}%")
+            self.passive_status_label.setText(f"被动观看 {_compact_duration(passive_seconds)}")
             self.passive_status_label.setToolTip(
                 _compact_duration(passive_seconds)
             )
@@ -483,7 +481,7 @@ class TodayOverviewPage(QWidget):
             "browser_general": ui_style.COLORS["browser_amber"],
             "tools": ui_style.COLORS["tools_cyan"],
             "other": ui_style.get_category_color("other"),
-        }.get(category_key, ui_style.get_category_color("other"))
+        }.get(category_key, ui_style.get_category_color(category_key))
 
     @staticmethod
     def _icon_process_for_display(process_name: str, display_name: str) -> str:
@@ -505,10 +503,6 @@ class TodayOverviewPage(QWidget):
         return icon
 
     def _resolve_icon_source(self, process_name: str) -> str | None:
-        shortcut_icon = self._desktop_shortcut_icon_path(process_name)
-        if shortcut_icon:
-            return shortcut_icon
-
         png_path = self._icon_png_path(process_name.lower())
         if png_path:
             return png_path
@@ -525,55 +519,6 @@ class TodayOverviewPage(QWidget):
     def _icon_png_path(process_name_lower: str) -> str | None:
         p = os.path.join(get_app_root(), "assets", "icons", f"{process_name_lower}.png")
         return p if os.path.isfile(p) else None
-
-    @staticmethod
-    def _desktop_shortcut_icon_path(process_name: str) -> str | None:
-        if os.name != "nt":
-            return None
-        try:
-            import win32com.client
-        except Exception:
-            return None
-
-        wanted = process_name.lower()
-        desktop_dirs = []
-        for env_name in ("USERPROFILE", "PUBLIC"):
-            base = os.environ.get(env_name)
-            if not base:
-                continue
-            desktop = os.path.join(base, "Desktop")
-            if os.path.isdir(desktop):
-                desktop_dirs.append(desktop)
-
-        shell = win32com.client.Dispatch("WScript.Shell")
-        for desktop in desktop_dirs:
-            for name in os.listdir(desktop):
-                if not name.lower().endswith(".lnk"):
-                    continue
-                shortcut_path = os.path.join(desktop, name)
-                try:
-                    shortcut = shell.CreateShortcut(shortcut_path)
-                    target_path = shortcut.TargetPath or ""
-                    if os.path.basename(target_path).lower() != wanted:
-                        continue
-                    icon_path = TodayOverviewPage._parse_icon_location(shortcut.IconLocation or "")
-                    if icon_path and os.path.exists(icon_path):
-                        return icon_path
-                    if target_path and os.path.exists(target_path):
-                        return target_path
-                except Exception:
-                    continue
-        return None
-
-    @staticmethod
-    def _parse_icon_location(icon_location: str) -> str:
-        icon_location = (icon_location or "").strip().strip('"')
-        if not icon_location:
-            return ""
-        if "," not in icon_location:
-            return icon_location
-        path_part, index_part = icon_location.rsplit(",", 1)
-        return path_part.strip().strip('"') if index_part.strip().lstrip("-").isdigit() else icon_location
 
     def _find_exe_path(self, process_name: str) -> str | None:
         for proc in psutil.process_iter(attrs=["name", "exe"]):

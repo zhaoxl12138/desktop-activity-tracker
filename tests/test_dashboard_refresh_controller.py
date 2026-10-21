@@ -60,12 +60,12 @@ def test_refresh_controller_is_single_flight_and_discards_stale_results():
     controller.request_refresh()
     release_first.set()
 
-    _wait_until(app, lambda: len(received) == 1)
+    _wait_until(app, lambda: len(received) == 2)
 
     assert calls == 2
     assert max_running == 1
-    assert received[0].payload == {"call": 2}
-    assert received[0].generation == controller.latest_generation
+    assert [item.payload for item in received] == [{"call":1}, {"call":2}]
+    assert received[-1].generation == controller.latest_generation
     assert controller.shutdown(timeout_ms=1_000) is True
 
 
@@ -121,4 +121,25 @@ def test_refresh_controller_can_resume_when_exit_wait_times_out():
 
     _wait_until(app, lambda: len(received) == 1)
     assert received[0].payload == {"call": 2}
+    assert controller.shutdown(timeout_ms=1_000) is True
+
+
+def test_refresh_controller_does_not_publish_unchanged_payload_twice():
+    app = _app()
+    calls = 0
+
+    def load_snapshot():
+        nonlocal calls
+        calls += 1
+        return {"stable": [1, 2, 3]}
+
+    controller = DashboardRefreshController(load_snapshot, interval_ms=60_000)
+    received = []
+    controller.snapshot_ready.connect(received.append)
+    controller.set_foreground(True)
+    _wait_until(app, lambda: len(received) == 1)
+    controller.request_refresh()
+    _wait_until(app, lambda: calls == 2 and controller._worker is None)
+
+    assert len(received) == 1
     assert controller.shutdown(timeout_ms=1_000) is True

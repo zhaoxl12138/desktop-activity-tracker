@@ -39,6 +39,17 @@ def ensure_readable_schema(
         return
 
 
+def resolve_runtime_paths(config):
+    """Validate state locations before opening or creating the configured DB."""
+    from pathlib import Path
+    from .. import get_app_root, get_data_dir
+    from ..app_paths import AppPaths
+    paths = AppPaths.from_database(database.get_db_path(config))
+    paths.check_state_locations([Path(get_data_dir())/'intelligence',
+                                Path(get_app_root())/'data/intelligence'])
+    return paths
+
+
 def prepare_runtime_config(config: dict) -> tuple[dict, str]:
     db_path = database.get_db_path(config)
     ensure_readable_schema(db_path, timeout_seconds=5.0)

@@ -138,7 +138,7 @@ def test_main_window_uses_one_shared_background_snapshot(tmp_path, monkeypatch):
 
     assert window.pages["today"].last_snapshot_totals["effective_seconds"] == 420
     assert window.capsule_values["total"].text() == "7分0秒"
-    assert window.capsule_values["work"].text() == "4分0秒"
+    assert set(window.capsule_values) == {"total"}
     assert "7分" in window.sidebar_record_value.text()
     assert window.sidebar_record_streak.text() == "连续记录：第81天"
 

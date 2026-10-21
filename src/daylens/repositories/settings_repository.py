@@ -48,6 +48,7 @@ def load_settings(db_path: str) -> dict[str, str] | None:
 
 def save_settings(db_path: str, settings_dict: dict) -> None:
     conn = sqlite3.connect(db_path)
+    conn.execute("DELETE FROM settings WHERE key = ?", ("show_home_poetry",))
     for key in SETTING_KEYS:
         if key in settings_dict:
             value = settings_dict[key]
@@ -60,6 +61,7 @@ def save_settings(db_path: str, settings_dict: dict) -> None:
 
 
 def merge_db_settings(config: dict, db_path: str) -> None:
+    config.pop("show_home_poetry", None)
     db_settings = load_settings(db_path)
     if db_settings is None:
         seed = {key: config.get(key, "") for key in SETTING_KEYS}

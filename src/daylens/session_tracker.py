@@ -144,10 +144,8 @@ _ACTIVITY_DOMAINS: dict[str, set[str]] = {
     "social":       {"social"},
 }
 
-_AI_APPLIED_CATEGORIES = {
-    "coding", "reading", "office", "ai_tools", "creative",
-    "social", "tools", "gaming", "video", "finance", "browser_general", "other",
-}
+from .category_registry import AI_CATEGORY_IDS
+_AI_APPLIED_CATEGORIES = AI_CATEGORY_IDS
 
 def _get_domain(category_key: str) -> str:
     if not category_key:
@@ -731,7 +729,7 @@ class SessionTracker:
                 if ((explicitly_applied or legacy_high)
                         and (base_category in ('browser_general', 'other')
                              or decision_source in ('手动', '人工模式'))
-                        and proposed in _AI_APPLIED_CATEGORIES
+                        and (proposed in _AI_APPLIED_CATEGORIES or decision_source in ('手动', '人工模式'))
                         and proposed in getattr(self.classifier, 'categories', {})):
                     category = self.classifier.categories[proposed]
                     cat_key = proposed
@@ -751,25 +749,13 @@ class SessionTracker:
                 cat_key = self._current.category_key
                 cat_name = self._current.category_name
                 active_rule = self._current.active_rule
-        if cat_key != base_category:
-            ai_source = (ai_decision or {}).get('source', 'AI')
-        elif (ai_decision or {}).get('status') == 'pending':
-            ai_source = 'AI待识别'
-        elif ai_decision:
-            ai_source = 'AI待确认'
-        else:
-            ai_source = '规则'
-        self._ai_display = {
-            'source': ai_source,
-            'base_category': base_category,
-            'final_category': cat_key,
-            'reason': (ai_decision or {}).get('reason', ''),
-            'suggested_category': (ai_decision or {}).get(
-                'suggested_category', (ai_decision or {}).get('category', '')),
-            'certainty': (ai_decision or {}).get('certainty', ''),
-            'evidence': list((ai_decision or {}).get('evidence') or []),
-            'pattern_id': (ai_decision or {}).get('pattern_id', ''),
-        }
+        from .classification_result import classification_result
+        self._ai_display = classification_result(
+            base_category, cat_key, active_rule, ai_decision,
+            revision=getattr(intelligence, 'applied_revision', 0), captured_at=now,
+            application_type='browser' if process_name.casefold() in
+                getattr(self.classifier, 'browser_processes', set()) else 'desktop',
+        )
 
         norm_title = normalize_window_title(process_name, raw_title)
         new_domain = _get_domain(cat_key)

@@ -61,12 +61,14 @@ class SettingsPage(QWidget):
     restart_requested = Signal()
     config_saved = Signal(dict)
 
-    def __init__(self, config_path, db_path, reports_dir, worker=None, background_tasks=None):
+    def __init__(self, config_path, db_path, reports_dir, worker=None, background_tasks=None, *, paths=None):
         super().__init__()
         self.config_path = config_path
         self.db_path = db_path
         self.reports_dir = reports_dir
         self.worker = worker
+        from ...app_paths import AppPaths
+        self.paths = paths or getattr(worker,'paths',None) or AppPaths.from_database(db_path, reports_dir=reports_dir)
         self.background_tasks = background_tasks
         self._quality_inspect_key = "settings:quality-inspect"
         self._quality_repair_key = "settings:quality-repair"
@@ -255,7 +257,7 @@ class SettingsPage(QWidget):
 
         # ── Save ──
         from ..widgets.intelligence_settings import IntelligenceSettings
-        self.intelligence_settings = IntelligenceSettings(worker=worker)
+        self.intelligence_settings = IntelligenceSettings(worker=worker, directory=self.paths.intelligence_dir)
         self.intelligence_settings.setStyleSheet(build_group_style())
         layout.addWidget(self.intelligence_settings)
         layout.addStretch()

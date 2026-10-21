@@ -8,7 +8,7 @@ from pathlib import Path
 
 import yaml
 from PySide6.QtCore import QObject, Qt, Signal
-from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QVBoxLayout
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -17,6 +17,7 @@ sys.path.insert(0, str(SRC))
 from desktop_activity_tracker import database  # noqa: E402
 from desktop_activity_tracker.gui.main_window import MainWindow, NAV_ITEMS  # noqa: E402
 from desktop_activity_tracker.gui import style as ui_style  # noqa: E402
+from desktop_activity_tracker.gui.pages.today_overview import TodayOverviewPage  # noqa: E402
 
 
 class DummyWorker(QObject):
@@ -135,6 +136,26 @@ def _entertainment_history():
     }
 
 
+def test_distribution_has_no_remaining_category_entry_but_keeps_remainder(tmp_path):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    page = TodayOverviewPage(str(tmp_path / "usage.db"))
+    page.apply_snapshot(_dashboard_snapshot(
+        totals={"effective_seconds": 3600, "engaged_seconds": 3600,
+                "idle_seconds": 0, "passive_seconds": 0, "total_seconds": 3600},
+        distribution_sections=[{"category_key": "work", "label": "工作学习", "seconds": 1800}],
+        distribution_model={"hidden": [{"label": "浏览器", "seconds": 1800}]},
+    ))
+    app.processEvents()
+    assert not hasattr(page, "remaining_categories_button")
+    assert not any("查看其余分类" in button.text()
+                   for button in page.distribution_card.findChildren(QPushButton))
+    assert page.donut_widget._segments[-1][0] == "未列出分类"
+    assert page.donut_widget._segments[-1][1] == 1800
+    page.close()
+    page.deleteLater()
+
+
 def test_homepage_shell_matches_reference_structure():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -170,26 +191,22 @@ def test_homepage_shell_matches_reference_structure():
         )
         assert window.size().width() == expected_width
         assert window.size().height() == expected_height
-        assert window.minimumSize().width() == 1100
-        assert window.minimumSize().height() == 700
+        assert window.minimumSize().width() == 800
+        assert window.minimumSize().height() == 650
         assert window.maximumSize().width() > 1100
-        assert set(window.capsule_values) == {"total", "work", "ent", "social"}
-        assert window.capsule_labels["total"].text() == "参与时长"
-        assert window.capsule_labels["work"].text() == "工作学习"
-        assert window.capsule_labels["ent"].text() == "娱乐休闲"
-        assert window.capsule_icons["ent"].text() == "📺"
-        assert window.capsule_labels["social"].text() == "社交通讯"
+        assert set(window.capsule_values) == {"total"}
+        assert window.capsule_labels["total"].text() == "有效活动"
         assert all("活跃度" not in hint for _title, _key, hint in NAV_ITEMS)
         for item in window.summary_capsule_items:
             item_layout = item.layout()
             assert isinstance(item_layout, QVBoxLayout)
-            assert item_layout.alignment() & Qt.AlignHCenter
-            assert item.minimumWidth() >= 150
-        assert window._summary_capsule_grid.horizontalSpacing() >= 24
-        assert window._summary_capsule_grid.verticalSpacing() >= 10
+            assert item_layout.alignment() & Qt.AlignLeft
+            assert item.minimumWidth() >= 110
+        assert window._summary_capsule_grid.horizontalSpacing() == 0
+        assert window._summary_capsule_grid.verticalSpacing() == 0
         window.resize(1366, 768)
         app.processEvents()
-        assert window._top_bar_compact is True
+        assert window._top_bar_compact is False
         assert not hasattr(window, "bottom_bar")
         assert window.pages["today"].metric_cards == {}
         assert getattr(window.pages["today"], "time_stats_ratio_ring", None) is None
@@ -240,6 +257,10 @@ def test_homepage_shell_matches_reference_structure():
         app.processEvents()
         assert window.dashboard_refresh.timer.isActive() is False
         assert window.dashboard_refresh.shutdown(timeout_ms=1_000) is True
+        window.report_schedule_timer.stop()
+        window.daily_report_timer.stop()
+        window.maintenance_timer.stop()
+        assert window.background_tasks.shutdown(timeout_ms=5_000) is True
 
 
 def test_today_overview_applies_old_and_trusted_snapshots_safely():
@@ -281,9 +302,9 @@ def test_today_overview_applies_old_and_trusted_snapshots_safely():
 
         assert observed_update_states == [False]
         assert page.updatesEnabled() is True
-        assert page.active_status_label.text().startswith("有效 ")
+        assert page.active_status_label.text().startswith("有效活动 ")
         assert page.passive_status_label.text() == "被动媒体 --"
-        assert page.donut_widget._primary_label == "有效时长"
+        assert page.donut_widget._primary_label == "有效活动"
         assert page.last_shell_primary_label == "有效时长"
         legacy_time_card = page._build_time_stats_card()
         legacy_time_labels = {
@@ -294,7 +315,7 @@ def test_today_overview_applies_old_and_trusted_snapshots_safely():
         assert not any("活跃" in text for text in legacy_time_labels)
         legacy_time_card.deleteLater()
         window._update_top_bar()
-        assert window.capsule_labels["total"].text() == "有效时长"
+        assert window.capsule_labels["total"].text() == "有效活动"
         assert page.trust_badge.text() == "口径待稳定"
         assert page.trust_badge.isVisible() is True
         assert page.insight_card is None
@@ -338,21 +359,19 @@ def test_today_overview_applies_old_and_trusted_snapshots_safely():
         page.apply_snapshot(trusted)
         app.processEvents()
 
-        assert page.active_status_label.text() == "参与 60%"
-        assert page.passive_status_label.text() == "被动媒体 30%"
-        assert page.donut_widget._primary_seconds == 3_600
-        assert page.donut_widget._primary_label == "参与时长"
-        assert page.donut_widget._total_seconds == 6_000
+        assert page.active_status_label.text() == "主动参与 1h00m"
+        assert page.passive_status_label.text() == "被动观看 30m00s"
+        assert page.donut_widget._primary_seconds == 5_400
+        assert page.donut_widget._primary_label == "有效活动"
+        assert page.donut_widget._total_seconds == 5_400
         assert [segment[0] for segment in page.donut_widget._segments] == [
-            "参与",
-            "被动媒体",
-            "挂机/空闲",
+            "未列出分类",
         ]
         assert page.last_shell_primary_seconds == 3_600
         assert page.last_shell_primary_label == "参与时长"
         window._update_top_bar()
-        assert window.capsule_labels["total"].text() == "参与时长"
-        assert window.capsule_values["total"].text() == "1时"
+        assert window.capsule_labels["total"].text() == "有效活动"
+        assert window.capsule_values["total"].text() == "1时30分"
         page.trend_card.set_mode("30d")
         assert page.trend_card._status_label.text() == "数据积累中"
         assert page.trend_card._legend_text() == ""

@@ -10,8 +10,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from .intelligence_budget import IntelligenceBudget
-from .intelligence_client import DeepSeekProvider, LEGAL_CATEGORIES
+from .intelligence_client import DeepSeekProvider, LEGAL_CATEGORIES, RequestDeferred
 from .intelligence_credentials import read_key
+from .classification_state_service import ClassificationStateService, state_transaction
+from .intelligence_privacy import classification_payload
 from .intelligence_state import DEFAULT_SETTINGS, atomic_json, load_overrides, load_settings, title_context
 from .intelligence_evidence import (
     ReviewQueue, load_patterns, match_pattern, redact_title, save_patterns,
@@ -33,6 +35,8 @@ class IntelligenceScheduler:
         self.budget = IntelligenceBudget(self.directory / 'budget.json',
                                          self.settings['monthly_budget_micros'])
         self.provider = provider or DeepSeekProvider(self.budget, read_key)
+        if isinstance(self.provider, DeepSeekProvider):
+            self.provider.privacy_filter = self._outbound_boundary
         self.key_available = bool(getattr(self.provider, 'key_reader', lambda: True)())
         self.pending = OrderedDict()
         self.active = OrderedDict()
@@ -44,6 +48,9 @@ class IntelligenceScheduler:
         self.overrides = load_overrides(directory)
         self.patterns = load_patterns(directory)
         self._patterns_dirty = False
+        self._pattern_hits = {}
+        self.state = ClassificationStateService(directory)
+        self.applied_revision = self.state.revision
         self.reviews = ReviewQueue(directory)
         self.recent_by_app = {}
         self.thread = None
@@ -63,6 +70,15 @@ class IntelligenceScheduler:
             'apply': False,
         }
 
+    def _outbound_boundary(self, kind, payload):
+        settings = load_settings(self.directory)
+        if not settings['enabled'] or not settings['classification_enabled']:
+            raise RequestDeferred('智能分类已关闭')
+        safe = classification_payload(payload, settings)
+        if not safe:
+            raise RequestDeferred('没有允许发送的标题')
+        return safe
+
     @staticmethod
     def _manual_decision(value):
         category = str(value.get('category') or '')
@@ -70,10 +86,12 @@ class IntelligenceScheduler:
             'status': 'applied', 'source': value.get('source', '手动'),
             'category': category, 'suggested_category': category,
             'certainty': 'high', 'reason': value.get('reason', '用户指定分类'),
-            'evidence': ['manual_exact'], 'pattern_id': '', 'apply': True,
+            'evidence': ['manual_exact'], 'pattern_id': value.get('pattern_id',''), 'apply': True,
         }
 
     def _record_recent(self, process, title, active_seconds, confirmed_category=''):
+        if title_context(process, title, self.settings, 'privacy') is None:
+            return
         app = str(process or '').strip().casefold()
         safe_title = redact_title(title)
         if not app or not safe_title:
@@ -168,12 +186,11 @@ class IntelligenceScheduler:
 
     def reload(self):
         settings = load_settings(self.directory)
-        overrides = load_overrides(self.directory)
         key_available = bool(getattr(self.provider, 'key_reader', lambda: True)())
-        with self.lock:
+        with self.lock, state_transaction(self.directory):
             self.generation += 1
             self.settings = settings
-            self.overrides = overrides
+            self.overrides = load_overrides(self.directory)
             self.patterns = load_patterns(self.directory)
             self.reviews = ReviewQueue(self.directory)
             self.key_available = key_available
@@ -181,6 +198,8 @@ class IntelligenceScheduler:
             self.pending.clear()
             self.active.clear()
             self.current_identity = None
+            self.recent_by_app.clear()
+            self.applied_revision = self.state.revision
         self.wakeup.set()
 
     def close(self):
@@ -197,15 +216,31 @@ class IntelligenceScheduler:
         with self.lock:
             if not self._patterns_dirty:
                 return
-            snapshot = [dict(row) for row in self.patterns]
+            hits = self._pattern_hits
+            self._pattern_hits = {}
             self._patterns_dirty = False
-        save_patterns(self.directory, snapshot)
+        try:
+            self.state.add_hits(hits)
+        except Exception:
+            with self.lock:
+                for identity, hit in hits.items():
+                    current = self._pattern_hits.setdefault(identity, {'count':0,'last_used_at':''})
+                    current['count'] += hit['count']
+                    current['last_used_at'] = max(current['last_used_at'], hit['last_used_at'])
+                self._patterns_dirty = True
+            raise
 
     def observe(self, process, title, base_category, rule_version, *, active_seconds=0):
         """Called on sampling thread. No disk/network operations here."""
         with self.lock:
             manual_context = title_context(process, title, dict(DEFAULT_SETTINGS), 'manual-v1')
-            if manual_context and manual_context['id'] in self.overrides:
+            if (manual_context and manual_context['id'] in self.overrides
+                    and self.overrides[manual_context['id']].get('enabled', True)):
+                hit = self._pattern_hits.setdefault('manual:'+manual_context['id'], {'count':0,'last_used_at':''})
+                hit['count'] += 1
+                hit['last_used_at'] = datetime.now().isoformat(timespec='seconds')
+                self._patterns_dirty = True
+                self.wakeup.set()
                 decision = self._manual_decision(self.overrides[manual_context['id']])
                 self._record_recent(process, title, active_seconds, decision['category'])
                 return decision
@@ -215,6 +250,9 @@ class IntelligenceScheduler:
                     if row.get('id') == pattern['pattern_id']:
                         row['hit_count'] = int(row.get('hit_count') or 0) + 1
                         row['last_used_at'] = datetime.now().isoformat(timespec='seconds')
+                        hit = self._pattern_hits.setdefault(row['id'], {'count':0,'last_used_at':''})
+                        hit['count'] += 1
+                        hit['last_used_at'] = row['last_used_at']
                         self._patterns_dirty = True
                         self.wakeup.set()
                         break
@@ -261,6 +299,9 @@ class IntelligenceScheduler:
 
     def process_pending(self, *, force=False):
         """Worker-side one-batch operation, also deterministically testable."""
+        if load_settings(self.directory) != self.settings:
+            self.reload()
+            return
         with self.lock:
             if (self.stop_event.is_set() or not self.settings['enabled']
                     or not self.settings['classification_enabled'] or not self.key_available or not self.pending):
@@ -272,10 +313,10 @@ class IntelligenceScheduler:
             self.attempted.update(c['id'] for c in batch)
             generation = self.generation
         try:
-            result = self.provider.classify([
-                {key: value for key, value in context.items() if key != 'manual_id'}
-                for context in batch
-            ])
+            outgoing = classification_payload(batch, load_settings(self.directory))
+            if not outgoing:
+                return
+            result = self.provider.classify(outgoing)
             if not isinstance(result, dict):
                 return
             with self.lock:

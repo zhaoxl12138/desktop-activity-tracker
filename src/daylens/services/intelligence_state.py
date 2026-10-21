@@ -7,13 +7,14 @@ import json
 import os
 import re
 import tempfile
+from datetime import datetime
 from pathlib import Path
+from .classification_state_service import state_operation, read_state, write_state
 
 
 DEFAULT_SETTINGS = {
     'enabled': False, 'classification_enabled': True, 'reports_enabled': False,
     'monthly_budget_micros': 4_000_000,
-    'excluded_apps': [], 'excluded_words': [],
 }
 
 
@@ -44,10 +45,6 @@ def load_settings(directory):
         value = data.get('monthly_budget_micros')
         if type(value) is int and 0 <= value <= 5_000_000:
             result['monthly_budget_micros'] = value
-        for key in ('excluded_apps', 'excluded_words'):
-            value = data.get(key)
-            if isinstance(value, list) and all(isinstance(x, str) for x in value):
-                result[key] = [x.strip() for x in value if x.strip()][:100]
         return result
     except (OSError, ValueError, TypeError, AttributeError):
         # A bad config never enables transmission.
@@ -60,10 +57,6 @@ def save_settings(directory, settings):
         raise ValueError('AI开关格式无效')
     if type(clean['monthly_budget_micros']) is not int or not 0 <= clean['monthly_budget_micros'] <= 5_000_000:
         raise ValueError('月预算应在0至5元之间')
-    for key in ('excluded_apps', 'excluded_words'):
-        if (not isinstance(clean[key], list) or len(clean[key]) > 100
-                or any(not isinstance(x, str) or len(x) > 200 for x in clean[key])):
-            raise ValueError('排除列表格式无效')
     atomic_json(Path(directory) / 'settings.json', clean)
 
 
@@ -73,11 +66,6 @@ def title_context(process, title, settings, rule_version):
         return None
     identity_title = re.sub(r'\s+', ' ', title).strip()
     identity_title = re.sub(r'\s*[-—|]\s*(?:Google Chrome|Microsoft Edge|Mozilla Firefox)$', '', identity_title, flags=re.I)
-    if process in {x.casefold() for x in settings['excluded_apps']}:
-        return None
-    folded = title.casefold()
-    if any(x.casefold() in folded for x in settings['excluded_words']):
-        return None
     # Never read URLs; titles that embed one have it removed before transmission.
     title = re.sub(r'https?://\S+|www\.\S+', '[网址]', title, flags=re.I)
     title = re.sub(r'[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}', '[邮箱]', title)
@@ -97,35 +85,56 @@ def title_context(process, title, settings, rule_version):
 
 def load_overrides(directory):
     try:
-        data = json.loads((Path(directory) / 'manual_decisions.json').read_text(encoding='utf-8'))
+        data = read_state(directory, 'manual_decisions.json', {})
         from .intelligence_client import LEGAL_CATEGORIES
         if not isinstance(data, dict):
             return {}
         return {key: value for key, value in data.items()
                 if isinstance(value, dict) and isinstance(value.get('category'), str)
-                and value['category'] in LEGAL_CATEGORIES}
+                and (value['category'] in LEGAL_CATEGORIES or _valid_custom(value))}
     except (OSError, ValueError, TypeError):
         return {}
 
 
-def save_override(directory, process, title, category):
+@state_operation
+def save_override(directory, process, title, category, *, scope='similar', categories=None):
+    from .classification_decisions import decision_command
+    return decision_command(_save_override)(directory, process, title, category, scope=scope, categories=categories)
+
+
+def _valid_custom(value):
+    from ..category_registry import TIMING_POLICIES
+    return value.get('custom_category') is True and value.get('timing_policy_id') in TIMING_POLICIES
+
+
+def _save_override(directory, process, title, category, *, scope, categories):
     from .intelligence_client import LEGAL_CATEGORIES
-    if category not in LEGAL_CATEGORIES:
+    from ..category_registry import category_definition
+    definition = category_definition(category, categories)
+    if definition is None or not definition.manual_allowed:
         raise ValueError('不支持的分类')
+    if scope not in ('exact', 'similar'):
+        raise ValueError('不支持的纠错范围')
     context = title_context(process, title, dict(DEFAULT_SETTINGS), 'manual-v1')
     if context is None:
         raise ValueError('该标题无法保存纠正')
     overrides = load_overrides(directory)
     overrides[context['id']] = {'category': category, 'certainty': 'high',
-                                'reason': '用户指定当前应用与标题', 'source': '手动'}
-    atomic_json(Path(directory) / 'manual_decisions.json', overrides)
+                                'reason': '用户指定当前应用与标题', 'source': '手动',
+                                'app':context['app'], 'title':context['title'], 'scope':scope,
+                                'created_at':datetime.now().isoformat(timespec='seconds'), 'enabled':True}
+    if category not in LEGAL_CATEGORIES:
+        overrides[context['id']].update(custom_category=True, timing_policy_id=definition.timing_policy)
+    write_state(directory, 'manual_decisions.json', overrides)
+    if scope == 'exact':
+        return
     # Exact identity remains for privacy-sensitive titles; the explainable,
     # same-application pattern lets a correction help closely related pages.
     from .intelligence_evidence import save_pattern
     try:
-        pattern = save_pattern(directory, process, title, category)
+        pattern = save_pattern(directory, process, title, category, categories=categories)
         overrides[context['id']]['pattern_id'] = pattern['id']
-        atomic_json(Path(directory) / 'manual_decisions.json', overrides)
+        write_state(directory, 'manual_decisions.json', overrides)
     except ValueError:
         # A sparse/private title can still be corrected exactly without
         # creating an unsafe broad similarity rule.

@@ -1,4 +1,5 @@
 from desktop_activity_tracker.audio_detector import AudioDetector
+from daylens.measurement import PlaybackState
 
 
 class _Meter:
@@ -69,6 +70,58 @@ def test_audio_query_error_is_conservative_and_keeps_video_playing(monkeypatch):
     )
 
     assert detector.is_playing(12345) is True
+
+
+def test_audio_query_error_exposes_unknown_evidence_without_changing_legacy_result(monkeypatch):
+    detector = AudioDetector(check_interval=0)
+
+    def fail_query():
+        raise RuntimeError("audio session unavailable")
+
+    monkeypatch.setattr(
+        "daylens.audio_detector.AudioUtilities.GetAllSessions",
+        fail_query,
+    )
+
+    evidence = detector.observe_playback(12345)
+    assert evidence.state == PlaybackState.UNKNOWN
+    assert evidence.source == "audio_query_error"
+    assert evidence.compatibility_playing is True
+    assert detector.is_playing(12345) is True
+
+
+def test_target_silence_is_paused_evidence(monkeypatch):
+    detector = AudioDetector(check_interval=0)
+    monkeypatch.setattr(
+        "daylens.audio_detector.AudioUtilities.GetAllSessions",
+        lambda: [_AudioSession(12345, 0.0)],
+    )
+
+    evidence = detector.observe_playback(12345)
+    assert evidence.state == PlaybackState.PAUSED
+    assert evidence.source == "target_silent"
+    assert evidence.compatibility_playing is False
+
+
+def test_unattributed_global_peak_is_playing_evidence(monkeypatch):
+    detector = AudioDetector(check_interval=0)
+    monkeypatch.setattr(
+        "daylens.audio_detector.AudioUtilities.GetAllSessions",
+        lambda: [_AudioSession(999, 0.25)],
+    )
+
+    evidence = detector.observe_playback(12345)
+    assert evidence.state == PlaybackState.PLAYING
+    assert evidence.source == "global_fallback_peak"
+    assert evidence.compatibility_playing is True
+
+
+def test_missing_pid_is_unknown_but_preserves_playing_compatibility():
+    detector = AudioDetector(check_interval=0)
+    evidence = detector.observe_playback(None)
+    assert evidence.state == PlaybackState.UNKNOWN
+    assert evidence.source == "missing_pid"
+    assert evidence.compatibility_playing is True
 
 
 def test_process_tree_audio_detects_child_process_playback(monkeypatch):

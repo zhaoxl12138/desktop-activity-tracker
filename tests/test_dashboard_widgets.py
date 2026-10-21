@@ -460,8 +460,8 @@ def test_work_interruption_card_shows_primary_source_and_top_three_rows():
     )
     app.processEvents()
 
-    assert card.conclusion_label.text() == "今天被打断 4 次，主要来自 微信"
-    assert "干扰累计" in {
+    assert card.conclusion_label.text() == "今天切换工作 4 次，主要去向 微信"
+    assert "切换累计" in {
         label.text() for label in card.findChildren(QLabel)
     }
     assert "font-size: 17px" in card.conclusion_label.styleSheet()
@@ -479,12 +479,12 @@ def test_work_interruption_card_has_clear_empty_and_unavailable_states():
 
     card.set_data({"status": "empty"})
     app.processEvents()
-    assert card.conclusion_label.text() == "今天暂未识别到可分析的工作干扰"
+    assert card.conclusion_label.text() == "今天暂未识别到明显的工作切换"
     assert card._source_rows == []
 
     card.set_data({"status": "unavailable"})
     app.processEvents()
-    assert card.conclusion_label.text() == "干扰数据暂不可用，稍后会自动恢复"
+    assert card.conclusion_label.text() == "切换数据暂不可用，稍后会自动恢复"
     assert card._source_rows == []
 
 
@@ -807,8 +807,9 @@ def test_entertainment_history_card_matches_work_rhythm_summary_order():
         "日均娱乐", "最高一天", "总时间",
     ]
     assert [value.text() for _label, value in card._summary_labels] == [
-        "20分钟", "9/1 · 1小时", "2小时",
+        "20分钟", "9/1", "2小时",
     ]
+    assert card._summary_cells[1].detail.text() == "1小时"
     card.deleteLater()
     app.processEvents()
 
@@ -829,9 +830,10 @@ def test_entertainment_history_card_defaults_to_week_with_plain_text_summary():
     assert card._captured_label.text() == "截至 14:35"
     assert [value.text() for _label, value in card._summary_labels] == [
         "25分钟",
-        "8/28 · 1小时10分钟",
+        "8/28",
         "1小时40分钟",
     ]
+    assert card._summary_cells[1].detail.text() == "1小时10分钟"
     assert all(label.textFormat() == Qt.PlainText for label in card._dynamic_labels())
     assert "今日目标" not in " ".join(label.text() for label in card.findChildren(QLabel))
     card.deleteLater()

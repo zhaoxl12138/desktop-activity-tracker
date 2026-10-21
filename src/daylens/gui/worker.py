@@ -17,6 +17,8 @@ from pynput import keyboard
 from .. import activity_detector, classifier, window_detector
 from ..services.session_recovery_service import SessionRecoverySpool
 from ..services.session_runtime_service import SessionRuntimeStore
+from ..services.measurement_shadow_service import MeasurementShadowRecorder
+from ..measurement import observe_sample_interval
 from ..session_tracker import SessionTracker
 
 
@@ -89,6 +91,7 @@ class RecordingWorker(QThread):
     sample_updated = Signal(dict)
     error_occurred = Signal(str)
     health_updated = Signal(object)
+    classification_applied = Signal(int)
 
     def __init__(
         self,
@@ -98,10 +101,13 @@ class RecordingWorker(QThread):
         *,
         recovery_path=None,
         monotonic_clock=None,
+        paths=None,
     ):
         super().__init__()
         self.config_path = config_path
         self.db_path = db_path
+        from ..app_paths import AppPaths
+        self.paths = paths or AppPaths.from_database(db_path)
         self.config = copy.deepcopy(config)
 
         self._running = threading.Event()
@@ -124,10 +130,14 @@ class RecordingWorker(QThread):
         self._sampling_cadence = _FixedSamplingCadence(self._monotonic_clock)
         self._sample_health_started_at = self._monotonic_clock()
         self._last_sample_monotonic = None
+        self._last_sample_wall = None
+        self._measurement_shadow = MeasurementShadowRecorder(
+            self.paths.logs_dir / "measurement-shadow.json"
+        )
         self._shutdown_deadline = None
         self._recovery_spool = SessionRecoverySpool(
             db_path,
-            recovery_path=recovery_path,
+            recovery_path=recovery_path if recovery_path is not None else self.paths.recovery_file,
         )
         recovery_exists = self._recovery_spool.path.exists()
         self._health = RecordingHealth(
@@ -333,10 +343,8 @@ class RecordingWorker(QThread):
                 audio_detector=audio_detector,
             )
             try:
-                from pathlib import Path
-                from .. import get_data_dir
                 from ..services.intelligence_scheduler import IntelligenceScheduler
-                intelligence = IntelligenceScheduler(Path(get_data_dir()) / 'intelligence')
+                intelligence = IntelligenceScheduler(self.paths.intelligence_dir)
                 self._tracker.intelligence = intelligence
                 intelligence.start()
             except Exception:
@@ -363,12 +371,29 @@ class RecordingWorker(QThread):
                 if self._paused.is_set():
                     self._sleep_check(1000)
                     self._sampling_cadence.reset()
+                    self._last_sample_monotonic = None
+                    self._last_sample_wall = None
                     continue
 
                 try:
+                    sample_monotonic = self._monotonic_clock()
+                    sample_wall = datetime.now()
+                    self._measurement_shadow.record_sample(observe_sample_interval(
+                        previous_monotonic=self._last_sample_monotonic,
+                        current_monotonic=sample_monotonic,
+                        previous_wall=self._last_sample_wall,
+                        current_wall=sample_wall,
+                        expected_seconds=self.sample_interval,
+                    ))
+                    self._last_sample_monotonic = sample_monotonic
+                    self._last_sample_wall = sample_wall
                     idle_sec = activity_detector.get_idle_seconds()
                     win_info = window_detector.get_foreground_window_info()
                     snapshot = self._tracker.tick(idle_sec, win_info)
+                    if audio_detector is not None:
+                        consume = getattr(audio_detector, "consume_last_evidence", None)
+                        if callable(consume):
+                            self._measurement_shadow.record_playback(consume())
                     if snapshot is not None:
                         sampled_at = datetime.now()
                         self.sample_updated.emit(snapshot)
@@ -401,6 +426,7 @@ class RecordingWorker(QThread):
                         uninitialize_audio_com()
                     except Exception:
                         pass
+                self._measurement_shadow.close()
 
     def _cleanup(self) -> None:
         self._shutdown_deadline = (
@@ -745,6 +771,7 @@ class RecordingWorker(QThread):
                     intelligence = getattr(self._tracker, 'intelligence', None)
                     if intelligence is not None:
                         intelligence.reload()
+                        self.classification_applied.emit(intelligence.applied_revision)
                 elif command == "reload_classifier":
                     if self._tracker is not None:
                         replacement_classifier = classifier.Classifier(

@@ -31,7 +31,8 @@ def test_build_release_script_publishes_from_staging_and_keeps_rollback():
     assert "release_previous" in script
     assert "os.replace" in script
     assert "DAYLENS_QT_SMOKE" in script
-    assert "taskkill" in script
+    assert "maintenance-exit" in script
+    assert "taskkill" not in script
 
 
 def test_build_environment_removes_codex_runtime_dependency_paths():

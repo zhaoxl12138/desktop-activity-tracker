@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from daylens import database, exporter
@@ -21,6 +21,58 @@ def test_list_report_rows_returns_complete_report_metadata(tmp_path: Path):
     assert rows[0]["file_path"] == str(report_path)
     assert rows[0]["report_type"] == "日报"
     assert rows[0]["modified_text"]
+
+
+def _create_dated_reports(root: Path, subdir: str, count: int) -> set[str]:
+    paths = set()
+    start = date(2026, 1, 1)
+    for offset in range(count):
+        date_str = (start + timedelta(days=offset)).isoformat()
+        path = root / subdir / date_str[:4] / date_str[:7] / f"{date_str}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(date_str, encoding="utf-8")
+        paths.add(str(path))
+    return paths
+
+
+def test_list_report_page_returns_every_report_across_three_pages(tmp_path: Path):
+    expected_paths = _create_dated_reports(tmp_path, "daily", 142)
+
+    pages = [
+        reports_service.list_report_page(
+            str(tmp_path), "daily", page=page, page_size=50
+        )
+        for page in (1, 2, 3)
+    ]
+
+    assert [len(result.rows) for result in pages] == [50, 50, 42]
+    assert all(result.total_count == 142 for result in pages)
+    assert all(result.total_pages == 3 for result in pages)
+    assert [result.page for result in pages] == [1, 2, 3]
+    actual_paths = {
+        row["file_path"] for result in pages for row in result.rows
+    }
+    assert actual_paths == expected_paths
+
+
+def test_list_report_page_clamps_page_and_handles_empty_directory(tmp_path: Path):
+    _create_dated_reports(tmp_path, "daily", 142)
+
+    final_page = reports_service.list_report_page(
+        str(tmp_path), "daily", page=99, page_size=50
+    )
+    empty = reports_service.list_report_page(
+        str(tmp_path), "weekly", page=-1, page_size=50
+    )
+
+    assert final_page.page == 3
+    assert len(final_page.rows) == 42
+    assert (empty.page, empty.total_pages, empty.total_count, empty.rows) == (
+        1,
+        1,
+        0,
+        [],
+    )
 
 
 def test_download_report_copies_selected_file_without_modifying_source(tmp_path: Path):

@@ -45,6 +45,7 @@ def load_page_config(config_path: str, db_path: str) -> dict:
     )
     config["db_path"] = effective_db_path
     database.merge_db_settings(config, effective_db_path)
+    config.pop("show_home_poetry", None)
     return config
 
 
@@ -64,6 +65,7 @@ def save_page_config(
     normalized_db_path = normalize_database_path(new_db_path)
 
     updated = copy.deepcopy(config)
+    updated.pop("show_home_poetry", None)
     updated["sample_interval_seconds"] = sample_interval
     updated["idle_threshold_seconds"] = idle_threshold
     updated["db_path"] = normalized_db_path

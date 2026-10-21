@@ -13,11 +13,6 @@ from .repositories.connection_repository import (
     init_shared_read_conn,
     read_conn,
 )
-from .repositories.poetry_repository import (
-    get_poetry_count as _get_poetry_count,
-    get_random_poetry as _get_random_poetry,
-    insert_poetry_line,
-)
 from .repositories.session_repository import (
     insert_activity_log,
     insert_session,
@@ -44,6 +39,7 @@ from .repositories.stats_repository import (
     query_entertainment_trend as _query_entertainment_trend,
     query_session_count as _query_session_count,
     query_sessions_for_dates as _query_sessions_for_dates,
+    query_completed_history_revision as _query_completed_history_revision,
     query_session_entertainment_trend as _query_session_entertainment_trend,
     summarize_daily_trusted_metrics,
     query_timeline_sessions as _query_timeline_sessions,
@@ -73,11 +69,10 @@ query_entertainment_trend = partial(_query_entertainment_trend, read_conn)
 query_session_count = partial(_query_session_count, read_conn)
 query_today_sessions = partial(_query_today_sessions, read_conn)
 query_sessions_for_dates = partial(_query_sessions_for_dates, read_conn)
+query_completed_history_revision = partial(_query_completed_history_revision, read_conn)
 query_category_detail = partial(_query_category_detail, read_conn)
 count_consecutive_days = partial(_count_consecutive_days, read_conn)
 count_recording_days = partial(_count_recording_days, read_conn)
 query_date_range_stats = partial(_query_date_range_stats, read_conn)
 query_top_titles_by_category = partial(_query_top_titles_by_category, read_conn)
 query_timeline_sessions = partial(_query_timeline_sessions, read_conn)
-get_random_poetry = partial(_get_random_poetry, read_conn)
-get_poetry_count = partial(_get_poetry_count, read_conn)

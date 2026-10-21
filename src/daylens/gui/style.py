@@ -110,6 +110,7 @@ CATEGORY_COLOR_MAP: dict[str, str] = {}
 
 
 def refresh_category_colors() -> None:
+    from ..category_registry import category_definitions
     CATEGORY_COLOR_MAP.clear()
     CATEGORY_COLOR_MAP.update(
         {
@@ -130,6 +131,10 @@ def refresh_category_colors() -> None:
             "other": COLORS["other_teal"],
         }
     )
+    for definition in category_definitions():
+        color = COLORS.get(definition.color, definition.color)
+        for key in (definition.id, *definition.aliases):
+            CATEGORY_COLOR_MAP[key] = color
 
 
 def apply_theme(theme_name: str) -> str:

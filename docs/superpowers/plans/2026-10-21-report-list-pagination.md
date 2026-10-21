@@ -16,7 +16,7 @@
 - Modify: `tests/test_reports_service.py`
 - Modify: `src/daylens/services/reports_service.py:1-120`
 
-- [ ] **Step 1: Write failing pagination tests**
+- [x] **Step 1: Write failing pagination tests**
 
 Add a helper that creates 142 nested daily Markdown files and tests asserting:
 
@@ -40,13 +40,13 @@ empty = reports_service.list_report_page(str(tmp_path), "weekly", page=-1)
 assert (empty.page, empty.total_pages, empty.total_count, empty.rows) == (1, 1, 0, [])
 ```
 
-- [ ] **Step 2: Run the focused tests and confirm failure**
+- [x] **Step 2: Run the focused tests and confirm failure**
 
 Run: `python -m pytest tests/test_reports_service.py -q`
 
 Expected: failure because `list_report_page` does not exist.
 
-- [ ] **Step 3: Implement the immutable page result and reader**
+- [x] **Step 3: Implement the immutable page result and reader**
 
 In `reports_service.py`, add:
 
@@ -84,7 +84,7 @@ def list_report_page(
 
 Extract the existing row metadata conversion into `_report_row(file_path, subdir)`. Keep `list_report_rows` as a compatibility adapter that returns the first `limit` rows, with its existing default and output type.
 
-- [ ] **Step 4: Run service tests**
+- [x] **Step 4: Run service tests**
 
 Run: `python -m pytest tests/test_reports_service.py -q`
 
@@ -96,7 +96,7 @@ Expected: all service tests pass, including 50/50/42 pagination and empty/clampe
 - Modify: `tests/test_reports_page.py`
 - Modify: `src/daylens/gui/pages/reports.py:30-330`
 
-- [ ] **Step 1: Write failing GUI pagination tests**
+- [x] **Step 1: Write failing GUI pagination tests**
 
 Create 142 daily, 52 weekly, and 2 monthly files. Instantiate `ReportsPage`, then assert:
 
@@ -120,13 +120,13 @@ assert not page.btn_next_page.isEnabled()
 
 Add tests that switching to weekly displays its first page, returning to daily restores daily page 3, changing pages clears selected detail state, and deleting enough files clamps an out-of-range page during `refresh()`.
 
-- [ ] **Step 2: Run the focused GUI tests and confirm failure**
+- [x] **Step 2: Run the focused GUI tests and confirm failure**
 
 Run: `python -m pytest tests/test_reports_page.py -q`
 
 Expected: failures because paginator widgets and page state do not exist.
 
-- [ ] **Step 3: Build the pagination controls and state**
+- [x] **Step 3: Build the pagination controls and state**
 
 In `ReportsPage.__init__`, add:
 
@@ -165,7 +165,7 @@ def _update_pager(self) -> None:
 
 Change `refresh` to request `list_report_page` for all three types using their saved page. Store the normalized page returned by the service, set tab text from `total_count`, render only `result.rows`, and include page/total metadata in the signature. Accept an optional `force_subdir` so clicking a pager button cannot be skipped by an unchanged old signature. After refresh, call `_update_pager()`.
 
-- [ ] **Step 4: Run report-page and service regression tests**
+- [x] **Step 4: Run report-page and service regression tests**
 
 Run: `python -m pytest tests/test_reports_page.py tests/test_reports_service.py -q`
 
@@ -176,7 +176,7 @@ Expected: all pagination and existing open/download/selection tests pass.
 **Files:**
 - Modify: `docs/superpowers/plans/2026-10-21-report-list-pagination.md`
 
-- [ ] **Step 1: Run the report and GUI regression groups**
+- [x] **Step 1: Run the report and GUI regression groups**
 
 Run:
 
@@ -186,7 +186,7 @@ python -m pytest tests/test_reports_page.py tests/test_reports_service.py tests/
 
 Expected: all selected tests pass.
 
-- [ ] **Step 2: Run complete verification**
+- [x] **Step 2: Run complete verification**
 
 Run:
 
@@ -198,15 +198,25 @@ git diff --check
 
 Expected: compilation and all tests pass; diff check has no whitespace errors beyond Windows line-ending notices.
 
-- [ ] **Step 3: Build and replace the canonical release**
+- [x] **Step 3: Build and replace the canonical release**
 
 Create an online SQLite backup and verify `PRAGMA quick_check = ok`. Use `python tools/build_release.py` so the existing release exits through maintenance mode. Start `release/DayLens.exe` and verify one responsive process, the canonical executable path, the unchanged `data/usage.db`, and a new session written after startup.
 
-- [ ] **Step 4: Perform packaged GUI smoke**
+- [x] **Step 4: Perform packaged GUI smoke**
 
 Open Report Center in the packaged application and verify the real 142-report directory shows `日报 142`, pages 1/3 through 3/3, and 42 rows on the last page. Confirm selection, opening, and page switching do not retain hidden selections.
 
-- [ ] **Step 5: Mark completed steps and record verification evidence**
+- [x] **Step 5: Mark completed steps and record verification evidence**
+
+## Verification evidence
+
+- Pagination RED tests failed for the expected missing service and controls, then passed after implementation.
+- Focused report service/page/GUI group: 24 passed.
+- Final full suite: 993 passed in 23.14 seconds.
+- Real report directory: 142 daily reports; pages contained 50, 50, and 42 rows.
+- Online backup: `data/backups/20261021-report-pagination/usage.db`; `PRAGMA quick_check = ok`.
+- Published `release/DayLens.exe` started as the only responsive DayLens process on the canonical database.
+- Packaged UI manually verified: `日报 142`, page 1/3, and page 3/3 with 42 reports.
 
 Update this plan's checkboxes only after each command and packaged smoke succeeds. Do not modify or backfill any report contents.
 

@@ -7,7 +7,9 @@ import logging
 import shutil
 import tempfile
 import unicodedata
-from datetime import datetime, timedelta
+import json
+from datetime import date, datetime, timedelta
+from pathlib import Path
 from . import database
 from . import timeline
 from .services.trusted_metrics_service import assess_range
@@ -30,8 +32,83 @@ _TRUST_LEVEL_LABELS = {
 _TRUST_ASSESSMENT_ERROR = "可信度计算异常"
 
 
+def _report_data_updated_at(db_path: str, dates: list[str]) -> str:
+    if not dates:
+        return "无有效数据"
+    try:
+        with database.read_conn(db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT MAX(value) FROM (
+                    SELECT MAX(end_time) AS value FROM activity_sessions
+                    WHERE date BETWEEN ? AND ?
+                    UNION ALL
+                    SELECT MAX(timestamp) AS value FROM activity_logs
+                    WHERE date BETWEEN ? AND ?
+                )
+                """,
+                (dates[0], dates[-1], dates[0], dates[-1]),
+            ).fetchone()
+        return str(row[0]) if row and row[0] else "无有效数据"
+    except Exception:
+        return "读取失败"
+
+
+def _intelligence_report_status(db_path: str, kind: str, period_end: str) -> str:
+    try:
+        from .app_paths import AppPaths
+        from .services.intelligence_reviews import review_period
+
+        day = date.fromisoformat(period_end)
+        path = (
+            AppPaths.from_database(db_path).intelligence_dir
+            / "reviews"
+            / f"{kind}-{review_period(kind, day)}.json"
+        )
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        status = str(payload.get("status", ""))
+        captured = str(payload.get("captured_at", "") or "")
+        if status == "ready":
+            return f"已生成于 {captured}" if captured else "已生成"
+        if status == "pending":
+            return f"处理中（请求于 {captured}）" if captured else "处理中"
+        if status == "failed":
+            return "未完成（不会重复扣费）"
+    except (OSError, ValueError, TypeError, KeyError):
+        pass
+    return "待生成"
+
+
+def _report_metadata_lines(
+    db_path: str,
+    kind: str,
+    dates: list[str],
+    *,
+    generated_at: datetime | None = None,
+) -> list[str]:
+    generated_at = generated_at or datetime.now()
+    if kind == "daily":
+        day = dates[0]
+        if date.fromisoformat(day) < generated_at.date() or generated_at.hour >= 23:
+            range_text = f"{day}（截至 23:00）"
+        else:
+            range_text = f"{day}（截至 {generated_at:%H:%M}；23:00 形成当日定稿）"
+    else:
+        range_text = f"{dates[0]} ～ {dates[-1]}"
+    return [
+        f"> 统计范围：{range_text}",
+        f"> 数据更新：{_report_data_updated_at(db_path, dates)}",
+        f"> 原生报告生成：{generated_at:%Y-%m-%d %H:%M:%S}",
+        f"> 智能汇总：{_intelligence_report_status(db_path, kind, dates[-1])}",
+    ]
+
+
 def _atomic_write_text(filepath: str, content: str) -> None:
     from .services.report_sections import REPORT_WRITE_LOCK, preserve_summary
+    if str(filepath).lower().endswith('.md'):
+        from .time_model import TIME_DEFINITION
+        if TIME_DEFINITION not in content:
+            content += '\n\n> 时间定义：' + TIME_DEFINITION + '\n'
     with REPORT_WRITE_LOCK:
         _replace_report_text(filepath, preserve_summary(filepath, content))
 
@@ -310,6 +387,8 @@ def export_markdown(db_path, date_str, output_dir):
 
     lines = []
     lines.append(f"# {date_str} 个人数字行为日报")
+    lines.append("")
+    lines.extend(_report_metadata_lines(db_path, "daily", [date_str]))
     lines.append("")
 
     # ── 总览 ──
@@ -962,6 +1041,8 @@ def export_weekly_report(db_path, year, week_number, output_dir):
         lines = [
             f"# {year}年第{week_number}周 个人数字行为周报",
             "",
+            *_report_metadata_lines(db_path, "weekly", dates),
+            "",
             f"**{start_date} ~ {end_date}**",
             "",
             "数据不足，请保持记录以获取分析报告。",
@@ -971,6 +1052,8 @@ def export_weekly_report(db_path, year, week_number, output_dir):
 
     lines = []
     lines.append(f"# {year}年第{week_number}周 个人数字行为周报")
+    lines.append("")
+    lines.extend(_report_metadata_lines(db_path, "weekly", dates))
     lines.append("")
     lines.append(f"**{start_date} ~ {end_date}** | 有效天数: {days_with_data}/7")
     lines.append("")
@@ -1100,6 +1183,8 @@ def export_monthly_report(db_path, year, month, output_dir):
         lines = [
             f"# {year}年{month}月 个人数字行为月报",
             "",
+            *_report_metadata_lines(db_path, "monthly", dates),
+            "",
             f"**{dates[0]} ~ {dates[-1]}**",
             "",
             "数据不足，请保持记录以获取分析报告。",
@@ -1109,6 +1194,8 @@ def export_monthly_report(db_path, year, month, output_dir):
 
     lines = []
     lines.append(f"# {year}年{month}月 个人数字行为月报")
+    lines.append("")
+    lines.extend(_report_metadata_lines(db_path, "monthly", dates))
     lines.append("")
     lines.append(f"**{dates[0]} ~ {dates[-1]}** | 有效天数: {days_with_data}/{total_days}")
     lines.append("")

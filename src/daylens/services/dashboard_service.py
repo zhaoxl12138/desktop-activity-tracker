@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from functools import lru_cache
 import html
 import logging
 import math
+import os
 from statistics import median
 import unicodedata
 
@@ -18,6 +20,7 @@ from ..utils import (
     parse_nonnegative_int,
 )
 from .insights_service import select_primary_insight
+from .dashboard_history_cache import DashboardHistoryCache
 from .trusted_metrics_service import (
     REASON_FORMAT_INVALID,
     REASON_TIMING_ANOMALY_ABOVE_LIMIT,
@@ -28,13 +31,17 @@ from .trusted_metrics_service import (
 WORK_KEYS = {"ai_tools", "coding", "office", "reading", "creative"}
 ENTERTAINMENT_KEYS = {"video", "gaming"}
 LOGGER = logging.getLogger(__name__)
+_DASHBOARD_HISTORY_STATS_CACHE = DashboardHistoryCache()
+_DASHBOARD_HISTORY_SESSIONS_CACHE = DashboardHistoryCache()
 THIRTY_DAY_METRIC_BREAK_NOTICE = (
     "计量口径已变化，历史参与趋势暂不可比"
 )
 
 RHYTHM_CONTINUITY_GAP_SECONDS = 30
-RHYTHM_HISTORY_START_DATE = date(2026, 8, 13)
 INTERRUPTION_WINDOW_SECONDS = 15 * 60
+# Historical classifier cutover retained only for compatibility filtering. It
+# is not used as a chart/history start date.
+CLASSIFICATION_RULES_CUTOVER_DATE = date(2026, 8, 13)
 
 
 def _rolling_date_strings(end_date: date, days: int) -> list[str]:
@@ -52,6 +59,40 @@ def _sessions_for_date(sessions: list[dict], date_str: str) -> list[dict]:
         for session in sessions
         if str(session.get("date", "") or "") == date_str
     ]
+
+
+def _daily_row_from_stats(date_str: str, stats: dict) -> dict:
+    totals = dict(stats.get("totals", {}) or {})
+    categories = list(stats.get("by_category", []) or [])
+    effective = parse_nonnegative_int(totals.get("effective_seconds")) or 0
+    idle = parse_nonnegative_int(totals.get("idle_seconds")) or 0
+    row = {
+        "date": date_str,
+        "total_samples": parse_nonnegative_int(totals.get("total_samples")) or 0,
+        "effective_seconds": effective,
+        "idle_seconds": idle,
+        "total_seconds": effective + idle,
+        "work_seconds": sum(
+            parse_nonnegative_int(item.get("effective_seconds")) or 0
+            for item in categories
+            if str(item.get("category_key", "") or "") in WORK_KEYS
+        ),
+        "video_seconds": sum(
+            parse_nonnegative_int(item.get("effective_seconds")) or 0
+            for item in categories
+            if str(item.get("category_key", "") or "") in ENTERTAINMENT_KEYS
+        ),
+    }
+    list_fields = {"dates_with_data", "metric_versions", "classification_versions"}
+    for field in (
+        "engaged_seconds", "passive_seconds", "work_engaged_seconds",
+        "session_count", "legacy_session_count", "legacy_log_sample_count",
+        "legacy_granularity_unknown", "session_anomaly_count",
+        "legacy_log_anomaly_count", "anomaly_count", "dates_with_data",
+        "metric_versions", "classification_versions",
+    ):
+        row[field] = totals.get(field, [] if field in list_fields else 0)
+    return row
 
 
 def _allocate_seconds_to_half_hours(
@@ -222,6 +263,18 @@ def _count_delta_text(delta: int) -> str:
 
 def _daily_row_map(daily_rows: list[dict]) -> dict[str, dict]:
     return {str(row.get("date", "") or ""): row for row in daily_rows}
+
+
+def _actual_history_start(daily_rows: list[dict], fallback: date) -> date:
+    starts = []
+    for row in daily_rows:
+        if not _day_has_metric_data(row):
+            continue
+        try:
+            starts.append(datetime.strptime(str(row.get("date", "")), "%Y-%m-%d").date())
+        except (TypeError, ValueError, OverflowError):
+            continue
+    return min(starts) if starts else fallback
 
 
 def _trusted_work_seconds(row: dict | None) -> int | None:
@@ -701,11 +754,7 @@ def _build_seven_day_rhythm(
         WORK_KEYS,
         _work_hover_seconds,
     )
-    history_start = (
-        RHYTHM_HISTORY_START_DATE
-        if captured_now.date() >= RHYTHM_HISTORY_START_DATE
-        else date.min
-    )
+    history_start = _actual_history_start(daily_rows, dates[0])
     display_points = [
         _rhythm_display_value(
             row_map.get(day.isoformat()),
@@ -781,11 +830,8 @@ def _build_seven_day_rhythm(
 def _build_thirty_day_rhythm(captured_now: datetime, daily_rows: list[dict]) -> dict[str, object]:
     end = captured_now.date() - timedelta(days=1)
     rolling_start = end - timedelta(days=29)
-    start = (
-        max(rolling_start, RHYTHM_HISTORY_START_DATE)
-        if captured_now.date() >= RHYTHM_HISTORY_START_DATE
-        else rolling_start
-    )
+    actual_start = _actual_history_start(daily_rows, rolling_start)
+    start = max(rolling_start, actual_start if actual_start <= end else rolling_start)
     dates = [
         start + timedelta(days=offset)
         for offset in range(max(0, (end - start).days + 1))
@@ -907,7 +953,7 @@ def build_rhythm_snapshot(
         len(classification_versions) > 1
         or has_session_classification_break
     )
-    if classification_break and captured_now.date() < RHYTHM_HISTORY_START_DATE:
+    if classification_break and captured_now.date() < CLASSIFICATION_RULES_CUTOVER_DATE:
         latest_row = max(
             (row for row in daily_rows if _day_has_metric_data(row)),
             key=lambda row: str(row.get("date", "") or ""),
@@ -962,12 +1008,8 @@ def build_rhythm_snapshot(
                 "delta_seconds": None,
             }
         if (
-            captured_now.date() >= RHYTHM_HISTORY_START_DATE
-            and (
-                _metric_break(daily_rows)
-                or has_session_metric_break
-                or classification_break
-            )
+            captured_now.date() >= CLASSIFICATION_RULES_CUTOVER_DATE
+            and (_metric_break(daily_rows) or has_session_metric_break or classification_break)
         ):
             for mode in ("7d", "30d"):
                 start_text, end_text = result[mode]["date_range"]
@@ -992,17 +1034,51 @@ _SESSION_SECONDS_FIELDS = (
 
 
 def _sanitize_session(session: dict) -> dict | None:
-    if session_row_is_anomalous(session):
+    cache_key = tuple(
+        session.get(field)
+        for field in (
+            "date", "start_time", "end_time", "category_key",
+            "duration_seconds", "effective_seconds", "engaged_seconds",
+            "passive_seconds", "idle_seconds", "metric_version",
+        )
+    )
+    parsed_values = _validated_session_values(cache_key)
+    if parsed_values is None:
         return None
     sanitized = dict(session)
-    for field in _SESSION_SECONDS_FIELDS:
-        parsed = parse_nonnegative_int(session.get(field))
-        if parsed is None:
-            return None
+    for field, parsed in zip(_SESSION_SECONDS_FIELDS, parsed_values):
         sanitized[field] = parsed
-    if _session_interval(sanitized) is None:
-        return None
     return sanitized
+
+
+@lru_cache(maxsize=32_768)
+def _validated_session_values(cache_key: tuple) -> tuple[int, ...] | None:
+    (
+        date_value, start_time, end_time, category_key,
+        duration, effective, engaged, passive, idle, metric_version,
+    ) = cache_key
+    row = {
+        "date": date_value,
+        "start_time": start_time,
+        "end_time": end_time,
+        "category_key": category_key,
+        "duration_seconds": duration,
+        "effective_seconds": effective,
+        "engaged_seconds": engaged,
+        "passive_seconds": passive,
+        "idle_seconds": idle,
+        "metric_version": metric_version,
+    }
+    if session_row_is_anomalous(row):
+        return None
+    parsed_values = tuple(
+        parse_nonnegative_int(row.get(field)) for field in _SESSION_SECONDS_FIELDS
+    )
+    if any(value is None for value in parsed_values):
+        return None
+    if _session_interval(row) is None:
+        return None
+    return tuple(int(value) for value in parsed_values)
 
 
 def _sanitize_sessions(sessions: list[dict]) -> tuple[list[dict], set[str]]:
@@ -1543,6 +1619,34 @@ def build_distribution_sections(stats: dict, effective_seconds: int) -> list[dic
     if int(dynamic_section['seconds']) > 0:
         sections.append(dict(dynamic_section))
     return sections
+
+
+def build_distribution_model(stats, effective_seconds):
+    from ..utils import normalize_category_bucket_key, normalize_category_display_name
+    rows = {}
+    for item in stats.get('by_category', []):
+        key = normalize_category_bucket_key(str(item.get('category_key') or 'other'),
+                                            str(item.get('category_name') or ''))
+        if key == 'entertainment':
+            key = 'video'
+        row = rows.setdefault(key, {'category_key':key,
+            'label':normalize_category_display_name(key, str(item.get('category_name') or '')),
+            'seconds':0})
+        row['seconds'] += parse_nonnegative_int(item.get('effective_seconds')) or 0
+    unallocated = max(0,int(effective_seconds)-sum(r['seconds'] for r in rows.values()))
+    if unallocated:
+        rows.setdefault('other',{'category_key':'other','label':'其他','seconds':0})['seconds'] += unallocated
+    fixed = [('work','工作学习'),('video','娱乐休闲'),('social','社交通讯')]
+    if rows.get('finance',{}).get('seconds',0):
+        fixed.append(('finance','投资理财'))
+    visible = [dict(rows.get(key, {'category_key':key,'label':label,'seconds':0}),label=label) for key,label in fixed]
+    fixed_keys = {key for key,label in fixed}
+    residual = sorted((r for key,r in rows.items() if key not in fixed_keys and r['seconds']>0),
+                      key=lambda row:(-row['seconds'],row['category_key']))
+    visible += residual[:1]
+    hidden = residual[1:]
+    return {'visible':visible, 'all':[r for r in rows.values() if r['seconds']>0],
+            'hidden':hidden, 'hidden_count':len(hidden), 'hidden_seconds':sum(r['seconds'] for r in hidden)}
 
 
 def build_day_over_day_comparison(today_stats: dict, yesterday_stats: dict) -> dict[str, dict[str, int | str]]:
@@ -2121,9 +2225,12 @@ def load_today_snapshot(
     prior_seven_day_dates = fourteen_day_dates[:7]
     thirty_day_dates = _rolling_date_strings(today_date, 30)
     rhythm_session_dates = _rolling_date_strings(today_date, 31)
+    goal_config = dict(goal_settings or {})
+    legacy_compatibility = bool(
+        goal_config.get("dashboard_legacy_compatibility", True)
+    )
 
     stats = database.query_date_stats(db_path, today_str)
-    yesterday_stats = database.query_date_stats(db_path, yesterday_str)
     totals = stats.get("totals", {})
     effective_seconds = parse_nonnegative_int(totals.get("effective_seconds")) or 0
     engaged_seconds = parse_nonnegative_int(totals.get("engaged_seconds")) or 0
@@ -2146,12 +2253,45 @@ def load_today_snapshot(
     trusted_calculation_failed = False
     rhythm_query_failed = False
     range_stats_query_failed = False
+    history_stats_cache = None
+    history_sessions_cache = None
+    completed_dates = rhythm_session_dates[:-1]
+    completed_revision = None
+    use_completed_history_cache = os.path.isfile(db_path)
     try:
-        thirty_day_stats = database.query_date_range_stats(
-            db_path,
-            rhythm_session_dates,
-        )
-        rhythm_daily = list(thirty_day_stats.get("daily", []))
+        if use_completed_history_cache:
+            completed_revision = database.query_completed_history_revision(
+                db_path, completed_dates[0], completed_dates[-1]
+            )
+            use_completed_history_cache = completed_revision is not None
+
+        if use_completed_history_cache:
+            def load_completed_history_stats():
+                return (
+                    database.query_date_range_stats(db_path, completed_dates),
+                    [],
+                    database.query_date_stats(db_path, yesterday_str),
+                )
+
+            history_stats_cache = _DASHBOARD_HISTORY_STATS_CACHE.get_or_load(
+                db_path=db_path,
+                dates=completed_dates,
+                revision=completed_revision,
+                loader=load_completed_history_stats,
+            )
+            rhythm_daily = [
+                *list(history_stats_cache.range_stats.get("daily", [])),
+                _daily_row_from_stats(today_str, stats),
+            ]
+            thirty_day_stats = {"daily": rhythm_daily}
+            yesterday_stats = history_stats_cache.yesterday_stats
+        else:
+            thirty_day_stats = database.query_date_range_stats(
+                db_path,
+                rhythm_session_dates,
+            )
+            rhythm_daily = list(thirty_day_stats.get("daily", []))
+            yesterday_stats = database.query_date_stats(db_path, yesterday_str)
         thirty_day_date_set = set(thirty_day_dates)
         thirty_day_daily = [
             row
@@ -2160,16 +2300,23 @@ def load_today_snapshot(
         ]
     except Exception:
         LOGGER.exception("Failed to read dashboard thirty-day range")
+        try:
+            yesterday_stats = database.query_date_stats(db_path, yesterday_str)
+        except Exception:
+            yesterday_stats = {"totals": {}, "by_category": [], "by_app": []}
         thirty_day_stats = {"daily": []}
         thirty_day_daily = []
         rhythm_daily = []
         trusted_calculation_failed = True
         rhythm_query_failed = True
         range_stats_query_failed = True
-    try:
-        thirty_day_trend = _build_thirty_day_trend(thirty_day_daily)
-    except Exception:
-        LOGGER.exception("Failed to build dashboard thirty-day trend")
+    if legacy_compatibility:
+        try:
+            thirty_day_trend = _build_thirty_day_trend(thirty_day_daily)
+        except Exception:
+            LOGGER.exception("Failed to build dashboard thirty-day trend")
+            thirty_day_trend = []
+    else:
         thirty_day_trend = []
     thirty_day_metric_break = any(
         point is None for point in thirty_day_trend
@@ -2178,10 +2325,29 @@ def load_today_snapshot(
         _has_thirty_day_classification_break(thirty_day_daily)
     )
     try:
-        raw_range_sessions = database.query_sessions_for_dates(
-            db_path,
-            rhythm_session_dates,
-        )
+        if use_completed_history_cache:
+            def load_completed_history_sessions():
+                return (
+                    {},
+                    database.query_sessions_for_dates(db_path, completed_dates),
+                    {},
+                )
+
+            history_sessions_cache = _DASHBOARD_HISTORY_SESSIONS_CACHE.get_or_load(
+                db_path=db_path,
+                dates=completed_dates,
+                revision=completed_revision,
+                loader=load_completed_history_sessions,
+            )
+            raw_range_sessions = [
+                *list(history_sessions_cache.sessions),
+                *database.query_sessions_for_dates(db_path, [today_str]),
+            ]
+        else:
+            raw_range_sessions = database.query_sessions_for_dates(
+                db_path,
+                rhythm_session_dates,
+            )
         range_sessions, malformed_session_dates = _sanitize_sessions(
             raw_range_sessions
         )
@@ -2196,10 +2362,14 @@ def load_today_snapshot(
             fourteen_day_sessions,
             yesterday_str,
         )
-        seven_day_sessions = [
-            _sessions_for_date(fourteen_day_sessions, day_str)
-            for day_str in seven_day_dates
-        ]
+        seven_day_sessions = (
+            [
+                _sessions_for_date(fourteen_day_sessions, day_str)
+                for day_str in seven_day_dates
+            ]
+            if legacy_compatibility
+            else []
+        )
     except Exception:
         LOGGER.exception("Failed to read dashboard session range")
         trusted_calculation_failed = True
@@ -2234,13 +2404,7 @@ def load_today_snapshot(
             query_failed=True,
         )
 
-    today_work_seconds = sum(
-        parse_nonnegative_int(session.get("engaged_seconds")) or 0
-        for session in sessions
-        if str(session.get("category_key", "") or "") in WORK_KEYS
-    )
     today_entertainment_seconds = category_seconds(stats)["entertainment"]
-    goal_config = dict(goal_settings or {})
     entertainment_history = build_entertainment_history(
         captured_now=captured_now,
         daily_rows=rhythm_daily,
@@ -2264,33 +2428,47 @@ def load_today_snapshot(
     except Exception:
         LOGGER.exception("Failed to build dashboard interruption analysis")
         interruption_analysis = _empty_interruption_analysis("unavailable")
-    try:
-        goals = build_daily_goals(
-            captured_now=captured_now,
-            daily_rows=rhythm_daily,
-            current_work_seconds=today_work_seconds,
-            current_entertainment_seconds=today_entertainment_seconds,
-            weekday_entertainment_limit_minutes=goal_config.get(
-                "weekday_entertainment_limit_minutes", 60
-            ),
-            weekend_entertainment_limit_minutes=goal_config.get(
-                "weekend_entertainment_limit_minutes", 120
-            ),
-            query_failed=(
-                rhythm_query_failed or today_str in malformed_session_dates
-            ),
+    if legacy_compatibility:
+        today_work_seconds = sum(
+            parse_nonnegative_int(session.get("engaged_seconds")) or 0
+            for session in sessions
+            if str(session.get("category_key", "") or "") in WORK_KEYS
         )
-    except Exception:
-        LOGGER.exception("Failed to build dashboard daily goals")
-        goals = build_daily_goals(
-            captured_now=captured_now,
-            daily_rows=[],
-            current_work_seconds=today_work_seconds,
-            current_entertainment_seconds=today_entertainment_seconds,
-            weekday_entertainment_limit_minutes=0,
-            weekend_entertainment_limit_minutes=0,
-            query_failed=True,
-        )
+        try:
+            goals = build_daily_goals(
+                captured_now=captured_now,
+                daily_rows=rhythm_daily,
+                current_work_seconds=today_work_seconds,
+                current_entertainment_seconds=today_entertainment_seconds,
+                weekday_entertainment_limit_minutes=goal_config.get(
+                    "weekday_entertainment_limit_minutes", 60
+                ),
+                weekend_entertainment_limit_minutes=goal_config.get(
+                    "weekend_entertainment_limit_minutes", 120
+                ),
+                query_failed=(
+                    rhythm_query_failed or today_str in malformed_session_dates
+                ),
+            )
+        except Exception:
+            LOGGER.exception("Failed to build dashboard daily goals")
+            goals = build_daily_goals(
+                captured_now=captured_now,
+                daily_rows=[],
+                current_work_seconds=today_work_seconds,
+                current_entertainment_seconds=today_entertainment_seconds,
+                weekday_entertainment_limit_minutes=0,
+                weekend_entertainment_limit_minutes=0,
+                query_failed=True,
+            )
+    else:
+        goals = {
+            "version": 1,
+            "status": {"label": "已停用", "kind": "retired"},
+            "work": {"target_seconds": None, "remaining_seconds": None},
+            "entertainment": {"limit_seconds": None},
+            "advice": "",
+        }
 
     focus_summary, consecutive_days = build_focus_summary(db_path, today_str)
     try:
@@ -2298,10 +2476,15 @@ def load_today_snapshot(
     except Exception:
         LOGGER.exception("Failed to count consecutive recording days")
         recording_streak_days = 0
-    distribution_sections = build_distribution_sections(stats, effective_seconds)
+    distribution_model = build_distribution_model(stats, effective_seconds)
+    distribution_sections = distribution_model['visible']
     day_comparison = build_day_over_day_comparison(stats, yesterday_stats)
-    split_today = build_hourly_series_split(sessions)
-    split_yesterday = build_hourly_series_split(yesterday_sessions)
+    if legacy_compatibility:
+        split_today = build_hourly_series_split(sessions)
+        split_yesterday = build_hourly_series_split(yesterday_sessions)
+    else:
+        split_today = {"total": [], "work": [], "entertainment": []}
+        split_yesterday = {"total": [], "work": [], "entertainment": []}
     trust = _fallback_trust()
     comparison = {
         "comparable": False,
@@ -2429,6 +2612,7 @@ def load_today_snapshot(
             "primary_metric": "engaged",
         },
         "distribution_sections": distribution_sections,
+        "distribution_model": distribution_model,
         "day_comparison": day_comparison,
         "sessions": sessions,
         "work_episode_rows": build_work_episode_rows(sessions, resolve_display),
@@ -2447,14 +2631,20 @@ def load_today_snapshot(
             "today": split_today["total"],
             "today_work": split_today["work"],
             "today_entertainment": split_today["entertainment"],
-            "yesterday": build_hourly_series(yesterday_sessions),
+            "yesterday": (
+                build_hourly_series(yesterday_sessions)
+                if legacy_compatibility else []
+            ),
             "yesterday_work": split_yesterday["work"],
             "yesterday_entertainment": split_yesterday["entertainment"],
-            "seven_days": [
-                build_hourly_series(day_sessions)
-                for day_sessions in seven_day_sessions
-            ],
-            "seven_day_labels": seven_day_dates,
+            "seven_days": (
+                [
+                    build_hourly_series(day_sessions)
+                    for day_sessions in seven_day_sessions
+                ]
+                if legacy_compatibility else []
+            ),
+            "seven_day_labels": seven_day_dates if legacy_compatibility else [],
             "thirty_days": thirty_day_trend,
             "thirty_day_metric": "engaged",
             "thirty_day_metric_break": thirty_day_metric_break,
@@ -2471,6 +2661,13 @@ def load_today_snapshot(
 
 
 def _parse_dt(timestamp: str) -> datetime | None:
+    if not isinstance(timestamp, str):
+        return None
+    return _parse_dt_cached(timestamp)
+
+
+@lru_cache(maxsize=32_768)
+def _parse_dt_cached(timestamp: str) -> datetime | None:
     try:
         return datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
     except Exception:

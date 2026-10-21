@@ -23,6 +23,8 @@ from comtypes import (
 )
 from pycaw.pycaw import AudioUtilities
 
+from .measurement import PlaybackEvidence, PlaybackState
+
 try:
     import winreg
 except ImportError:  # pragma: no cover - Windows-only application
@@ -58,6 +60,8 @@ class AudioDetector:
         self._last_check: float = 0.0
         self._last_pid: int | None = None
         self._cached: bool = True
+        self._cached_evidence: PlaybackEvidence | None = None
+        self._unconsumed_evidence: PlaybackEvidence | None = None
         self._voice_last_check: float = 0.0
         self._voice_last_key: tuple[int | None, str] | None = None
         self._voice_cached: bool = False
@@ -76,12 +80,21 @@ class AudioDetector:
         return pids
 
     def is_playing(self, pid: int | None) -> bool:
-        if pid is None:
-            return True
+        return self.observe_playback(pid).compatibility_playing
 
-        now = time.time()
-        if pid == self._last_pid and now - self._last_check < self._interval:
-            return self._cached
+    def observe_playback(self, pid: int | None) -> PlaybackEvidence:
+        now = time.monotonic()
+        if pid is None:
+            return self._remember_evidence(PlaybackEvidence(
+                PlaybackState.UNKNOWN, "missing_pid", now, self._interval, True
+            ))
+
+        if (
+            pid == self._last_pid
+            and self._cached_evidence is not None
+            and self._cached_evidence.is_fresh(now)
+        ):
+            return self._cached_evidence
 
         self._last_pid = pid
         self._last_check = now
@@ -94,24 +107,45 @@ class AudioDetector:
                 try:
                     meter = s._ctl.QueryInterface(IAudioMeterInformation)
                     if meter.GetPeakValue() > _PEAK_THRESHOLD:
-                        self._cached = True
-                        return self._cached
+                        return self._remember_evidence(PlaybackEvidence(
+                            PlaybackState.PLAYING, "target_peak", now,
+                            self._interval, True
+                        ))
                 except Exception:
                     continue
             if target_sessions:
                 # A known target tree with only silent meters is paused/silent;
                 # unrelated system audio must not turn it into a playing video.
-                self._cached = False
-                return self._cached
+                return self._remember_evidence(PlaybackEvidence(
+                    PlaybackState.PAUSED, "target_silent", now,
+                    self._interval, False
+                ))
             # No session for the target tree: shared/child output may be
             # unattributable, so retain the historical global fallback.
-            self._cached = self.is_any_playing()
+            playing = self.is_any_playing()
+            return self._remember_evidence(PlaybackEvidence(
+                PlaybackState.PLAYING if playing else PlaybackState.UNKNOWN,
+                "global_fallback_peak" if playing else "global_fallback_silent",
+                now, self._interval, playing
+            ))
         except Exception:
             # Unknown is safer for continuity: do not cut a video session
             # merely because Core Audio was temporarily unavailable.
-            self._cached = True
+            return self._remember_evidence(PlaybackEvidence(
+                PlaybackState.UNKNOWN, "audio_query_error", now,
+                self._interval, True
+            ))
 
-        return self._cached
+    def _remember_evidence(self, evidence: PlaybackEvidence) -> PlaybackEvidence:
+        self._cached_evidence = evidence
+        self._cached = evidence.compatibility_playing
+        self._unconsumed_evidence = evidence
+        return evidence
+
+    def consume_last_evidence(self) -> PlaybackEvidence | None:
+        evidence = self._unconsumed_evidence
+        self._unconsumed_evidence = None
+        return evidence
 
     def is_any_playing(self) -> bool:
         try:

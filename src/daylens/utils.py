@@ -2,11 +2,12 @@
 
 from decimal import Decimal, InvalidOperation
 
-WORK_CATEGORY_KEYS = {"ai_tools", "coding", "office", "reading", "creative", "work"}
-ENTERTAINMENT_CATEGORY_KEYS = {"video", "gaming", "entertainment"}
-SOCIAL_CATEGORY_KEYS = {"social"}
-BROWSER_CATEGORY_KEYS = {"browser_general", "browser_other"}
-TOOLS_CATEGORY_KEYS = {"tools", "system_tools"}
+from .category_registry import group_keys
+WORK_CATEGORY_KEYS = group_keys('work')
+ENTERTAINMENT_CATEGORY_KEYS = group_keys('entertainment')
+SOCIAL_CATEGORY_KEYS = group_keys('social')
+BROWSER_CATEGORY_KEYS = group_keys('browser_general')
+TOOLS_CATEGORY_KEYS = group_keys('tools')
 HIDDEN_RULE_CATEGORY_KEYS = {"idle", "hangup"}
 
 

@@ -29,9 +29,7 @@ def test_daily_facts_uses_normalized_title_from_range_query(monkeypatch, tmp_pat
         'idle_seconds': 0,
     }])
 
-    facts = service.daily_facts('unused', date(2026, 9, 10), {
-        'excluded_apps': [], 'excluded_words': [],
-    })
+    facts = service.daily_facts('unused', date(2026, 9, 10), {})
 
     assert len(facts) == 1
     assert facts[0]['title'] == 'DayLens report fix'

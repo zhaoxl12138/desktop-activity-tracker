@@ -544,15 +544,16 @@ def test_rhythm_keeps_all_recorded_values_visible_from_august_thirteenth():
     assert seven["status"]["label"] == "口径已变化"
 
     thirty = rhythm["30d"]
-    assert thirty["date_range"] == ["2026-08-13", "2026-08-19"]
+    assert thirty["date_range"] == ["2026-08-12", "2026-08-19"]
     assert thirty["chart"]["kind"] == "bars"
     assert thirty["chart"]["labels"] == [
-        "8/13", "8/14", "8/15", "8/16", "8/17", "8/18", "8/19"
+        "8/12", "8/13", "8/14", "8/15", "8/16", "8/17", "8/18", "8/19"
     ]
     assert thirty["chart"]["values"] == [
-        1300, 1400, 1500, 1600, 1700, 1800, 1900
+        1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900
     ]
     assert thirty["chart"]["value_kinds"] == [
+        "current",
         "current",
         "current",
         "legacy",
@@ -562,7 +563,7 @@ def test_rhythm_keeps_all_recorded_values_visible_from_august_thirteenth():
         "legacy",
     ]
     assert thirty["comparison"]["comparable"] is False
-    assert thirty["conclusion"] == "8/13–8/19"
+    assert thirty["conclusion"] == "8/12–8/19"
 
 
 def test_rhythm_today_baseline_is_clipped_to_the_same_time_of_day():
@@ -1410,6 +1411,57 @@ def test_thirty_day_trend_prefers_engaged_and_marks_new_snapshot_semantics(
 
     assert snapshot["totals"]["primary_metric"] == "engaged"
     assert snapshot["trend"]["thirty_day_metric"] == "engaged"
+
+
+def test_thirty_day_rhythm_uses_actual_record_start_not_fixed_product_date():
+    from daylens.services.dashboard_service import _build_thirty_day_rhythm
+
+    captured = datetime(2026, 8, 19, 12, 0, 0)
+    rows = [
+        {
+            "date": "2026-07-20",
+            "total_samples": 1,
+            "engaged_seconds": 600,
+            "work_engaged_seconds": 600,
+            "metric_versions": ["attention-v1"],
+            "classification_versions": ["rules-v1"],
+        }
+    ]
+
+    model = _build_thirty_day_rhythm(captured, rows)
+
+    assert model["date_range"] == ["2026-07-20", "2026-08-18"]
+
+
+def test_dashboard_can_skip_retired_goals_and_trend_calculations(tmp_path, monkeypatch):
+    db_path = tmp_path / "usage.db"
+    database.init_db(str(db_path)).close()
+
+    monkeypatch.setattr(
+        dashboard_service,
+        "_build_thirty_day_trend",
+        lambda *_: (_ for _ in ()).throw(AssertionError("legacy trend called")),
+    )
+    monkeypatch.setattr(
+        dashboard_service,
+        "build_daily_goals",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("legacy goals called")),
+    )
+    monkeypatch.setattr(
+        dashboard_service,
+        "build_hourly_series_split",
+        lambda *_: (_ for _ in ()).throw(AssertionError("legacy hourly split called")),
+    )
+
+    snapshot = load_today_snapshot(
+        str(db_path),
+        lambda process_name, _details: process_name,
+        {"dashboard_legacy_compatibility": False},
+    )
+
+    assert snapshot["goals"]["status"]["kind"] == "retired"
+    assert snapshot["trend"]["today"] == []
+    assert snapshot["trend"]["thirty_days"] == []
 
 
 def test_thirty_day_trend_distinguishes_empty_legacy_mixed_and_current_days():

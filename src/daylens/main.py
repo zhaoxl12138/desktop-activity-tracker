@@ -49,7 +49,8 @@ def _run_qt_smoke() -> bool:
     app = QApplication.instance() or QApplication([])
     pixmap = QPixmap(1, 1)
     app.processEvents()
-    return not pixmap.isNull()
+    from daylens.services.reliability_smoke import run_correction_smoke
+    return not pixmap.isNull() and run_correction_smoke(app)
 
 
 def main():

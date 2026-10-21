@@ -36,6 +36,17 @@ class ReportJob:
         return f"report:{self.kind}"
 
 
+@dataclass(frozen=True)
+class ReportPage:
+    """One normalized page of local report metadata."""
+
+    rows: list[dict]
+    total_count: int
+    page: int
+    total_pages: int
+    page_size: int
+
+
 def execute_report_job(job: ReportJob) -> dict[str, object]:
     """Execute a report job without touching GUI objects."""
     if job.kind == "quick":
@@ -94,27 +105,62 @@ def execute_report_job(job: ReportJob) -> dict[str, object]:
     raise ValueError(f"Unsupported report job kind: {job.kind}")
 
 
-def list_report_rows(reports_dir: str, subdir: str, limit: int = 50) -> list[dict]:
+def _report_row(file_path: str, subdir: str) -> dict:
+    filename = os.path.basename(file_path)
+    label = filename.replace(".md", "").replace("_weekly", "").replace("_monthly", "")
+    size_bytes = os.path.getsize(file_path)
+    size_kb = max(1, (size_bytes + 1023) // 1024)
+    modified_text = datetime.fromtimestamp(os.path.getmtime(file_path)).strftime("%Y-%m-%d %H:%M")
+    return {
+        "label": label,
+        "filename": filename,
+        "size_text": f"{size_kb} KB",
+        "file_path": os.path.abspath(file_path),
+        "modified_text": modified_text,
+        "report_type": _REPORT_TYPE_NAMES.get(subdir, "报告"),
+    }
+
+
+def list_report_page(
+    reports_dir: str,
+    subdir: str,
+    *,
+    page: int = 1,
+    page_size: int = 50,
+) -> ReportPage:
+    """Return a bounded page while preserving access to every report file."""
+    if page_size <= 0:
+        raise ValueError("page_size must be positive")
     directory = os.path.join(reports_dir, subdir)
-    files = sorted(glob.glob(os.path.join(directory, "**", "*.md"), recursive=True), reverse=True)[:limit]
-    rows = []
-    for file_path in files:
-        filename = os.path.basename(file_path)
-        label = filename.replace(".md", "").replace("_weekly", "").replace("_monthly", "")
-        size_bytes = os.path.getsize(file_path)
-        size_kb = max(1, (size_bytes + 1023) // 1024)
-        modified_text = datetime.fromtimestamp(os.path.getmtime(file_path)).strftime("%Y-%m-%d %H:%M")
-        rows.append(
-            {
-                "label": label,
-                "filename": filename,
-                "size_text": f"{size_kb} KB",
-                "file_path": os.path.abspath(file_path),
-                "modified_text": modified_text,
-                "report_type": _REPORT_TYPE_NAMES.get(subdir, "报告"),
-            }
-        )
-    return rows
+    files = sorted(
+        glob.glob(os.path.join(directory, "**", "*.md"), recursive=True),
+        reverse=True,
+    )
+    total_count = len(files)
+    total_pages = max(1, (total_count + page_size - 1) // page_size)
+    current_page = min(max(1, int(page)), total_pages)
+    start = (current_page - 1) * page_size
+    rows = [
+        _report_row(file_path, subdir)
+        for file_path in files[start:start + page_size]
+    ]
+    return ReportPage(
+        rows=rows,
+        total_count=total_count,
+        page=current_page,
+        total_pages=total_pages,
+        page_size=page_size,
+    )
+
+
+def list_report_rows(reports_dir: str, subdir: str, limit: int = 50) -> list[dict]:
+    """Compatibility adapter returning the first ``limit`` report rows."""
+    return list_report_page(
+        reports_dir,
+        subdir,
+        page=1,
+        page_size=limit,
+    ).rows
 
 
 def download_report(source_path: str, destination_path: str) -> str:

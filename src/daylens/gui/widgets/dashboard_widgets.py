@@ -6,7 +6,7 @@ import math
 from datetime import date, datetime, timedelta
 from typing import Iterable
 
-from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 from ...utils import fmt_seconds, parse_nonnegative_int
 from .. import style as ui_style
 from .elided_label import ElidedLabel
+from .ui_primitives import MetricCell
 from ..style import COLORS, get_category_color
 
 
@@ -1085,24 +1086,8 @@ class RhythmComparisonCard(QFrame):
         metrics.setSpacing(8)
         self._metric_labels: list[tuple[QLabel, QLabel, QLabel]] = []
         for _ in range(3):
-            cell = QFrame()
-            cell.setStyleSheet(
-                f"QFrame {{ background: {COLORS['panel_bg_alt']}; border-radius: 7px; }}"
-            )
-            layout = QVBoxLayout(cell)
-            layout.setContentsMargins(8, 4, 8, 4)
-            layout.setSpacing(0)
-            label = QLabel("")
-            value = QLabel("--")
-            delta = QLabel("")
-            for dynamic in (label, value, delta):
-                dynamic.setTextFormat(Qt.PlainText)
-            label.setStyleSheet(f"font-size: 10px; color: {COLORS['text_muted']};")
-            value.setStyleSheet(f"font-size: 12px; font-weight: 800; color: {COLORS['text']};")
-            delta.setStyleSheet(f"font-size: 9px; color: {COLORS['text_secondary']};")
-            layout.addWidget(label)
-            layout.addWidget(value)
-            layout.addWidget(delta)
+            cell = MetricCell()
+            label, value, delta = cell.label, cell.value, cell.detail
             metrics.addWidget(cell, 1)
             self._metric_labels.append((label, value, delta))
         root.addLayout(metrics)
@@ -1165,7 +1150,9 @@ class RhythmComparisonCard(QFrame):
             item = dict(values[index]) if index < len(values) else {}
             label.setText(str(item.get("label", "")))
             value.setText(str(item.get("value", "--")))
-            delta.setText(str(item.get("delta", "")))
+            delta_text = str(item.get("delta", ""))
+            delta.setText(delta_text)
+            delta.setVisible(bool(delta_text))
 
     def _set_status_style(self, kind: str) -> None:
         color = COLORS["primary"] if kind == "baseline" else COLORS["warning_yellow"] if kind == "break" else COLORS["text_muted"]
@@ -2651,21 +2638,13 @@ class EntertainmentHistoryCard(QFrame):
         summaries = QHBoxLayout()
         summaries.setSpacing(6)
         self._summary_labels: list[tuple[QLabel, QLabel]] = []
+        self._summary_cells: list[MetricCell] = []
         for title in ("日均娱乐", "最高一天", "总时间"):
-            cell = QFrame()
-            cell.setStyleSheet(f"QFrame {{ background: {COLORS['panel_bg_alt']}; border-radius: 6px; }}")
-            layout = QVBoxLayout(cell)
-            layout.setContentsMargins(7, 3, 7, 3)
-            layout.setSpacing(0)
-            label, value = QLabel(title), QLabel("--")
-            for dynamic in (label, value):
-                dynamic.setTextFormat(Qt.PlainText)
-            label.setStyleSheet(f"font-size: 9px; color: {COLORS['text_muted']};")
-            value.setStyleSheet(f"font-size: 11px; font-weight: 800; color: {COLORS['text']};")
-            layout.addWidget(label)
-            layout.addWidget(value)
+            cell = MetricCell(title)
+            label, value = cell.label, cell.value
             summaries.addWidget(cell, 1)
             self._summary_labels.append((label, value))
+            self._summary_cells.append(cell)
         root.addLayout(summaries)
         self._status_label = QLabel("娱乐数据积累中")
         self._status_label.setTextFormat(Qt.PlainText)
@@ -2677,7 +2656,7 @@ class EntertainmentHistoryCard(QFrame):
         self.set_data({})
 
     def _dynamic_labels(self) -> list[QLabel]:
-        return [self._title_label, self._range_label, self._captured_label, self._status_label] + [label for pair in self._summary_labels for label in pair]
+        return [self._title_label, self._range_label, self._captured_label, self._status_label] + [label for cell in self._summary_cells for label in (cell.label, cell.value, cell.detail)]
 
     def set_data(self, payload: dict | None) -> None:
         data = dict(payload or {}).get("entertainment_history")
@@ -2723,13 +2702,19 @@ class EntertainmentHistoryCard(QFrame):
         average = parse_nonnegative_int(summary.get("average_seconds"))
         maximum = parse_nonnegative_int(summary.get("max_seconds"))
         max_date = summary.get("max_date")
-        values = [
-            _goal_duration(average) if average is not None else "--",
-            f"{self._short_date(str(max_date))} · {_goal_duration(maximum)}" if max_date and maximum is not None else "--",
-            _goal_duration(total) if total is not None else "--",
-        ]
-        for (_label, value), text in zip(self._summary_labels, values):
-            value.setText(text)
+        self._summary_cells[0].set_values(
+            label="日均娱乐",
+            value=_goal_duration(average) if average is not None else "--",
+        )
+        self._summary_cells[1].set_values(
+            label="最高一天",
+            value=self._short_date(str(max_date)) if max_date and maximum is not None else "--",
+            detail=_goal_duration(maximum) if max_date and maximum is not None else "",
+        )
+        self._summary_cells[2].set_values(
+            label="总时间",
+            value=_goal_duration(total) if total is not None else "--",
+        )
 
     @staticmethod
     def _captured_text(value) -> str:
@@ -2760,6 +2745,7 @@ class EntertainmentHistoryCard(QFrame):
 
 class TopAppListWidget(QFrame):
     MAX_ROWS = 5
+    activated = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -2768,6 +2754,7 @@ class TopAppListWidget(QFrame):
         self.setMinimumHeight(200)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._row_widgets: list[QWidget] = []
+        self.setCursor(Qt.PointingHandCursor)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 12, 16, 14)
@@ -2877,6 +2864,11 @@ class TopAppListWidget(QFrame):
             self.rows_container.addWidget(row)
             self._row_widgets.append(row)
 
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton:
+            self.activated.emit()
+        super().mouseReleaseEvent(event)
+
 
 class WorkInterruptionCard(QFrame):
     """Compact, evidence-based summary of interruptions between work blocks."""
@@ -2904,7 +2896,7 @@ class WorkInterruptionCard(QFrame):
         layout.setSpacing(5)
         header = QHBoxLayout()
         header.setSpacing(8)
-        title = QLabel("工作干扰分析")
+        title = QLabel("工作切换")
         title.setTextFormat(Qt.PlainText)
         title.setStyleSheet(
             f"font-size: 15px; font-weight: 800; color: {COLORS['text']}; border: none;"
@@ -2929,8 +2921,8 @@ class WorkInterruptionCard(QFrame):
 
         metrics = QHBoxLayout()
         metrics.setSpacing(7)
-        self.count_value = self._add_metric(metrics, "明显干扰")
-        self.duration_value = self._add_metric(metrics, "干扰累计")
+        self.count_value = self._add_metric(metrics, "明显切换")
+        self.duration_value = self._add_metric(metrics, "切换累计")
         self.primary_value = self._add_metric(metrics, "主要来源")
         layout.addLayout(metrics)
 
@@ -2974,14 +2966,14 @@ class WorkInterruptionCard(QFrame):
         status = str(payload.get("status", "empty") or "empty")
         self._clear_source_rows()
         if status == "unavailable":
-            self.conclusion_label.setText("干扰数据暂不可用，稍后会自动恢复")
+            self.conclusion_label.setText("切换数据暂不可用，稍后会自动恢复")
             self.count_value.setText("--")
             self.duration_value.setText("--")
             self.primary_value.setText("--")
             self.setFixedHeight(106)
             return
         if status != "ready":
-            self.conclusion_label.setText("今天暂未识别到可分析的工作干扰")
+            self.conclusion_label.setText("今天暂未识别到明显的工作切换")
             self.count_value.setText("0次")
             self.duration_value.setText("0分钟")
             self.primary_value.setText("--")
@@ -2992,7 +2984,7 @@ class WorkInterruptionCard(QFrame):
         seconds = parse_nonnegative_int(payload.get("total_seconds")) or 0
         primary = dict(payload.get("primary_source", {}) or {})
         primary_label = str(primary.get("label", "其他应用") or "其他应用")
-        self.conclusion_label.setText(f"今天被打断 {count} 次，主要来自 {primary_label}")
+        self.conclusion_label.setText(f"今天切换工作 {count} 次，主要去向 {primary_label}")
         self.count_value.setText(f"{count}次")
         self.duration_value.setText(_goal_duration(seconds))
         self.primary_value.setText(primary_label)

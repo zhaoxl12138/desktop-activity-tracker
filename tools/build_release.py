@@ -48,32 +48,27 @@ def _validate_dist_runtime() -> None:
         )
 
 
+def _running_daylens_pids():
+    import psutil
+    return [p.pid for p in psutil.process_iter(['name'])
+            if str(p.info.get('name') or '').casefold() == 'daylens.exe']
+
+
 def _stop_running_gracefully() -> None:
-    """Request a normal close, using force only when a process will not exit."""
-    for _ in range(3):
-        result = subprocess.run(
-            ["taskkill", "/im", "DayLens.exe"],
-            capture_output=True, text=True,
-        )
-        if "SUCCESS" not in result.stdout:
-            return
-        time.sleep(0.5)
-
-    for _ in range(5):
-        result = subprocess.run(
-            ["tasklist", "/fi", "IMAGENAME eq DayLens.exe"],
-            capture_output=True, text=True,
-        )
-        if "DayLens.exe" not in result.stdout:
-            return
-        time.sleep(0.5)
-
-    subprocess.run(
-        ["taskkill", "/f", "/im", "DayLens.exe"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    """Abort publication unless the application confirms its own safe exit."""
+    if not _running_daylens_pids():
+        return
+    subprocess.run([str(RELEASE_EXE), 'maintenance-exit'],
+                   capture_output=True, text=True, timeout=50, check=True)
+    deadline = time.monotonic()+5
+    while _running_daylens_pids() and time.monotonic()<deadline:
+        time.sleep(.1)
+    if _running_daylens_pids():
+        raise RuntimeError('DayLens未安全退出，发布已停止')
+    state_path = ROOT / 'data' / 'logs' / 'runtime-state.json'
+    import json
+    if json.loads(state_path.read_text(encoding='utf-8')).get('status') != 'clean':
+        raise RuntimeError('DayLens未确认安全保存，发布已停止')
 
 
 def _smoke_test(exe_path: Path) -> None:
@@ -114,7 +109,7 @@ def _remove_directory(path: Path, *, required: bool) -> bool:
 def _publish_staging() -> None:
     """Atomically swap the prepared release, retaining the old version for rollback."""
     if RELEASE_PREVIOUS_DIR.exists():
-        _remove_directory(RELEASE_PREVIOUS_DIR, required=True)
+        raise RuntimeError('Previous release exists; archive it before publishing')
     if RELEASE_DIR.exists():
         os.replace(RELEASE_DIR, RELEASE_PREVIOUS_DIR)
     try:
@@ -123,8 +118,7 @@ def _publish_staging() -> None:
         if RELEASE_PREVIOUS_DIR.exists() and not RELEASE_DIR.exists():
             os.replace(RELEASE_PREVIOUS_DIR, RELEASE_DIR)
         raise
-    if RELEASE_PREVIOUS_DIR.exists():
-        _remove_directory(RELEASE_PREVIOUS_DIR, required=False)
+    # Retain the previous program until a separate explicit cleanup operation.
 
 
 def _copy_dist_to_staging() -> None:

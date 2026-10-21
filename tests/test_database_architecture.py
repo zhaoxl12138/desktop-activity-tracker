@@ -54,12 +54,12 @@ def test_database_delegates_session_writes():
     assert "def update_session(" not in DATABASE_SOURCE
 
 
-def test_database_delegates_remaining_query_routes_and_poetry():
+def test_database_delegates_remaining_query_routes_without_poetry_api():
     stats_repo = ROOT / "src" / "daylens" / "repositories" / "stats_repository.py"
     poetry_repo = ROOT / "src" / "daylens" / "repositories" / "poetry_repository.py"
     assert stats_repo.exists()
-    assert poetry_repo.exists()
-    assert "repositories.poetry_repository" in DATABASE_SOURCE
+    assert not poetry_repo.exists()
+    assert "repositories.poetry_repository" not in DATABASE_SOURCE
     assert "def query_date(" not in DATABASE_SOURCE
     assert "def query_session_entertainment_trend(" not in DATABASE_SOURCE
     assert "def query_entertainment_trend(" not in DATABASE_SOURCE
@@ -68,8 +68,9 @@ def test_database_delegates_remaining_query_routes_and_poetry():
     assert "def query_category_detail(" not in DATABASE_SOURCE
     assert "def count_consecutive_days(" not in DATABASE_SOURCE
     assert "def query_date_range_stats(" not in DATABASE_SOURCE
-    assert "def get_random_poetry(" not in DATABASE_SOURCE
-    assert "def get_poetry_count(" not in DATABASE_SOURCE
+    assert "get_random_poetry" not in DATABASE_SOURCE
+    assert "get_poetry_count" not in DATABASE_SOURCE
+    assert "insert_poetry_line" not in DATABASE_SOURCE
 
 
 def test_exporter_timeline_and_settings_service_avoid_direct_sqlite_access():

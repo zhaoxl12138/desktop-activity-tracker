@@ -28,16 +28,8 @@ from ...classifier import Classifier
 from ...services.rules_service import load_rule_categories, save_rule_categories
 from .. import style as ui_style
 
-_RULE_OPTIONS = [
-    {
-        "key": "interactive_required",
-        "title": "主动交互型",
-    },
-    {
-        "key": "passive_allowed",
-        "title": "被动消费型",
-    },
-]
+from ...category_registry import TIMING_POLICIES
+_RULE_OPTIONS = [{'key':key,'title':title} for key,title in TIMING_POLICIES.items()]
 _RULE_INDEX = {item["key"]: index for index, item in enumerate(_RULE_OPTIONS)}
 
 

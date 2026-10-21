@@ -95,10 +95,10 @@ def test_media_and_known_rules_do_not_get_reclassified(tmp_path):
     assert not provider.calls
 
 
-def test_redaction_exclusion_and_rule_version(tmp_path):
+def test_redaction_and_rule_version_ignore_legacy_exclusions(tmp_path):
     settings = dict(DEFAULT_SETTINGS, excluded_words=['私人'], excluded_apps=['secret.exe'])
-    assert title_context('chrome.exe', '私人文档', settings, 'v1') is None
-    assert title_context('secret.exe', 'HAL3', settings, 'v1') is None
+    assert title_context('chrome.exe', '私人文档', settings, 'v1') is not None
+    assert title_context('secret.exe', 'HAL3', settings, 'v1') is not None
     context = title_context('chrome.exe', 'HAL3 a@example.com 13812345678 https://secret/a?token=x', settings, 'v1')
     assert 'example.com' not in context['title']
     assert '13812345678' not in context['title']

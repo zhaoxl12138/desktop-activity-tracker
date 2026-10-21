@@ -7,6 +7,7 @@ from bisect import bisect_right
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
+from functools import lru_cache
 
 
 WORK_CATEGORY_KEYS = frozenset(
@@ -87,6 +88,11 @@ def _parse_strict_datetime(value) -> datetime | None:
     """Parse only DayLens' canonical second-resolution timestamp format."""
     if type(value) is not str or _STRICT_DATETIME_PATTERN.fullmatch(value) is None:
         return None
+    return _parse_strict_datetime_cached(value)
+
+
+@lru_cache(maxsize=32_768)
+def _parse_strict_datetime_cached(value: str) -> datetime | None:
     try:
         parsed = datetime.fromisoformat(value)
     except (TypeError, ValueError, OverflowError):
@@ -788,6 +794,45 @@ def query_sessions_for_dates(
             unique_dates,
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def query_completed_history_revision(
+    read_conn,
+    db_path: str,
+    start_date: str,
+    end_date: str,
+) -> tuple | None:
+    """Return a cheap invalidation fingerprint for immutable completed days."""
+
+    try:
+        with read_conn(db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT
+                  (SELECT COUNT(*) FROM activity_sessions WHERE date BETWEEN ? AND ?),
+                  (SELECT COALESCE(MAX(id), 0) FROM activity_sessions WHERE date BETWEEN ? AND ?),
+                  (SELECT COALESCE(MAX(end_time), '') FROM activity_sessions WHERE date BETWEEN ? AND ?),
+                  (SELECT COALESCE(SUM(duration_seconds), 0) FROM activity_sessions WHERE date BETWEEN ? AND ?),
+                  (SELECT COALESCE(GROUP_CONCAT(DISTINCT metric_version), '') FROM activity_sessions WHERE date BETWEEN ? AND ?),
+                  (SELECT COALESCE(GROUP_CONCAT(DISTINCT classification_version), '') FROM activity_sessions WHERE date BETWEEN ? AND ?),
+                  (SELECT COUNT(*) FROM activity_logs WHERE date BETWEEN ? AND ?),
+                  (SELECT COALESCE(MAX(id), 0) FROM activity_logs WHERE date BETWEEN ? AND ?),
+                  (SELECT COALESCE(MAX(timestamp), '') FROM activity_logs WHERE date BETWEEN ? AND ?)
+                """,
+                tuple(
+                    value
+                    for _ in range(9)
+                    for value in (start_date, end_date)
+                ),
+            ).fetchone()
+    except Exception as error:
+        # A legacy/uninitialized path is not cacheable; callers retain the
+        # existing uncached degradation path. Real query failures still occur
+        # in the authoritative range query and are reported there.
+        if "no such table" in str(error).casefold():
+            return None
+        raise
+    return tuple(row) if row is not None else ()
 
 
 def query_category_detail(read_conn, db_path: str, date_str: str, category_key: str, limit: int = 5) -> list[dict]:

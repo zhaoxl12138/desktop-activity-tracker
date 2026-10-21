@@ -29,11 +29,11 @@ def test_elided_label_uses_font_width_and_preserves_full_tooltip():
     label.deleteLater()
 
 
-def test_multiline_elided_label_limits_each_poetry_line_independently():
+def test_multiline_elided_label_limits_each_line_independently():
     app = QApplication.instance() or QApplication([])
     full_text = (
-        "第一行诗句非常非常长需要在当前宽度内显示\n"
-        "第二行诗句也非常非常长并且保留作者信息"
+        "第一行状态说明非常非常长需要在当前宽度内显示\n"
+        "第二行状态说明也非常非常长并且保留完整信息"
     )
     label = ElidedLabel(full_text, max_lines=2)
     label.resize(100, 48)
@@ -55,5 +55,21 @@ def test_elided_label_updates_max_lines_without_private_state_mutation():
 
     assert label.maxLines() == 1
     assert label.wordWrap() is False
+    label.deleteLater()
+
+
+def test_explicit_tooltip_survives_elision_and_resize():
+    app = QApplication.instance() or QApplication([])
+    label = ElidedLabel("记录异常 · 最近数据可能未保存")
+    label.setPersistentToolTip("磁盘写入失败")
+    label.resize(90, 24)
+    label.show()
+    app.processEvents()
+    assert label.toolTip() == "磁盘写入失败"
+    label.resize(500, 24)
+    app.processEvents()
+    assert label.toolTip() == "磁盘写入失败"
+    label.setPersistentToolTip(None)
+    assert label.toolTip() == ""
     label.deleteLater()
     app.processEvents()

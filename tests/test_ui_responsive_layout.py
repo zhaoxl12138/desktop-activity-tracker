@@ -88,7 +88,7 @@ def test_page_host_stays_inside_window_at_small_size(tmp_path):
     window.deleteLater()
 
 
-def test_top_summary_reflows_from_four_columns_to_two_by_two(tmp_path):
+def test_top_summary_stays_single_metric_and_sidebar_compacts(tmp_path):
     app, window = _window(tmp_path)
 
     window.resize(1600, 900)
@@ -100,10 +100,10 @@ def test_top_summary_reflows_from_four_columns_to_two_by_two(tmp_path):
     window.resize(1100, 700)
     app.processEvents()
     compact_rows = {item.geometry().top() for item in window.summary_capsule_items}
-    compact_columns = {item.geometry().left() for item in window.summary_capsule_items}
-    assert len(compact_rows) == 2
-    assert len(compact_columns) == 2
-    assert window._top_action_layout.direction() == QBoxLayout.TopToBottom
+    assert len(compact_rows) == 1
+    assert len(window.summary_capsule_items) == 1
+    assert window._top_action_layout.direction() == QBoxLayout.LeftToRight
+    assert window._sidebar.width() == 64
 
     window.dashboard_refresh.shutdown(timeout_ms=1_000)
     window.deleteLater()
@@ -125,8 +125,8 @@ def test_initial_window_is_bounded_by_available_screen(tmp_path):
 def test_page_hint_uses_font_aware_elision_with_full_tooltip(tmp_path):
     app, window = _window(tmp_path)
     full_hint = (
-        "第一行很长很长的诗句需要根据字体宽度省略\n"
-        "第二行同样很长并保留完整作者信息"
+        "第一行很长很长的状态说明需要根据字体宽度省略\n"
+        "第二行同样很长并保留完整信息"
     )
     window.lbl_page_hint.setText(full_hint)
     window.resize(1100, 700)
@@ -170,7 +170,7 @@ def test_right_column_shows_rhythm_ranking_and_entertainment_history_at_1280x720
     window.deleteLater()
 
 
-def test_dashboard_column_content_bottoms_align_with_compact_rhythm(tmp_path):
+def test_dashboard_cards_use_content_height_without_forced_bottom_alignment(tmp_path):
     app, window = _window(tmp_path)
     page = window.pages["today"]
     page.work_episode_widget.set_episodes(
@@ -190,11 +190,9 @@ def test_dashboard_column_content_bottoms_align_with_compact_rhythm(tmp_path):
         window.resize(width, height)
         app.processEvents()
 
-        left_bottom = page.work_analysis_card.geometry().bottom()
-        right_bottom = page.top_app_card.geometry().bottom()
-        assert abs(left_bottom - right_bottom) <= 2
-        assert page.work_analysis_card.parentWidget().height() - left_bottom <= 2
-        assert page.top_app_card.parentWidget().height() - right_bottom <= 2
+        assert page.work_analysis_card.height() == page.work_analysis_card.sizeHint().height()
+        assert page.work_analysis_card.geometry().top() >= page.distribution_card.geometry().bottom()
+        assert page.top_app_card.geometry().top() >= page.entertainment_history_card.geometry().bottom()
         assert page.trend_card.height() <= 300
         assert page.trend_card.canvas.height() >= 80
 
@@ -230,10 +228,7 @@ def test_dashboard_work_episode_rows_stay_compact_at_supported_sizes(tmp_path):
             expected_height = episode_count * 72 + max(0, episode_count - 1) * 6
             assert page.work_episode_widget.height() == expected_height
             assert page.interruption_card.height() >= 82
-            assert abs(
-                page.work_analysis_card.geometry().bottom()
-                - page.top_app_card.geometry().bottom()
-            ) <= 2
+            assert page.work_analysis_card.height() == page.work_analysis_card.sizeHint().height()
 
             for row in rows:
                 for object_name in ("workEpisodeTime", "workEpisodeDuration"):
