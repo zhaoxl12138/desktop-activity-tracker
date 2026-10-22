@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 
 import yaml
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QDate, QObject, Qt, Signal
 from PySide6.QtWidgets import QApplication, QAbstractButton, QLabel
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +21,7 @@ sys.path.insert(0, str(SRC))
 
 from desktop_activity_tracker import database  # noqa: E402
 from desktop_activity_tracker.gui.main_window import MainWindow  # noqa: E402
+from daylens.services.intelligence_state import save_settings  # noqa: E402
 
 
 class DummyWorker(QObject):
@@ -111,8 +112,19 @@ def main():
         assert window.height() == 720, f"responsive height mismatch: {window.height()}"
         assert window.stack.count() == 6, f"unexpected page count: {window.stack.count()}"
         assert window.nav_list.count() == 6, f"unexpected nav count: {window.nav_list.count()}"
-        assert window.lbl_page_hint.isVisible(), "today status hint should be visible"
-        assert window.lbl_page_hint.fullText() == "等待首次采样"
+        assert not hasattr(window.pages["today"], "action_card")
+        assert not hasattr(window.pages["today"], "task_insight_card")
+        assert not hasattr(window.pages["today"], "daily_goal_card")
+        assert window.pages["stats"].tabs.count() == 4
+        window.navigate_to("stats", tab="goals")
+        assert window.pages["stats"].tabs.currentWidget() is window.pages["goals"]
+        assert window.lbl_page_title.text() == "目标与成果"
+        assert "投入与产出" in window.lbl_today.text()
+        window.navigate_to("stats", tab="tasks")
+        assert window.pages["stats"].tabs.currentWidget() is window.pages["tasks"]
+        assert window.lbl_page_title.text() == "统计"
+        window.navigate_to("today")
+        assert not window.lbl_page_hint.isVisible(), "today status hint stays hidden without an observation"
         assert window.chk_dark_mode.isChecked() is True, "dark mode toggle should default on"
         assert window.sidebar_quit_btn.text(), "sidebar quit button should exist"
         assert window.sidebar_record_status.text(), "sidebar record status should exist"
@@ -155,6 +167,18 @@ def main():
         assert overview.interruption_card is not None, "interruption analysis missing"
         assert overview.insight_card is None, "trusted insight card should be removed"
         assert overview.time_stats_card is None, "time stats card should be removed"
+
+        goal_day = "2026-10-20"
+        window.pages["goals"].day_picker.setDate(QDate.fromString(goal_day, "yyyy-MM-dd"))
+        save_settings(window.paths.intelligence_dir,
+                      {"task_analysis_enabled": True})
+        window._on_background_task_completed("task:load:" + goal_day, {
+            "day": goal_day, "status": "ready", "revision": 0,
+            "tasks": [{"id": "confirmed-task", "name": "课程", "status": "confirmed",
+                       "source_session_ids": ["s1"], "engaged_seconds": 60}],
+            "transitions": [], "evidence": {},
+        })
+        assert window.pages["goals"].available_tasks[0]["id"] == "confirmed-task"
 
         for row in range(window.nav_list.count()):
             item = window.nav_list.item(row)

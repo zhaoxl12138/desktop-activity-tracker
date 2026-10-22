@@ -14,6 +14,8 @@ from .classification_state_service import state_operation, read_state, write_sta
 
 DEFAULT_SETTINGS = {
     'enabled': False, 'classification_enabled': True, 'reports_enabled': False,
+    'task_analysis_enabled': False, 'task_cloud_enabled': False,
+    'behavior_analysis_enabled': False,
     'monthly_budget_micros': 4_000_000,
 }
 
@@ -39,7 +41,8 @@ def load_settings(directory):
         return result
     try:
         data = json.loads(path.read_text(encoding='utf-8'))
-        for key in ('enabled', 'classification_enabled', 'reports_enabled'):
+        for key in ('enabled', 'classification_enabled', 'reports_enabled',
+                    'task_analysis_enabled', 'task_cloud_enabled', 'behavior_analysis_enabled'):
             if type(data.get(key)) is bool:
                 result[key] = data[key]
         value = data.get('monthly_budget_micros')
@@ -53,7 +56,8 @@ def load_settings(directory):
 
 def save_settings(directory, settings):
     clean = {key: settings.get(key, default) for key, default in DEFAULT_SETTINGS.items()}
-    if any(type(clean[k]) is not bool for k in ('enabled', 'classification_enabled', 'reports_enabled')):
+    if any(type(clean[k]) is not bool for k in ('enabled', 'classification_enabled', 'reports_enabled',
+                                                'task_analysis_enabled', 'task_cloud_enabled', 'behavior_analysis_enabled')):
         raise ValueError('AI开关格式无效')
     if type(clean['monthly_budget_micros']) is not int or not 0 <= clean['monthly_budget_micros'] <= 5_000_000:
         raise ValueError('月预算应在0至5元之间')

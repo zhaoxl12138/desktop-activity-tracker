@@ -57,6 +57,8 @@ from .pages.rule_config import RuleConfigPage
 from .pages.settings import SettingsPage
 from .pages.software_stats import SoftwareStatsPage
 from .pages.statistics import StatisticsPage
+from .pages.task_chain_detail import TaskChainPage
+from .pages.daily_goals import DailyGoalsPage
 from .pages.today_overview import TodayOverviewPage
 from .widgets.elided_label import ElidedLabel
 from .widgets.ui_primitives import PageHeader, StatusBadge
@@ -120,6 +122,8 @@ class MainWindow(QMainWindow):
             self._on_background_task_completed
         )
         self.background_tasks.task_failed.connect(self._on_background_task_failed)
+        self._last_task_load_at = 0.0
+        self._last_task_load_day = ""
 
         self.setWindowTitle("DayLens")
         self.setStyleSheet(ui_style.get_global_style() + ui_style.get_input_style())
@@ -205,12 +209,25 @@ class MainWindow(QMainWindow):
                 paths=self.paths,
             ),
         }
+        self.pages["tasks"] = TaskChainPage(self.paths.intelligence_dir)
+        self.pages["goals"] = DailyGoalsPage(self.paths.intelligence_dir)
         self.pages["stats"] = StatisticsPage(
-            self.pages["software"], self.pages["category"]
+            self.pages["software"], self.pages["category"],
+            self.pages["tasks"], self.pages["goals"]
         )
+        self.pages["stats"].tabs.currentChanged.connect(self._sync_statistics_header)
         self.pages["today"].top_app_card.activated.connect(
             lambda: self.navigate_to("stats", tab="software")
         )
+        self.pages["tasks"].refresh_requested.connect(self._request_task_day)
+        self.pages["tasks"].refresh_requested.connect(
+            lambda day: self._request_goal_day(day, force=True)
+        )
+        self.pages["tasks"].cloud_approved.connect(self._request_task_cloud)
+        self.pages["goals"].refresh_requested.connect(
+            lambda day: self._request_goal_day(day, force=True)
+        )
+        self.pages["goals"].refresh_requested.connect(self._request_task_day)
         from .pages.classification_management import ClassificationManagementPage
         live = self.pages['live']
         self.pages['rules'] = ClassificationManagementPage(live, self.pages['rules'])
@@ -643,6 +660,8 @@ class MainWindow(QMainWindow):
                 self.lbl_today.setText(self._today_text() if key == "today" else hint)
                 self._summary_capsule.setVisible(key == "today")
                 self._current_nav_key = key
+                if key == "stats":
+                    self._sync_statistics_header()
                 if key == "today":
                     self.pages["today"].activate(force=previous_key != "today")
                     self._show_daily_observation()
@@ -656,6 +675,17 @@ class MainWindow(QMainWindow):
                         self.pages["live"].on_sample_updated(self._last_sample)
                     self.pages["today"].on_sample_updated(self._last_sample)
                 break
+
+    def _sync_statistics_header(self, _index: int | None = None) -> None:
+        if self._current_nav_key != "stats":
+            return
+        stats = self.pages["stats"]
+        if stats.tabs.currentWidget() is self.pages["goals"]:
+            self.lbl_page_title.setText("目标与成果")
+            self.lbl_today.setText("管理每天的投入与产出")
+        else:
+            self.lbl_page_title.setText("统计")
+            self.lbl_today.setText("按软件、分类或任务查看时间统计")
 
     def navigate_to(self, key: str, *, tab: str | None = None) -> None:
         """Navigate by stable page key; optional tab keeps callers index-free."""
@@ -830,6 +860,73 @@ class MainWindow(QMainWindow):
         self._update_top_bar()
         self._show_daily_observation()
         self._maybe_generate_daily_observation(snapshot.payload)
+        day = snapshot.payload.get("today") if isinstance(snapshot.payload, dict) else None
+        if isinstance(day, str):
+            self._request_task_day(day)
+            self._request_goal_day(day)
+
+    def _request_goal_day(self, day: str, *, force: bool = False) -> None:
+        from ..services.daily_goal_service import load_goal_day
+
+        now = time.monotonic()
+        if (not force and day == getattr(self, "_last_goal_load_day", "")
+                and now - getattr(self, "_last_goal_load_at", 0.0) < 30):
+            return
+        self._last_goal_load_day = day
+        self._last_goal_load_at = now
+        self.background_tasks.submit(
+            f"goal:load:{day}",
+            lambda: load_goal_day(self.db_path, self.paths.intelligence_dir, day),
+        )
+
+    def _request_task_day(self, day: str) -> None:
+        from ..services.intelligence_state import load_settings
+        from ..services.task_insights_service import load_task_day
+
+        if not load_settings(self.paths.intelligence_dir)["task_analysis_enabled"]:
+            model = {"day": day, "status": "disabled", "tasks": [],
+                     "transitions": [], "revision": 0, "evidence": {}}
+            self.pages["tasks"].set_model(model)
+            self.pages["goals"].set_available_tasks(model)
+            return
+        now = time.monotonic()
+        if (day == self._last_task_load_day and now - self._last_task_load_at < 30
+                and self._current_nav_key != "stats"):
+            return
+        self._last_task_load_day = day
+        self._last_task_load_at = now
+        self.background_tasks.submit(
+            f"task:load:{day}",
+            lambda: load_task_day(self.db_path, self.paths.intelligence_dir, day),
+        )
+
+    def _request_task_cloud(self, prepared: dict, approved_digest: str) -> None:
+        from ..services.task_insights_service import load_task_day
+        from ..services.task_intelligence_service import (
+            prepare_task_payload, request_task_suggestion,
+        )
+
+        day = prepared.get("payload", {}).get("day")
+        if not isinstance(day, str):
+            return
+
+        def work():
+            def fresh():
+                model = load_task_day(self.db_path, self.paths.intelligence_dir, day)
+                rows = [
+                    {"session_id": identity, "process_name": item.get("app"),
+                     "normalized_title": item.get("title")}
+                    for identity, item in model.get("evidence", {}).items()
+                ]
+                return prepare_task_payload(rows, model)
+
+            return request_task_suggestion(
+                self.paths.intelligence_dir, prepared,
+                approved_digest=approved_digest, fresh_prepared=fresh,
+                detailed=True,
+            )
+
+        self.background_tasks.submit(f"task:cloud:{approved_digest}", work)
 
     def _on_dashboard_refresh_failed(self, message: str) -> None:
         print(f"[DashboardRefresh] {message}", file=sys.stderr)
@@ -922,6 +1019,55 @@ class MainWindow(QMainWindow):
 
     def _on_background_task_completed(self, key: str, result: object) -> None:
         import sys
+
+        if key.startswith("goal:load:"):
+            from ..services.daily_goal_service import GoalStore
+            model = result if isinstance(result, dict) else {}
+            day = key.removeprefix("goal:load:")
+            try:
+                if (model.get("status") != "unavailable"
+                        and model.get("revision") != GoalStore(self.paths.intelligence_dir).load()["revision"]):
+                    QTimer.singleShot(100, lambda: self._request_goal_day(day, force=True))
+                    return
+            except RuntimeError:
+                model = {"day": day, "status": "unavailable", "goals": []}
+            if day == self.pages["goals"].selected_day():
+                self.pages["goals"].set_model(model)
+            return
+
+        if key.startswith("task:load:"):
+            from ..services.task_decision_service import TaskDecisionStore
+            from ..services.intelligence_state import load_settings
+            model = result if isinstance(result, dict) else {}
+            if not load_settings(self.paths.intelligence_dir)["task_analysis_enabled"]:
+                model = {"status": "disabled", "tasks": [], "transitions": [],
+                         "revision": 0, "evidence": {}}
+            if model.get("status") != "disabled":
+                try:
+                    if model.get("revision") != TaskDecisionStore(self.paths.intelligence_dir).load()["revision"]:
+                        self._last_task_load_at = 0
+                        QTimer.singleShot(
+                            100, lambda: self._request_task_day(key.removeprefix("task:load:"))
+                        )
+                        return
+                except RuntimeError:
+                    model = {"status": "unavailable", "tasks": [], "transitions": []}
+            if key.removeprefix("task:load:") == self.pages["tasks"].selected_day():
+                self.pages["tasks"].set_model(model)
+            if key.removeprefix("task:load:") == self.pages["goals"].selected_day():
+                self.pages["goals"].set_available_tasks(model)
+            return
+        if key.startswith("task:cloud:"):
+            if isinstance(result, dict):
+                self.pages["tasks"].set_ai_suggestions(
+                    result.get("items") if isinstance(result.get("items"), list) else None,
+                    str(result.get("message") or ""),
+                )
+            else:
+                self.pages["tasks"].set_ai_suggestions(
+                    result if isinstance(result, list) else None
+                )
+            return
 
         if key.startswith("observation:"):
             self._show_daily_observation()

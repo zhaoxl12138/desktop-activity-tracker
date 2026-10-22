@@ -38,6 +38,17 @@ class IntelligenceSettings(QGroupBox):
         self.reports = QCheckBox('自动汇总：每天23:00日报 · 周日周报 · 月末月报')
         self.reports.setChecked(settings['reports_enabled'])
         root.addWidget(self.reports)
+        self.task_local = QCheckBox('本地任务分析（不发送会话，默认关闭）')
+        self.task_local.setChecked(settings['task_analysis_enabled'])
+        root.addWidget(self.task_local)
+        self.task_cloud = QCheckBox('云端任务建议（每批预览确认后发送，每日最多2批）')
+        self.task_cloud.setChecked(settings['task_cloud_enabled'])
+        self.task_cloud.setEnabled(self.task_local.isChecked())
+        self.task_local.toggled.connect(self.task_cloud.setEnabled)
+        root.addWidget(self.task_cloud)
+        self.behavior = QCheckBox('本地行为画像与一周实验（离线分析，不产生API费用）')
+        self.behavior.setChecked(settings['behavior_analysis_enabled'])
+        root.addWidget(self.behavior)
         hint = QLabel('Flash非思考模式 · 最多5个标题一批 · 本地缓存复用 · 月预算内停止新请求')
         hint.setWordWrap(True)
         root.addWidget(hint)
@@ -131,6 +142,9 @@ class IntelligenceSettings(QGroupBox):
                 'enabled': self.enabled.isChecked(),
                 'classification_enabled': self.classification.isChecked(),
                 'reports_enabled': self.reports.isChecked(),
+                'task_analysis_enabled': self.task_local.isChecked(),
+                'task_cloud_enabled': self.task_cloud.isChecked(),
+                'behavior_analysis_enabled': self.behavior.isChecked(),
                 'monthly_budget_micros': round(self.budget.value() * 1_000_000),
             })
             self._reload_worker()

@@ -84,7 +84,8 @@ class DeepSeekProvider:
         self.transport = transport
 
     def request_json(self, prompt, payload, *, kind, units=1, daily_limit=1,
-                     output_limit=512, input_byte_limit=6000):
+                     output_limit=512, input_byte_limit=6000,
+                     idempotency_key=None):
         key = self.key_reader()
         if not key:
             raise RequestDeferred('未配置DeepSeek API密钥')
@@ -105,7 +106,8 @@ class DeepSeekProvider:
         # UTF-8 bytes + protocol allowance intentionally overestimates token count.
         try:
             request_id = self.budget.reserve(len(encoded_messages) + 512, output_limit,
-                                             kind=kind, units=units, daily_limit=daily_limit)
+                                             kind=kind, units=units, daily_limit=daily_limit,
+                                             idempotency_key=idempotency_key)
         except BudgetUnavailable as exc:
             raise RequestDeferred(str(exc)) from None
         response = None

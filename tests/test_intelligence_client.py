@@ -4,6 +4,21 @@ import pytest
 
 from daylens.services.intelligence_budget import IntelligenceBudget
 from daylens.services.intelligence_client import DeepSeekProvider, IntelligenceError
+from daylens.services.intelligence_budget import BudgetUnavailable
+
+
+def test_task_json_request_uses_durable_budget_idempotency(tmp_path):
+    sent = []
+    provider = DeepSeekProvider(
+        IntelligenceBudget(tmp_path / "budget.json"), lambda: "fake",
+        transport=lambda body, key: sent.append(body) or response([]),
+    )
+    provider.request_json("task", {"id": "x"}, kind="task_analysis", daily_limit=2,
+                          idempotency_key="stable-task-key")
+    with pytest.raises(BudgetUnavailable):
+        provider.request_json("task", {"id": "x"}, kind="task_analysis", daily_limit=2,
+                              idempotency_key="stable-task-key")
+    assert len(sent) == 1
 
 
 def response(items, finish='stop'):

@@ -5,6 +5,18 @@ import pytest
 from daylens.services.intelligence_budget import IntelligenceBudget, BudgetUnavailable
 
 
+def test_task_request_idempotency_survives_restart_and_uncertain_result(tmp_path):
+    path = tmp_path / "budget.json"
+    first = IntelligenceBudget(path)
+    request = first.reserve(100, 50, kind="task_analysis", daily_limit=2,
+                            idempotency_key="day:evidence:algorithm")
+    first.settle(request, None)
+    with pytest.raises(BudgetUnavailable):
+        IntelligenceBudget(path).reserve(100, 50, kind="task_analysis", daily_limit=2,
+                                         idempotency_key="day:evidence:algorithm")
+    assert IntelligenceBudget(path).snapshot()["today_requests"] == 1
+
+
 def test_reservation_survives_restart_and_timeout(tmp_path):
     path = tmp_path / 'budget.json'
     budget = IntelligenceBudget(path, monthly_micros=5000)

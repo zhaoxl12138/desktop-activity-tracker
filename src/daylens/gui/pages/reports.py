@@ -114,11 +114,19 @@ class ReportsPage(QWidget):
         row.addWidget(self.btn_daily)
         row.addWidget(self.btn_weekly)
         row.addWidget(self.btn_monthly)
+        self.btn_behavior = self._button("行为画像", self._show_behavior)
+        row.addWidget(self.btn_behavior)
         row.addStretch()
 
         self.btn_open_dir = self._button("打开报告目录", self._open_reports_dir)
         row.addWidget(self.btn_open_dir)
         return frame
+
+    def _show_behavior(self):
+        from ..widgets.behavior_dialog import BehaviorDialog
+        dialog = BehaviorDialog(self.db_path, self.paths.intelligence_dir, self)
+        dialog.exec()
+        dialog.deleteLater()
 
     def _build_report_list(self) -> QFrame:
         frame = QFrame()

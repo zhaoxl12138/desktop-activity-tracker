@@ -786,7 +786,7 @@ def query_sessions_for_dates(
                    normalized_title, category_key, category_name,
                    duration_seconds, effective_seconds, engaged_seconds,
                    passive_seconds, idle_seconds, metric_version,
-                   classification_version
+                   classification_version, switch_reason
             FROM activity_sessions
             WHERE date IN ({placeholders})
             ORDER BY start_time, id

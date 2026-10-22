@@ -129,6 +129,9 @@ def test_today_layout_switches_by_content_width_and_preserves_card_instances():
     assert page._card_grid.itemAtPosition(0, 0).widget() is page.distribution_card
     assert page._card_grid.itemAtPosition(1, 0).widget() is page.rhythm_card
     assert page._card_grid.itemAtPosition(2, 0).widget() is page.entertainment_history_card
+    assert page._card_grid.itemAtPosition(4, 0).widget() is page.top_app_card
+    assert page._card_grid.itemAtPosition(5, 0) is None
+    assert not hasattr(page, "action_card")
     window.close()
 
 

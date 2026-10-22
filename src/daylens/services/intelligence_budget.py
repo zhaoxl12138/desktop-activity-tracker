@@ -86,10 +86,13 @@ class IntelligenceBudget:
                 os.unlink(name)
 
     def reserve(self, input_ceiling: int, output_ceiling: int, *, kind='classification',
-                units=1, daily_limit=30, now: datetime | None = None) -> str:
+                units=1, daily_limit=30, now: datetime | None = None,
+                idempotency_key: str | None = None) -> str:
         if (type(input_ceiling) is not int or type(output_ceiling) is not int
                 or input_ceiling < 0 or output_ceiling < 0
-                or type(units) is not int or units < 1):
+                or type(units) is not int or units < 1
+                or (idempotency_key is not None and
+                    (not isinstance(idempotency_key, str) or not 1 <= len(idempotency_key) <= 200))):
             raise ValueError('Invalid reservation')
         now = now or datetime.now()
         day, month = now.strftime('%Y-%m-%d'), now.strftime('%Y-%m')
@@ -97,6 +100,11 @@ class IntelligenceBudget:
         with self._locked():
             data = self._load()
             rows = data['requests'].values()
+            if idempotency_key is not None and any(
+                row.get('kind') == kind and row.get('idempotency_key') == idempotency_key
+                for row in rows
+            ):
+                raise BudgetUnavailable('该批任务证据已请求或预留，不重复发送')
             spent = sum(r['cost_micros'] for r in rows if r['month'] == month)
             used = sum(r['units'] for r in rows if r['day'] == day and r['kind'] == kind)
             if spent + amount > self.monthly_micros:
@@ -108,6 +116,8 @@ class IntelligenceBudget:
                 'day': day, 'month': month, 'kind': kind, 'units': units,
                 'cost_micros': amount, 'reserved_micros': amount, 'state': 'reserved',
             }
+            if idempotency_key is not None:
+                data['requests'][request_id]['idempotency_key'] = idempotency_key
             self._save(data)
         return request_id
 

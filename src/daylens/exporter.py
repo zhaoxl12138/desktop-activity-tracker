@@ -561,6 +561,8 @@ def export_markdown(db_path, date_str, output_dir):
     lines.append(review)
     lines.append("")
 
+    from .services.behavior_profile_service import report_lines
+    lines.extend(report_lines(db_path, date_str))
     _atomic_write_text(filepath, "\n".join(lines))
 
     return filepath
@@ -1010,6 +1012,50 @@ def _gen_monthly_summary(stats, prev, best_day, top_work_apps, days_with_data, t
     return "".join(parts)
 
 
+def _weekly_goal_lines(db_path: str, dates: list[str]) -> list[str]:
+    """Local plan/input/outcome evidence; never infer accomplishment from time."""
+    import sqlite3
+    from .app_paths import AppPaths
+    from .services.daily_goal_service import GoalStore, build_weekly_review
+    from .services.task_decision_service import TaskDecisionStore
+
+    heading = ["## 🎯 计划 / 投入 / 已确认成果", ""]
+    directory = AppPaths.from_database(db_path).intelligence_dir
+    try:
+        state = GoalStore(directory).load()
+        if not any(state["days"].get(day) for day in dates):
+            return heading + ["本周未设置每日目标。", ""]
+        sessions = database.query_sessions_for_dates(db_path, dates)
+        has_task_goal = any(goal["target_kind"] == "task"
+                            for day in dates for goal in state["days"].get(day, []))
+        assignments = (TaskDecisionStore(directory).load()["assignments"]
+                       if has_task_goal else {})
+        review = build_weekly_review(dates, state, sessions, assignments)
+    except (OSError, RuntimeError, ValueError, KeyError, sqlite3.Error):
+        return heading + ["目标数据暂不可读；原有周报统计不受影响。", ""]
+
+    def safe_title(value: str) -> str:
+        return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("|", "\\|")
+
+    lines = heading + ["| 日期 | 目标 | 计划 | 可信投入 | 偏差 | 成果证据 |",
+                       "|---|---|---:|---:|---:|---|" ]
+    for item in review["rows"]:
+        planned = (fmt_seconds(item["planned_seconds"])
+                   if item["planned_seconds"] is not None else "成果型")
+        actual = (fmt_seconds(item["actual_seconds"])
+                  if item["actual_seconds"] is not None else
+                  "证据不足" if item["type"] == "time_commitment" else "—")
+        difference = item["difference_seconds"]
+        gap = ("少 " + fmt_seconds(difference) if difference > 0 else
+               "多 " + fmt_seconds(-difference) if difference < 0 else "持平") if difference is not None else "—"
+        evidence = item["outcome_evidence"] or (
+            "部分证据不可比" if item["evidence_status"] == "untrusted" else "—"
+        )
+        lines.append(f"| {item['day']} | {safe_title(item['title'])} | {planned} | {actual} | {gap} | {evidence} |")
+    lines.extend(["", "> 时间目标达到计划时长不等于成果完成；成果栏只记录用户手动确认。", ""])
+    return lines
+
+
 def export_weekly_report(db_path, year, week_number, output_dir):
     """Generate a comparison-driven weekly Markdown report.
 
@@ -1047,6 +1093,9 @@ def export_weekly_report(db_path, year, week_number, output_dir):
             "",
             "数据不足，请保持记录以获取分析报告。",
         ]
+        lines.extend(["", *_weekly_goal_lines(db_path, dates)])
+        from .services.behavior_profile_service import report_lines
+        lines.extend(report_lines(db_path, dates[-1]))
         _atomic_write_text(filepath, "\n".join(lines))
         return filepath
 
@@ -1139,12 +1188,16 @@ def export_weekly_report(db_path, year, week_number, output_dir):
         lines.append("本周没有明显的娱乐消费，很好！")
     lines.append("")
 
+    lines.extend(_weekly_goal_lines(db_path, dates))
+
     # ── 6. AI summary ──
     lines.append("## 🤖 本周总结")
     lines.append("")
     lines.append(_gen_weekly_summary(stats, prev, best_days, peak_hours, sink, days_with_data))
     lines.append("")
 
+    from .services.behavior_profile_service import report_lines
+    lines.extend(report_lines(db_path, dates[-1]))
     _atomic_write_text(filepath, "\n".join(lines))
 
     return filepath
@@ -1189,6 +1242,8 @@ def export_monthly_report(db_path, year, month, output_dir):
             "",
             "数据不足，请保持记录以获取分析报告。",
         ]
+        from .services.behavior_profile_service import report_lines
+        lines.extend(report_lines(db_path, dates[-1]))
         _atomic_write_text(filepath, "\n".join(lines))
         return filepath
 
@@ -1339,6 +1394,8 @@ def export_monthly_report(db_path, year, month, output_dir):
     lines.append(_gen_monthly_summary(stats, prev, best_day, top_work_apps, days_with_data, total_days))
     lines.append("")
 
+    from .services.behavior_profile_service import report_lines
+    lines.extend(report_lines(db_path, dates[-1]))
     _atomic_write_text(filepath, "\n".join(lines))
 
     return filepath
