@@ -65,6 +65,29 @@ def test_unnamed_candidate_gets_a_readable_local_default_name(tmp_path):
     assert model["tasks"][0]["name_source"] == "local_default"
 
 
+def test_same_titled_work_is_one_reviewable_candidate_across_long_gaps(tmp_path):
+    save_settings(tmp_path, {"task_analysis_enabled": True})
+    def item(identity, hour, app="chrome.exe", category="coding"):
+        return {"session_id": identity, "date": "2026-10-21",
+                "start_time": f"2026-10-21 {hour}:00:00",
+                "end_time": f"2026-10-21 {hour}:01:00",
+                "process_name": app, "normalized_title": "自考笔果题库【官网】",
+                "category_key": category, "engaged_seconds": 60,
+                "effective_seconds": 60, "passive_seconds": 0,
+                "idle_seconds": 0, "duration_seconds": 60,
+                "metric_version": "attention-v1", "classification_version": "rules-a"}
+    rows = [item("s1", "09"), item("s2", "11"), item("s3", "13", "other.exe")]
+    model = load_task_day("unused.db", tmp_path, "2026-10-21", session_loader=lambda *_: rows)
+    assert len(model["tasks"]) == 2
+    grouped = next(task for task in model["tasks"] if set(task["source_session_ids"]) == {"s1", "s2"})
+    assert grouped["engaged_seconds"] == 120
+    assert grouped["status"] == "needs_confirmation"
+    assert len(grouped["source_candidate_ids"]) == 2
+    assert grouped["review_status"] == "auto_identified"
+    other = next(task for task in model["tasks"] if task["source_session_ids"] == ["s3"])
+    assert other["review_status"] == "local_candidate"
+
+
 def test_short_generic_candidates_are_combined_as_scattered_work(tmp_path):
     save_settings(tmp_path, {"task_analysis_enabled": True})
     rows = [
@@ -91,6 +114,7 @@ def test_short_generic_candidates_are_combined_as_scattered_work(tmp_path):
 
     assert len(model["tasks"]) == 1
     assert model["tasks"][0]["name"] == "零散工作活动"
+    assert model["tasks"][0]["review_status"] == "insufficient_evidence"
     assert model["tasks"][0]["engaged_seconds"] == 50
     assert model["tasks"][0]["source_session_ids"] == ["s1", "s2"]
 
@@ -110,6 +134,7 @@ def test_informative_title_is_used_as_the_default_task_name(tmp_path):
                           session_loader=lambda *_: rows)
 
     assert model["tasks"][0]["name"] == "AI化优化方案"
+    assert model["tasks"][0]["review_status"] == "local_candidate"
 
 
 def test_ignored_scattered_work_does_not_reappear_after_refresh(tmp_path):

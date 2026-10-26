@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
 from .. import style as ui_style
+from ...services.task_insights_service import task_review_label
 from ...utils import fmt_seconds
 
 
@@ -59,7 +60,7 @@ class TaskInsightCard(QFrame):
             if index < len(tasks):
                 task = tasks[index]
                 name = str(task.get("name") or "待确认任务")[:50]
-                marker = "已确认" if task.get("status") == "confirmed" else "待确认"
+                marker = task_review_label(task)
                 label.setText(f"{name} · {fmt_seconds(int(task.get('engaged_seconds') or 0))} · {marker}")
                 label.show()
             else:
@@ -77,5 +78,5 @@ class TaskInsightCard(QFrame):
         elif interruptions:
             message = f"本地关联到任务返回的插入事件 {interruptions} 次；不等于原有明显中断数"
         else:
-            message = f"{len(tasks)} 个任务候选；按会话证据核对后可确认"
+            message = f"{len(tasks)} 个任务候选；自动识别无需确认，发现归属错误时可纠正"
         self.observation.setText(message)

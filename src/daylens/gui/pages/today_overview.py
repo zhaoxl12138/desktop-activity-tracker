@@ -6,7 +6,7 @@ import os
 from datetime import date, datetime, timedelta
 
 import psutil
-from PySide6.QtCore import QFileInfo, Qt
+from PySide6.QtCore import QFileInfo, Qt, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QFileIconProvider,
@@ -36,6 +36,8 @@ from ..widgets.dashboard_widgets import (
 
 
 class TodayOverviewPage(QWidget):
+    day_activity_requested = Signal(str)
+
     def __init__(self, db_path, display_name_mapping=None):
         super().__init__()
         self.db_path = db_path
@@ -78,6 +80,8 @@ class TodayOverviewPage(QWidget):
         self.classification_notice = self.trend_card.classification_notice
         self.top_app_card = TopAppListWidget()
         self.entertainment_history_card = EntertainmentHistoryCard()
+        self.rhythm_card.day_activated.connect(self.day_activity_requested.emit)
+        self.entertainment_history_card.day_activated.connect(self.day_activity_requested.emit)
         self.set_content_width(1200)
 
         self.insight_grid_widget = None

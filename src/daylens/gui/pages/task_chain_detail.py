@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 
 from ...services.task_decision_service import TaskDecisionStore
 from ...services.task_intelligence_service import PROMPT, prepare_task_payload
+from ...services.task_insights_service import task_review_label
 from ...utils import fmt_seconds
 
 
@@ -95,7 +96,7 @@ class TaskChainPage(QWidget):
         self.ai_suggestions = {}
         self.status.setText({
             "disabled": "本地任务分析未开启；原始统计照常运行",
-            "ready": "本地统计 · 任务归属均可查看证据与纠正",
+            "ready": "本地统计 · 自动识别无需确认；人工操作仅用于纠正或固定归属",
             "insufficient_data": "同口径任务证据不足",
             "unavailable": "任务状态暂不可读；原始记录不受影响",
         }.get(model.get("status"), "等待确认"))
@@ -104,7 +105,7 @@ class TaskChainPage(QWidget):
         for index, task in enumerate(tasks):
             values = (self._task_name(task),
                       fmt_seconds(int(task.get("engaged_seconds") or 0)),
-                      "已确认" if task.get("status") == "confirmed" else "待确认",
+                      task_review_label(task),
                       str(len(task.get("source_session_ids") or [])))
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
@@ -128,6 +129,10 @@ class TaskChainPage(QWidget):
         self.evidence_list.clear()
         self.events_list.clear()
         task = self._selected_task()
+        self.action_buttons["confirm"].setText(
+            "确认" if task and task.get("review_status") == "needs_confirmation"
+            else "固定此任务（可选）"
+        )
         if task is None:
             return
         evidence = self.model.get("evidence") or {}
@@ -214,11 +219,12 @@ class TaskChainPage(QWidget):
                     task["name_source"] = "manual"
                     if action == "confirm":
                         task["status"] = "confirmed"
+                        task["review_status"] = "confirmed"
                     row = self.tasks_table.currentRow()
                     if row >= 0:
                         self.tasks_table.item(row, 0).setText(name.strip())
                         self.tasks_table.item(row, 2).setText(
-                            "已确认" if task.get("status") == "confirmed" else "待确认"
+                            task_review_label(task)
                         )
             self.refresh_requested.emit(self.selected_day())
         except (RuntimeError, ValueError, OSError) as exc:

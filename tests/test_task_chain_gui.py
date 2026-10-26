@@ -67,6 +67,30 @@ def test_task_page_confirm_button_persists_selected_task_without_db_write(tmp_pa
     app.processEvents()
 
 
+def test_grouped_topic_has_one_click_merge_and_confirm(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    page = TaskChainPage(tmp_path)
+    page.day_picker.setDate(QDate.fromString(MODEL["day"], "yyyy-MM-dd"))
+    task = {**MODEL["tasks"][0], "id": "topic-a", "status": "needs_confirmation",
+            "review_status": "auto_identified",
+            "source_candidate_ids": ["first", "second"]}
+    page.set_model({**MODEL, "tasks": [task]})
+    assert page.action_buttons["confirm"].text() == "固定此任务（可选）"
+    assert page.tasks_table.item(0, 2).text() == "自动识别"
+    card = TaskInsightCard()
+    card.set_model({**MODEL, "tasks": [task], "transitions": []})
+    assert "自动识别" in card.task_labels[0].text()
+    assert "无需确认" in card.observation.text()
+    card.close()
+    page.action_buttons["confirm"].click()
+    state = TaskDecisionStore(tmp_path).load()
+    assert state["assignments"] == {"s1": "topic-a", "s2": "topic-a"}
+    page.set_model({**MODEL, "tasks": [{**task, "id": "scattered-a"}]})
+    assert page.action_buttons["confirm"].text() == "固定此任务（可选）"
+    page.close()
+    app.processEvents()
+
+
 def test_ai_suggestion_replaces_local_default_and_is_used_by_one_click_confirm(
         tmp_path, monkeypatch):
     app = QApplication.instance() or QApplication([])

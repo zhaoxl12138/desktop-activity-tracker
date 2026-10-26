@@ -7,10 +7,10 @@ from collections import Counter
 from datetime import date, datetime, timedelta
 
 from .dashboard_service import WORK_KEYS, ENTERTAINMENT_KEYS
-from .task_grouping_service import _trusted, build_task_analysis
+from .task_grouping_service import _trusted
 from .intelligence_state import load_settings
 
-VERSION = "behavior-v1"
+VERSION = "behavior-v2"
 
 
 def dates_before(end: date, count: int) -> list[str]:
@@ -70,7 +70,7 @@ def summarize(rows: list[dict], days: list[str]) -> dict:
     if missing:
         reasons.add(f"{len(missing)}天缺少可信记录")
     work_hours, leisure_hours = Counter(), Counter()
-    daily, inserted, evidence = [], [], []
+    daily, evidence = [], []
     for day, items in by_day.items():
         ordered = sorted(items.values(), key=lambda r: r["start_time"])
         work = leisure = longest = run = 0
@@ -98,47 +98,24 @@ def summarize(rows: list[dict], days: list[str]) -> dict:
                 "engaged_seconds", "passive_seconds", "idle_seconds",
                 "metric_version", "classification_version", "normalized_title",
                 "window_title", "process_name")})
-        analysis = build_task_analysis(ordered, day)
-        task_by_session = {identity: task["id"] for task in analysis["tasks"]
-                           for identity in task["source_session_ids"]}
-        task_longest = task_run = 0
-        prior_task = prior_task_end = None
-        for row in ordered:
-            start, end, engaged = _trusted(row, day)
-            task_id = task_by_session.get(row["session_id"])
-            if task_id:
-                task_run = task_run + engaged if task_id == prior_task and start == prior_task_end else engaged
-                task_longest = max(task_longest, task_run)
-            else:
-                task_run = 0
-            prior_task, prior_task_end = task_id, end
-        events = [e for e in analysis["transitions"] if e["event_type"] == "non_work_interruption"]
-        counts = Counter(e["source_task_id"] for e in events)
-        for task_id, count in counts.items():
-            task = next(t for t in analysis["tasks"] if t["id"] == task_id)
-            inserted.append({"day": day, "task_id": task_id, "count": count,
-                             "start": task["start_time"], "session_ids": task["source_session_ids"]})
         daily.append({"day": day, "recorded": bool(items), "work": work,
-                      "entertainment": leisure, "longest": longest,
-                      "task_longest": task_longest, "insertions": len(events)})
+                      "entertainment": leisure, "longest": longest})
     digest = hashlib.sha256(json.dumps(evidence, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     ready = not reasons
     work = sum(d["work"] for d in daily)
-    count = sum(d["insertions"] for d in daily)
     half = len(daily) // 2
     trend = None
     if ready and half:
         trend = {key: [sum(d[key] for d in daily[:half]) / half,
                        sum(d[key] for d in daily[half:]) / (len(daily) - half)]
-                 for key in ("work", "longest", "task_longest")}
+                 for key in ("work", "longest")}
     return {"version": VERSION, "dates": days, "ready": ready, "reasons": sorted(reasons),
             "recorded_days": len(days) - len(missing), "versions": sorted(versions),
             "excluded_session_count": sum(rejected.values()),
             "conflicting_session_count": len(conflicts),
             "digest": digest, "daily": daily, "work_seconds": work,
-            "insertions": count, "insertion_rate": count * 3600 / work if ready and work else None,
             "work_hours": dict(work_hours), "entertainment_hours": dict(leisure_hours),
-            "inserted_tasks": sorted(inserted, key=lambda t: -t["count"])[:5], "trend": trend}
+            "trend": trend}
 
 
 def load_profiles(db_path, directory, end: date | None = None, *, loader=None):
@@ -181,15 +158,12 @@ def profile_lines(model: dict) -> list[str]:
             ranked = sorted(profile[field].items(), key=lambda pair: (-pair[1], pair[0]))[:3]
             text = "、".join(f"{hour:02d}时（{seconds//60}分钟）" for hour, seconds in ranked if seconds)
             lines.append(f"{name}较多的会话开始时段：{text or '无'}。")
-        lines.append(f"候选任务插入 {profile['insertions']} 次；工作参与 {profile['work_seconds']//60} 分钟。")
-        for task in profile["inserted_tasks"]:
-            lines.append(f"- {task['start']} 开始的候选任务：插入 {task['count']} 次；会话依据：" + ", ".join(task["session_ids"]))
-        for key, label in (("work", "日均工作参与"), ("longest", "日均最长连续工作片段"),
-                           ("task_longest", "日均最长同一候选任务连续片段")):
+        lines.append(f"工作参与 {profile['work_seconds']//60} 分钟。")
+        for key, label in (("work", "日均工作参与"), ("longest", "日均最长连续工作片段")):
             before, after = profile["trend"][key]
             lines.append(f"窗口前半段 → 后半段，{label}：{before/60:.1f} → {after/60:.1f} 分钟。")
         lines.append("")
-    return lines + ["> 时段按会话开始时间近似归组；连续片段仅连接无间隙工作会话。候选插入不是有效分心时长，变化不代表因果或心理状态。", ""]
+    return lines + ["> 时段按会话开始时间近似归组；连续片段仅连接无间隙工作会话。变化不代表因果或心理状态。", ""]
 
 
 def report_lines(db_path, end):
@@ -198,10 +172,6 @@ def report_lines(db_path, end):
     try:
         anchor = min(date.fromisoformat(end) + timedelta(days=1), date.today())
         model = load_profiles(db_path, directory, anchor)
-        lines = profile_lines(model)
-        if model["status"] == "ready":
-            from .behavior_experiment_service import feedback
-            lines += ["### 一周实验", feedback(db_path, directory, anchor), ""]
-        return lines
+        return profile_lines(model)
     except Exception:
         return ["## 行为画像", "行为画像暂不可用，原报告统计继续保留。", ""]

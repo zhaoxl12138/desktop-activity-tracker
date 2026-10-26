@@ -1012,6 +1012,8 @@ class TrustedInsightCard(QFrame):
 class RhythmComparisonCard(QFrame):
     """Shows work-engagement rhythm without repeating category distribution."""
 
+    day_activated = Signal(str)
+
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("dashboardCard")
@@ -1079,6 +1081,7 @@ class RhythmComparisonCard(QFrame):
         root.addWidget(self._conclusion_label)
 
         self.canvas = _RhythmCanvas()
+        self.canvas.day_activated.connect(self.day_activated.emit)
         self.canvas.setMinimumHeight(80)
         root.addWidget(self.canvas, 1)
 
@@ -1142,6 +1145,7 @@ class RhythmComparisonCard(QFrame):
         self._conclusion_label.setText(str(data.get("conclusion", "节奏数据积累中")))
         chart = dict(data.get("chart", {}) or {})
         chart["show_bar_duration_labels"] = self._mode == "7d"
+        chart["day_activation_enabled"] = self._mode == "7d"
         self.canvas.set_data(chart)
         self._set_metrics(list(data.get("metrics", []) or []))
 
@@ -1164,6 +1168,8 @@ class RhythmComparisonCard(QFrame):
 
 
 class _RhythmCanvas(QWidget):
+    day_activated = Signal(str)
+
     def __init__(self):
         super().__init__()
         self.setMouseTracking(True)
@@ -1190,7 +1196,27 @@ class _RhythmCanvas(QWidget):
         ]
         self._bar_hit_rects = [None] * len(values or [])
         self._state = "chart" if any(value is not None for value in (values or [])) else "empty"
+        clickable = bool(self._data.get("day_activation_enabled") and self._data.get("dates"))
+        if clickable and self._kind == "bars":
+            self._state = "chart"
+        self.setCursor(Qt.PointingHandCursor if clickable else Qt.ArrowCursor)
         self.update()
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        dates = self._data.get("dates") or []
+        width = self.width() - 48
+        x = event.position().x() - 38
+        if (event.button() == Qt.LeftButton and self._kind == "bars"
+                and self._data.get("day_activation_enabled") and dates
+                and len(dates) == len(self._data.get("values") or [])
+                and width > 0 and 0 <= x < width):
+            index = min(len(dates) - 1, int(x / width * len(dates)))
+            try:
+                value = date.fromisoformat(str(dates[index])).isoformat()
+            except (ValueError, TypeError):
+                return
+            self.day_activated.emit(value)
+        super().mousePressEvent(event)
 
     @staticmethod
     def _bar_duration_label(value) -> str:
@@ -2269,6 +2295,8 @@ class DailyGoalsCard(QFrame):
 class _EntertainmentHistoryCanvas(QWidget):
     """Small bar chart / calendar heatmap for entertainment history."""
 
+    day_activated = Signal(str)
+
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setMouseTracking(True)
@@ -2312,7 +2340,17 @@ class _EntertainmentHistoryCanvas(QWidget):
         self._calendar_week_labels = self._calendar_week_starts(self._calendar_dates)
         self._calendar_hit_rects = []
         self._state = "chart" if self._points else "empty"
+        self.setCursor(Qt.PointingHandCursor if self._mode == "7d" and self._points else Qt.ArrowCursor)
         self.update()
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        width = self.width() - 8
+        x = event.position().x() - 4
+        if (event.button() == Qt.LeftButton and self._mode == "7d" and self._points
+                and width > 0 and 0 <= x < width):
+            index = min(len(self._points) - 1, int(x / width * len(self._points)))
+            self.day_activated.emit(str(self._points[index]["date"]))
+        super().mousePressEvent(event)
 
     @staticmethod
     def _point_state(point: dict) -> str:
@@ -2584,6 +2622,8 @@ class _EntertainmentHistoryCanvas(QWidget):
 class EntertainmentHistoryCard(QFrame):
     """Entertainment history card backed by the dashboard snapshot model."""
 
+    day_activated = Signal(str)
+
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("dashboardCard")
@@ -2633,6 +2673,7 @@ class EntertainmentHistoryCard(QFrame):
         details.addStretch(1)
         root.addLayout(details)
         self.canvas = _EntertainmentHistoryCanvas()
+        self.canvas.day_activated.connect(self.day_activated.emit)
         self.canvas.setMinimumHeight(78)
         root.addWidget(self.canvas, 1)
         summaries = QHBoxLayout()

@@ -29,6 +29,22 @@ _APP_DEFAULT_NAMES = {
     "winword": "文档工作",
 }
 
+_REVIEW_LABELS = {
+    "confirmed": "已确认",
+    "auto_identified": "自动识别",
+    "local_candidate": "本地候选",
+    "insufficient_evidence": "线索不足",
+    "needs_confirmation": "待确认",
+}
+
+
+def task_review_label(task: dict) -> str:
+    """UI label; derived recognition never implies a persisted manual decision."""
+    status = task.get("review_status")
+    if status is None:
+        status = "confirmed" if task.get("status") == "confirmed" else "local_candidate"
+    return _REVIEW_LABELS.get(str(status), "线索不足")
+
 
 def _app_stem(process_name: object) -> str:
     value = str(process_name or "").strip()
@@ -120,6 +136,60 @@ def _decorate_and_combine(tasks: list[dict], rows: list[dict], decision: dict,
             "source": "本地候选",
             "has_informative_title": False,
         })
+    same_topic: dict[tuple[str, str, str, str], list[dict]] = {}
+    for task in decorated:
+        if task["status"] == "confirmed" or not task.get("has_informative_title"):
+            continue
+        signatures = set()
+        for identity in task["source_session_ids"]:
+            row = rows_by_id.get(identity, {})
+            signatures.add((str(row.get("process_name") or "").casefold(),
+                            _informative_title(row).casefold(),
+                            str(row.get("category_key") or ""),
+                            str(row.get("classification_version") or "")))
+        if len(signatures) == 1:
+            signature = next(iter(signatures))
+            if all(signature):
+                same_topic.setdefault(signature, []).append(task)
+    consumed = set()
+    for signature, members in same_topic.items():
+        if len(members) < 2:
+            continue
+        candidate_ids = [member["id"] for member in members]
+        session_ids = sorted((identity for member in members
+                              for identity in member["source_session_ids"]),
+                             key=lambda identity: str(rows_by_id[identity].get("start_time") or ""))
+        group_id = "topic-" + hashlib.sha256(
+            "|".join((day, *signature)).encode("utf-8")
+        ).hexdigest()[:24]
+        grouped = dict(members[0])
+        grouped.update(id=group_id, source_session_ids=session_ids,
+                       source_candidate_ids=candidate_ids,
+                       start_time=min(member["start_time"] for member in members),
+                       end_time=max(member["end_time"] for member in members),
+                       engaged_seconds=sum(member["engaged_seconds"] for member in members))
+        consumed.update(candidate_ids)
+        remap.update({identity: group_id for identity in candidate_ids})
+        decorated.append(grouped)
+    decorated = [task for task in decorated if task["id"] not in consumed]
+    for task in decorated:
+        if task["status"] == "confirmed":
+            review_status = "confirmed"
+        elif task["id"].startswith("topic-"):
+            review_status = "auto_identified"
+        elif not task.get("has_informative_title"):
+            review_status = "insufficient_evidence"
+        else:
+            signatures = {
+                (str(rows_by_id.get(identity, {}).get("process_name") or "").casefold(),
+                 _informative_title(rows_by_id.get(identity, {})).casefold(),
+                 str(rows_by_id.get(identity, {}).get("category_key") or ""))
+                for identity in task["source_session_ids"]
+            }
+            review_status = "local_candidate" if len(signatures) == 1 else "needs_confirmation"
+        task["review_status"] = review_status
+        if review_status == "auto_identified":
+            task["source"] = "本地自动识别"
     decorated.sort(key=lambda item: (-int(item.get("engaged_seconds") or 0), item["id"]))
     return decorated, remap
 

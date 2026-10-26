@@ -799,6 +799,7 @@ def _build_seven_day_rhythm(
         "chart": {
             "kind": "bars",
             "labels": [f"{day.month}/{day.day}" for day in display_dates],
+            "dates": [day.isoformat() for day in display_dates],
             "values": display_values,
             "value_kinds": display_kinds,
             "average_seconds": average if valid else None,

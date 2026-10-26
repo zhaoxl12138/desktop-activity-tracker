@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from bisect import bisect_right
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -792,6 +793,37 @@ def query_sessions_for_dates(
             ORDER BY start_time, id
             """,
             unique_dates,
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def query_sessions_overlapping(
+    read_conn,
+    db_path: str,
+    start_time: str,
+    end_time: str,
+) -> list[dict]:
+    """Read full session evidence intersecting a half-open time interval.
+
+    Valid intervals deliberately ignore the stored date, so midnight-crossing
+    sessions remain visible. Damaged intervals associated with the requested
+    start date are returned as evidence for the caller's warnings, not hidden
+    behind an empty result. Never initialize or migrate a database here.
+    """
+    if not Path(db_path).is_file():
+        raise FileNotFoundError(db_path)
+    with read_conn(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM activity_sessions
+            WHERE (start_time < ? AND end_time > ?)
+               OR (date = substr(?, 1, 10)
+                   AND (datetime(start_time) IS NULL
+                        OR datetime(end_time) IS NULL
+                        OR datetime(end_time) <= datetime(start_time)))
+            ORDER BY start_time, id
+            """,
+            (end_time, start_time, start_time),
         ).fetchall()
     return [dict(row) for row in rows]
 

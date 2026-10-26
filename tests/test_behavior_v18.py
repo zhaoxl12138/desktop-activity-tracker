@@ -65,7 +65,7 @@ def test_uncomparable_data_suppresses_trends(problem):
     result = summarize(rows, days)
     assert not result["ready"]
     assert result["trend"] is None
-    assert result["insertion_rate"] is None
+    assert "insertion_rate" not in result
 
 
 def test_partial_profile_reports_verified_lower_bound_and_precise_gaps():
@@ -95,43 +95,80 @@ def test_conflicting_session_identity_is_not_counted_as_verified_partial():
     assert result["conflicting_session_count"] == 1
 
 
-def test_interruption_evidence_and_continuity_are_distinct():
+def test_ordinary_continuity_survives_without_task_metrics():
     day = "2026-10-01"
     rows = [row(day), row(day, "b", 1, "video"), row(day, "c", 2), row(day, "d", 3)]
     result = summarize(rows, [day])
-    assert result["insertions"] == 1
     assert result["daily"][0]["longest"] == 120
-    assert result["daily"][0]["task_longest"] == 120
     assert result["work_seconds"] == 180
     assert result["entertainment_hours"] == {9: 60}
-    assert result["inserted_tasks"][0]["session_ids"] == [f"{day}-a", f"{day}-c", f"{day}-d"]
+    assert not {"insertions", "insertion_rate", "inserted_tasks"} & result.keys()
+    assert not {"insertions", "task_longest"} & result["daily"][0].keys()
 
 
-def test_experiment_requires_valid_baseline_and_explicit_acceptance(tmp_path):
+def test_behavior_summary_never_runs_retired_task_grouping(monkeypatch):
+    from daylens.services import behavior_profile_service as module, task_grouping_service
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("behavior profiles must not rebuild task chains")
+
+    monkeypatch.setattr(task_grouping_service, "build_task_analysis", forbidden)
+    if hasattr(module, "build_task_analysis"):
+        monkeypatch.setattr(module, "build_task_analysis", forbidden)
+    day = "2026-10-01"
+    result = module.summarize([row(day)], [day])
+    assert result["work_seconds"] == 60
+    assert result["daily"][0]["longest"] == 60
+
+
+def test_behavior_reports_omit_task_metrics_and_retired_experiments(tmp_path, monkeypatch):
+    from daylens.services import behavior_profile_service as module
+
+    days = dates_before(date(2026, 10, 1), 7)
+    profile = summarize([row(day) for day in days], days)
+    model = {"status": "ready", "profiles": {7: profile}}
+    monkeypatch.setattr(module, "load_profiles", lambda *_args: model)
+    shown = "\n".join(module.report_lines(str(tmp_path / "usage.db"), days[-1]))
+    assert "工作参与" in shown
+    assert "日均最长连续工作片段" in shown
+    assert all(text not in shown for text in ("候选任务", "候选插入", "同一候选", "一周实验"))
+    assert set(profile["trend"]) == {"work", "longest"}
+
+
+def test_new_task_based_experiments_are_retired_without_writing(tmp_path):
     today = date(2026, 10, 1)
     days = dates_before(today, 7)
     baseline = summarize([row(day) for day in days], days)
     store = ExperimentStore(tmp_path)
     assert store.load() is None
-    with pytest.raises(ValueError):
-        store.accept(baseline, today)
     enable(tmp_path)
-    value = store.accept(baseline, today)
-    assert value["start"] == "2026-10-02"
-    assert value["end"] == "2026-10-08"
-    assert feedback("db", tmp_path, date(2026, 9, 30)) == "该日期尚未接受实验。"
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="已下线"):
         store.accept(baseline, today)
-    assert "等待" in feedback("db", tmp_path, date(2026, 10, 8))
-    rows = [row(day) for day in days + dates_before(date(2026, 10, 9), 7)]
-    result = feedback("db", tmp_path, date(2026, 10, 9), loader=lambda *_: rows)
-    assert "0.00 → 0.00" in result
-    assert "不能证明" in result
-    assert "Camera driver" not in store.path.read_text(encoding="utf-8")
-    rows[0]["normalized_title"] = "changed evidence"
-    assert "不能评价" in feedback("db", tmp_path, date(2026, 10, 9), loader=lambda *_: rows)
+    assert not store.path.exists()
+
+
+def test_legacy_experiment_is_preserved_without_recomputing_task_metrics(tmp_path):
+    from daylens.services.intelligence_state import atomic_json
+
+    store = ExperimentStore(tmp_path)
+    legacy = {"version": "behavior-v1", "status": "accepted", "accepted": "2026-10-01",
+              "start": "2026-10-02", "end": "2026-10-08",
+              "baseline": {"ready": True, "digest": "frozen", "versions": [],
+                           "dates": dates_before(date(2026, 10, 1), 7),
+                           "work_seconds": 420, "insertions": 0, "insertion_rate": 0}}
+    atomic_json(store.path, legacy)
+    before = store.path.read_bytes()
+    enable(tmp_path)
+
+    def forbidden(*_args):
+        raise AssertionError("retired experiments must not query sessions")
+
+    assert store.load() == legacy
+    result = feedback("db", tmp_path, date(2026, 10, 9), loader=forbidden)
+    assert "已下线" in result
+    assert store.path.read_bytes() == before
     store.stop()
-    assert feedback("db", tmp_path) == "实验已停止。"
+    assert store.load()["status"] == "stopped"
 
 
 def test_corrupt_experiment_preserved(tmp_path):
@@ -164,7 +201,9 @@ def test_dialog_disabled_state_never_offers_experiment(tmp_path):
         app.processEvents()
         time.sleep(.01)
     assert dialog.model["status"] == "disabled"
-    assert not dialog.accept_button.isEnabled()
+    assert not hasattr(dialog, "accept_button")
+    assert not hasattr(dialog, "stop_button")
+    assert "一周实验" not in dialog.windowTitle()
     assert "设置中心" in dialog.text.toPlainText()
     dialog.close()
     dialog.timer.stop()

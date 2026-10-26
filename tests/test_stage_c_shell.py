@@ -44,7 +44,7 @@ class DummyWorker(QObject):
         return True
 
 
-def _window():
+def _window(*, legacy_task_settings=False):
     temp = tempfile.TemporaryDirectory()
     root = Path(temp.name)
     config_path = root / "config.yaml"
@@ -60,6 +60,11 @@ def _window():
     }
     config_path.write_text(yaml.safe_dump(config, allow_unicode=True), encoding="utf-8")
     database.init_db(str(db_path)).close()
+    if legacy_task_settings:
+        from daylens.services.intelligence_state import save_settings
+        save_settings(root / "intelligence", {
+            "task_analysis_enabled": True, "task_cloud_enabled": True,
+        })
     app = QApplication.instance() or QApplication([])
     window = MainWindow(
         str(root), config, str(db_path), str(config_path), str(reports), DummyWorker()
@@ -88,6 +93,44 @@ def test_navigation_merges_statistics_without_recreating_existing_pages():
     window.close()
 
 
+def test_task_analysis_entry_is_removed_even_with_legacy_switches():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app, window = _window(legacy_task_settings=True)
+    try:
+        stats = window.pages["stats"]
+        assert [stats.tabs.tabText(i) for i in range(stats.tabs.count())] == [
+            "软件", "分类", "目标与成果",
+        ]
+        assert "tasks" not in window.pages
+        window.navigate_to("stats", tab="goals")
+        app.processEvents()
+        assert stats.tabs.currentWidget() is window.pages["goals"]
+        assert window.lbl_page_title.text() == "目标与成果"
+    finally:
+        window.close()
+
+
+def test_dashboard_and_goal_refresh_never_enqueue_retired_task_analysis(monkeypatch):
+    from desktop_activity_tracker.gui.dashboard_refresh_controller import DashboardSnapshot
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    _app, window = _window(legacy_task_settings=True)
+    submitted = []
+    monkeypatch.setattr(window.background_tasks, "submit",
+                        lambda key, _work: submitted.append(key) or True)
+    try:
+        day = "2026-10-20"
+        window._on_dashboard_snapshot(DashboardSnapshot(1, 1.0, {
+            "today": day, "totals": {"effective_seconds": 120},
+        }))
+        window.pages["goals"].refresh_requested.emit(day)
+        assert "goal:load:" + day in submitted
+        assert not any(key.startswith("task:") for key in submitted)
+        assert window.pages["today"].last_shell_summary["effective_seconds"] == 120
+    finally:
+        window.close()
+
+
 def test_top_bar_has_one_primary_metric_and_no_category_capsule_wall():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app, window = _window()
@@ -99,6 +142,19 @@ def test_top_bar_has_one_primary_metric_and_no_category_capsule_wall():
     assert window.sidebar_record_status.text() in {
         "记录中", "已暂停", "正在保存", "记录异常", "待恢复"
     }
+    window.close()
+
+
+def test_top_record_status_is_compact_and_vertically_centered():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app, window = _window()
+    for width in (1280, 1920):
+        window.resize(width, 720 if width == 1280 else 1080)
+        app.processEvents()
+        badge = window.top_record_status
+        assert 28 <= badge.height() <= 36
+        assert abs(badge.geometry().center().y() - window._top_bar.rect().center().y()) <= 2
+        assert badge.width() >= max(80, badge.sizeHint().width())
     window.close()
 
 
@@ -155,6 +211,44 @@ def test_top_app_shortcut_opens_software_statistics():
     assert window._current_nav_key == "stats"
     assert window.pages["stats"].tabs.currentWidget() is window.pages["software"]
     window.close()
+
+
+def test_both_day_cards_open_one_read_only_dialog_in_snapshot_date_range(monkeypatch):
+    from types import SimpleNamespace
+    from desktop_activity_tracker.gui import main_window as module
+    from desktop_activity_tracker.gui.widgets.day_activity_dialog import DayActivityDialog
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app, window = _window()
+    days = [f"2026-10-{day:02d}" for day in range(19, 26)]
+    opened = []
+
+    def create(db, day, dates, **kwargs):
+        dialog = DayActivityDialog(db, day, dates, loader=lambda *_a, **_k: {
+            "day": day, "status": "empty", "events": [], "segments": [],
+        }, **kwargs)
+        opened.append(dialog)
+        return dialog
+
+    monkeypatch.setattr(module, "DayActivityDialog", create)
+    window._dashboard_snapshot = SimpleNamespace(payload={
+        "rhythm": {"7d": {"chart": {"dates": days}}},
+    })
+    try:
+        window.pages["today"].rhythm_card.day_activated.emit(days[1])
+        assert len(opened) == 1
+        assert opened[0].day_picker.currentData() == days[1]
+        window.pages["today"].entertainment_history_card.day_activated.emit(days[3])
+        assert len(opened) == 1
+        assert opened[0].day_picker.currentData() == days[3]
+        assert [opened[0].day_picker.itemData(i) for i in range(7)] == days
+        window.pages["today"].rhythm_card.day_activated.emit("2020-01-01")
+        assert len(opened) == 1
+        assert "tasks" not in window.pages
+    finally:
+        for dialog in opened:
+            dialog.close()
+        window.close()
 
 
 def test_today_header_does_not_echo_current_app_category():

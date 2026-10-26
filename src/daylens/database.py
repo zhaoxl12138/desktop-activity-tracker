@@ -39,6 +39,7 @@ from .repositories.stats_repository import (
     query_entertainment_trend as _query_entertainment_trend,
     query_session_count as _query_session_count,
     query_sessions_for_dates as _query_sessions_for_dates,
+    query_sessions_overlapping as _query_sessions_overlapping,
     query_completed_history_revision as _query_completed_history_revision,
     query_session_entertainment_trend as _query_session_entertainment_trend,
     summarize_daily_trusted_metrics,
@@ -69,6 +70,7 @@ query_entertainment_trend = partial(_query_entertainment_trend, read_conn)
 query_session_count = partial(_query_session_count, read_conn)
 query_today_sessions = partial(_query_today_sessions, read_conn)
 query_sessions_for_dates = partial(_query_sessions_for_dates, read_conn)
+query_sessions_overlapping = partial(_query_sessions_overlapping, read_conn)
 query_completed_history_revision = partial(_query_completed_history_revision, read_conn)
 query_category_detail = partial(_query_category_detail, read_conn)
 count_consecutive_days = partial(_count_consecutive_days, read_conn)

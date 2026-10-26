@@ -10,9 +10,10 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
-from PySide6.QtCore import QDate, QObject, Qt, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import QApplication, QAbstractButton, QLabel
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,7 +22,6 @@ sys.path.insert(0, str(SRC))
 
 from desktop_activity_tracker import database  # noqa: E402
 from desktop_activity_tracker.gui.main_window import MainWindow  # noqa: E402
-from daylens.services.intelligence_state import save_settings  # noqa: E402
 
 
 class DummyWorker(QObject):
@@ -84,7 +84,12 @@ def _write_config(path: Path):
 def main():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-    with tempfile.TemporaryDirectory() as tmp:
+    # MainWindow's theme persistence uses the package-level data directory,
+    # independently of the supplied SQLite path. Isolate BOTH import namespaces
+    # so manual/parallel smoke runs never touch an installed user's settings.
+    with (tempfile.TemporaryDirectory() as tmp,
+          patch("daylens.get_data_dir", return_value=tmp),
+          patch("desktop_activity_tracker.get_data_dir", return_value=tmp)):
         tmp_path = Path(tmp)
         config_path = tmp_path / "config.yaml"
         reports_dir = tmp_path / "reports"
@@ -115,13 +120,14 @@ def main():
         assert not hasattr(window.pages["today"], "action_card")
         assert not hasattr(window.pages["today"], "task_insight_card")
         assert not hasattr(window.pages["today"], "daily_goal_card")
-        assert window.pages["stats"].tabs.count() == 4
+        assert window.pages["stats"].tabs.count() == 3
+        assert "tasks" not in window.pages
         window.navigate_to("stats", tab="goals")
         assert window.pages["stats"].tabs.currentWidget() is window.pages["goals"]
         assert window.lbl_page_title.text() == "目标与成果"
         assert "投入与产出" in window.lbl_today.text()
-        window.navigate_to("stats", tab="tasks")
-        assert window.pages["stats"].tabs.currentWidget() is window.pages["tasks"]
+        window.navigate_to("stats", tab="software")
+        assert window.pages["stats"].tabs.currentWidget() is window.pages["software"]
         assert window.lbl_page_title.text() == "统计"
         window.navigate_to("today")
         assert not window.lbl_page_hint.isVisible(), "today status hint stays hidden without an observation"
@@ -138,6 +144,7 @@ def main():
         assert window.chk_dark_mode.isChecked() is False, "dark mode toggle should switch off"
         light_style = window.styleSheet()
         assert light_style != dark_style, "light theme should change window stylesheet"
+        assert (tmp_path / "user_config.yaml").is_file(), "theme settings must stay in the isolated smoke directory"
         window.chk_dark_mode.click()
         app.processEvents()
         assert window.chk_dark_mode.isChecked() is True, "dark mode toggle should switch on"
@@ -168,17 +175,9 @@ def main():
         assert overview.insight_card is None, "trusted insight card should be removed"
         assert overview.time_stats_card is None, "time stats card should be removed"
 
-        goal_day = "2026-10-20"
-        window.pages["goals"].day_picker.setDate(QDate.fromString(goal_day, "yyyy-MM-dd"))
-        save_settings(window.paths.intelligence_dir,
-                      {"task_analysis_enabled": True})
-        window._on_background_task_completed("task:load:" + goal_day, {
-            "day": goal_day, "status": "ready", "revision": 0,
-            "tasks": [{"id": "confirmed-task", "name": "课程", "status": "confirmed",
-                       "source_session_ids": ["s1"], "engaged_seconds": 60}],
-            "transitions": [], "evidence": {},
-        })
-        assert window.pages["goals"].available_tasks[0]["id"] == "confirmed-task"
+        ai_settings = window.pages["settings"].intelligence_settings
+        assert not hasattr(ai_settings, "task_local")
+        assert not hasattr(ai_settings, "task_cloud")
 
         for row in range(window.nav_list.count()):
             item = window.nav_list.item(row)

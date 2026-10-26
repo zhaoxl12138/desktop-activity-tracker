@@ -370,6 +370,7 @@ def test_rhythm_complete_day_and_week_views_preserve_unknown_gaps():
     assert seven["chart"]["labels"] == [
         "8/6", "8/7", "8/8", "8/9", "8/10", "8/11", "8/12"
     ]
+    assert seven["chart"]["dates"] == [f"2026-08-{day:02d}" for day in range(6, 13)]
     assert seven["chart"]["values"][2] is None  # 2026-08-08 is unknown.
     assert seven["chart"]["values"][-1] is None  # Today is not recorded yet.
     assert seven["metrics"][2]["label"] == "总时间"
