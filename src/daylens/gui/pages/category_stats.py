@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from datetime import date, timedelta
+
+from PySide6.QtCore import QDate, QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QFrame,
     QHeaderView,
+    QComboBox,
+    QDateEdit,
+    QHBoxLayout,
     QLabel,
     QProgressBar,
     QScrollArea,
@@ -138,14 +143,14 @@ class _CategoryCard(QFrame):
         self._time_lbl.setText(fmt_seconds(secs))
         self._pct_lbl.setText(f"{pct}%")
 
-    def set_expanded(self, expanded, detail_data=None):
+    def set_expanded(self, expanded, detail_data=None, error_message=None, status_message=None):
         self._expanded = expanded
         self._arrow.setText("▼" if expanded else "▶")
         if expanded and detail_data is not None:
-            self._build_detail(detail_data)
+            self._build_detail(detail_data, error_message, status_message)
         self._detail.setVisible(expanded)
 
-    def _build_detail(self, rows):
+    def _build_detail(self, rows, error_message=None, status_message=None):
         layout = self._detail.layout()
         if layout is None:
             layout = QVBoxLayout(self._detail)
@@ -159,7 +164,12 @@ class _CategoryCard(QFrame):
         layout.setSpacing(4)
 
         if not rows:
-            empty = QLabel("  暂无记录")
+            message = "  暂无记录"
+            if error_message is not None:
+                message = f"  明细读取失败：{error_message}" if error_message else "  明细读取失败"
+            elif status_message is not None:
+                message = f"  {status_message}"
+            empty = QLabel(message)
             empty.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
             layout.addWidget(empty)
             return
@@ -212,7 +222,10 @@ class CategoryStatsPage(QWidget):
         self.db_path = db_path
         self._cards = {}
         self._expanded_key = None
-        self._current_date = ""
+        self._range_start = ""
+        self._range_end = ""
+        self._detail_query: tuple[str, str, str] | None = None
+        self._detail_active = False
         self._is_active = False
         self._last_signature = None
         self._empty_label: QLabel | None = None
@@ -220,6 +233,29 @@ class CategoryStatsPage(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(14)
+
+        period_row = QHBoxLayout()
+        period_row.setSpacing(8)
+        period_row.addWidget(QLabel("统计范围"))
+        self.period_combo = QComboBox()
+        for label, value in (("今天", "today"), ("近 7 天", "7d"),
+                             ("近 30 天", "30d"), ("自定义", "custom")):
+            self.period_combo.addItem(label, value)
+        self.period_combo.setCurrentIndex(self.period_combo.findData("7d"))
+        period_row.addWidget(self.period_combo)
+        self.start_edit = QDateEdit(QDate.currentDate().addDays(-6))
+        self.end_edit = QDateEdit(QDate.currentDate())
+        for edit in (self.start_edit, self.end_edit):
+            edit.setCalendarPopup(True)
+            edit.setDisplayFormat("yyyy-MM-dd")
+            edit.setEnabled(False)
+        period_row.addWidget(self.start_edit)
+        period_row.addWidget(QLabel("至"))
+        period_row.addWidget(self.end_edit)
+        period_row.addStretch(1)
+        layout.addLayout(period_row)
+        self._selection = ("7d", self.start_edit.date().toString("yyyy-MM-dd"),
+                           self.end_edit.date().toString("yyyy-MM-dd"))
 
         self.error_lbl = QLabel()
         self.error_lbl.setStyleSheet(
@@ -247,7 +283,7 @@ class CategoryStatsPage(QWidget):
         layout.addWidget(self.total_label)
 
         self._refresh_controller = DashboardRefreshController(
-            lambda: category_stats_service.load_category_summary(self.db_path),
+            self._load_selected_summary,
             interval_ms=30_000,
             parent=self,
         )
@@ -256,16 +292,144 @@ class CategoryStatsPage(QWidget):
         )
         self._refresh_controller.failed.connect(self._show_refresh_error)
         self.timer = self._refresh_controller.timer
+        self._detail_refresh_controller = DashboardRefreshController(
+            self._load_selected_detail,
+            interval_ms=30_000,
+            parent=self,
+        )
+        self._detail_refresh_controller.snapshot_ready.connect(self._apply_detail)
+        self._detail_refresh_controller.failed.connect(self._show_detail_error)
+        self.period_combo.currentIndexChanged.connect(self._on_period_changed)
+        self.start_edit.dateChanged.connect(self._on_period_changed)
+        self.end_edit.dateChanged.connect(self._on_period_changed)
+
+    def _selected_range(self) -> tuple[str, str]:
+        today = QDate.currentDate()
+        period = self.period_combo.currentData()
+        if period == "today":
+            start = end = today
+        elif period == "7d":
+            start, end = today.addDays(-6), today
+        elif period == "30d":
+            start, end = today.addDays(-29), today
+        else:
+            start, end = self.start_edit.date(), self.end_edit.date()
+        span = start.daysTo(end)
+        if not 0 <= span < 366:
+            raise ValueError("日期范围必须为 1 至 366 天，且开始日期不能晚于结束日期")
+        return start.toString("yyyy-MM-dd"), end.toString("yyyy-MM-dd")
+
+    def _load_selected_summary(self) -> dict[str, object]:
+        period, custom_start, custom_end = self._selection
+        today = date.today()
+        if period == "today":
+            start = end = today.isoformat()
+        elif period == "7d":
+            start, end = (today - timedelta(days=6)).isoformat(), today.isoformat()
+        elif period == "30d":
+            start, end = (today - timedelta(days=29)).isoformat(), today.isoformat()
+        else:
+            start, end = custom_start, custom_end
+        return category_stats_service.load_category_summary(self.db_path, start, end)
+
+    def _load_selected_detail(self) -> dict[str, object]:
+        context = self._detail_query
+        if context is None:
+            return {"context": None, "rows": []}
+        start, end, key = context
+        rows = category_stats_service.load_category_range_detail(
+            self.db_path, start, end, key, 5,
+        )
+        return {"context": context, "rows": rows}
+
+    def _apply_detail(self, snapshot) -> None:
+        payload = snapshot.payload
+        context = payload.get("context")
+        if context is None or context != self._detail_query:
+            return
+        start, end, key = context
+        if (self._expanded_key != key or start != self._range_start
+                or end != self._range_end):
+            return
+        card = self._cards.get(key)
+        if card is not None:
+            card.set_expanded(True, payload.get("rows", []))
+
+    def _show_detail_error(self, message: str) -> None:
+        if self._detail_query is None:
+            return
+        key = self._detail_query[2]
+        if self._expanded_key != key:
+            return
+        card = self._cards.get(key)
+        if card is not None:
+            card.set_expanded(True, [], error_message=message)
+
+    def _stop_detail_query(self) -> None:
+        self._detail_query = None
+        self._detail_active = False
+        self._detail_refresh_controller.set_foreground(False)
+
+    def _refresh_expanded_detail(self) -> None:
+        key = self._expanded_key
+        card = self._cards.get(key) if key is not None else None
+        if card is None:
+            self._stop_detail_query()
+            self._expanded_key = None
+            return
+        self._detail_query = (self._range_start, self._range_end, key)
+        card.set_expanded(True, [], status_message="正在加载明细…")
+        if self._is_active:
+            if self._detail_active:
+                self._detail_refresh_controller.invalidate_context()
+            else:
+                self._detail_active = True
+                self._detail_refresh_controller.invalidate_context()
+                self._detail_refresh_controller.set_foreground(True)
+
+    def _on_period_changed(self, *_args) -> None:
+        period = self.period_combo.currentData()
+        custom = period == "custom"
+        if not custom:
+            today = QDate.currentDate()
+            start = today.addDays({"today": 0, "7d": -6, "30d": -29}[period])
+            for edit, value in ((self.start_edit, start), (self.end_edit, today)):
+                edit.blockSignals(True)
+                edit.setDate(value)
+                edit.blockSignals(False)
+        self._selection = (
+            str(period),
+            self.start_edit.date().toString("yyyy-MM-dd"),
+            self.end_edit.date().toString("yyyy-MM-dd"),
+        )
+        self.start_edit.setEnabled(custom)
+        self.end_edit.setEnabled(custom)
+        self._last_signature = None
+        self._clear_all_cards()
+        self.total_label.setText("加载中…")
+        try:
+            self._selected_range()
+        except ValueError as exc:
+            self._show_refresh_error(str(exc))
+        else:
+            self.error_lbl.hide()
+        self._refresh_controller.invalidate_context()
 
     def activate(self, force: bool = False) -> None:
         self._is_active = True
         self._refresh_controller.set_foreground(True)
+        if self._detail_query is not None:
+            self._detail_active = True
+            self._detail_refresh_controller.invalidate_context()
+            self._detail_refresh_controller.set_foreground(True)
         if force:
             self._refresh_controller.request_refresh()
 
     def deactivate(self) -> None:
         self._is_active = False
         self._refresh_controller.set_foreground(False)
+        self._detail_active = False
+        self._detail_refresh_controller.set_foreground(False)
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -281,7 +445,7 @@ class CategoryStatsPage(QWidget):
             return
         self.error_lbl.hide()
         try:
-            summary = category_stats_service.load_category_summary(self.db_path)
+            summary = self._load_selected_summary()
             self._apply_summary(summary)
         except Exception as exc:
             self._show_refresh_error(str(exc))
@@ -289,11 +453,18 @@ class CategoryStatsPage(QWidget):
     def _apply_summary(self, summary):
         self.error_lbl.hide()
         try:
-            self._current_date = str(summary["today"])
+            self._range_start = str(summary.get("range_start", summary["today"]))
+            self._range_end = str(summary.get("range_end", summary["today"]))
+            if self.period_combo.currentData() != "custom":
+                for edit, day in ((self.start_edit, self._range_start),
+                                  (self.end_edit, self._range_end)):
+                    with QSignalBlocker(edit):
+                        edit.setDate(QDate.fromString(day, "yyyy-MM-dd"))
             categories = list(summary["categories"])
             total_eff = int(summary["total_effective_seconds"])
             signature = (
-                self._current_date,
+                self._range_start,
+                self._range_end,
                 total_eff,
                 tuple(
                     (item.get("category_key"), item.get("effective_seconds"), item.get("category_name"))
@@ -344,6 +515,8 @@ class CategoryStatsPage(QWidget):
                 if card is not None:
                     self.cards_container.removeWidget(card)
                     self.cards_container.insertWidget(0, card)
+            if self._expanded_key is not None:
+                self._refresh_expanded_detail()
         except Exception as exc:
             self._show_refresh_error(str(exc))
 
@@ -352,12 +525,16 @@ class CategoryStatsPage(QWidget):
         self.error_lbl.show()
 
     def shutdown(self, timeout_ms: int = 5_000) -> bool:
-        return self._refresh_controller.shutdown(timeout_ms)
+        detail_done = self._detail_refresh_controller.shutdown(timeout_ms)
+        summary_done = self._refresh_controller.shutdown(timeout_ms)
+        return detail_done and summary_done
 
     def resume(self) -> None:
         self._refresh_controller.resume(self._is_active)
+        self._detail_refresh_controller.resume(self._is_active and self._detail_query is not None)
 
     def _clear_all_cards(self):
+        self._stop_detail_query()
         while self.cards_container.count():
             item = self.cards_container.takeAt(0)
             if item.widget():
@@ -377,24 +554,22 @@ class CategoryStatsPage(QWidget):
     def _on_card_clicked(self, cat_key):
         if self._expanded_key == cat_key:
             self._collapse_card(cat_key)
-            self._expanded_key = None
         else:
             if self._expanded_key:
                 self._collapse_card(self._expanded_key)
             self._expand_card(cat_key)
-            self._expanded_key = cat_key
 
     def _expand_card(self, cat_key):
         card = self._cards.get(cat_key)
         if not card:
             return
-        try:
-            detail = category_stats_service.load_category_detail(self.db_path, self._current_date, cat_key, 5)
-        except Exception:
-            detail = []
-        card.set_expanded(True, detail)
+        self._expanded_key = cat_key
+        self._refresh_expanded_detail()
 
     def _collapse_card(self, cat_key):
         card = self._cards.get(cat_key)
         if card:
             card.set_expanded(False)
+        if self._expanded_key == cat_key:
+            self._expanded_key = None
+            self._stop_detail_query()

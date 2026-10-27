@@ -10,7 +10,11 @@ from desktop_activity_tracker.services import (
     shell_service,
     software_stats_service,
 )
-from desktop_activity_tracker.utils import normalize_category_display_name
+from desktop_activity_tracker.utils import (
+    _DEFAULT_CATEGORIES,
+    normalize_category_display_name,
+    normalize_rule_category_display_name,
+)
 
 
 def test_normalize_category_display_name_maps_new_global_labels():
@@ -160,4 +164,29 @@ def test_rule_categories_hide_idle_and_normalize_names(tmp_path, monkeypatch):
 
     assert "idle" not in categories
     assert categories["browser_general"]["display_name"] == "浏览器"
-    assert categories["video"]["display_name"] == "娱乐休闲"
+    assert categories["video"]["display_name"] == "视频与游戏"
+
+
+def test_rule_entertainment_names_distinguish_legacy_duplicates_and_keep_custom_names():
+    assert normalize_rule_category_display_name("gaming", "娱乐休闲") == "游戏娱乐"
+    assert normalize_rule_category_display_name("video", "娱乐休闲") == "视频娱乐"
+    assert normalize_rule_category_display_name("video", "视频与游戏") == "视频与游戏"
+    assert normalize_rule_category_display_name("video", "影音娱乐") == "影音娱乐"
+    assert normalize_rule_category_display_name("video", "游戏娱乐") == "游戏娱乐"
+    assert normalize_rule_category_display_name("gaming", "视频娱乐") == "视频娱乐"
+    assert normalize_rule_category_display_name("gaming", "我玩的游戏") == "我玩的游戏"
+    assert normalize_rule_category_display_name("video", "我的影院") == "我的影院"
+
+
+def test_factory_entertainment_rule_names_and_policies_are_distinct():
+    assert _DEFAULT_CATEGORIES["gaming"]["display_name"] == "游戏娱乐"
+    assert _DEFAULT_CATEGORIES["gaming"]["active_rule"] == "interactive_required"
+    assert _DEFAULT_CATEGORIES["video"]["display_name"] == "视频娱乐"
+    assert _DEFAULT_CATEGORIES["video"]["active_rule"] == "passive_allowed"
+    root = Path(__file__).resolve().parents[1]
+    for filename in ("config.yaml", "config.example.yaml"):
+        categories = yaml.safe_load((root / "config" / filename).read_text(encoding="utf-8"))["categories"]
+        assert categories["gaming"]["display_name"] == "游戏娱乐"
+        assert categories["gaming"]["active_rule"] == "interactive_required"
+        assert categories["video"]["display_name"] == "视频娱乐"
+        assert categories["video"]["active_rule"] == "passive_allowed"

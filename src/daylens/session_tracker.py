@@ -8,6 +8,8 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+from .window_detector import is_shell_desktop_window
+
 
 # ── Input polling (cursor + keyboard, immune to phantom HID events) ──
 
@@ -406,6 +408,10 @@ class SessionTracker:
         audio_playing: bool,
         work_voice_active: bool = False,
     ) -> str:
+        # An observed desktop/taskbar (or no foreground window) is not
+        # effective activity, even while the user moves the mouse there.
+        if category_key == "idle":
+            return "idle"
         if self._persistent_idle <= self.idle_threshold:
             return "engaged"
         if _get_domain(category_key) == "work_study" and work_voice_active:
@@ -693,7 +699,9 @@ class SessionTracker:
             self._last_exe_path = exe_path
 
         # Classify
-        if process_name == "system":
+        if process_name == "system" or is_shell_desktop_window(
+            process_name, (win_info or {}).get("window_class", "")
+        ):
             cat_key = "idle"
             cat_name = "空闲"
             active_rule = "interactive_required"
@@ -711,7 +719,7 @@ class SessionTracker:
         base_category = cat_key
         ai_decision = None
         intelligence = getattr(self, 'intelligence', None)
-        if intelligence is not None:
+        if intelligence is not None and cat_key != "idle":
             try:
                 prior_active = (self._last_attention_state == 'engaged'
                                 and idle_seconds <= self.idle_threshold)
@@ -1382,7 +1390,9 @@ class SessionTracker:
             "classification_version": (
                 s.classification_version if s else self.classification_version
             ),
-            "is_user_active": self._persistent_idle <= self.idle_threshold,
+            "is_user_active": (
+                cat_key != "idle" and self._persistent_idle <= self.idle_threshold
+            ),
             "is_effective": is_eff,
             "pending_switch_domain": self._pending_switch["domain"] if self._pending_switch else None,
             "pending_switch_elapsed": (

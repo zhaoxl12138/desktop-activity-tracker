@@ -376,12 +376,13 @@ def test_rhythm_complete_day_and_week_views_preserve_unknown_gaps():
     assert seven["metrics"][2]["label"] == "总时间"
     assert seven["metrics"][2]["value"] == "5小时12分钟"
     thirty = rhythm["30d"]
-    assert thirty["date_range"] == ["2026-07-13", "2026-08-11"]
+    assert thirty["date_range"] == ["2026-07-14", "2026-08-12"]
     assert thirty["chart"]["kind"] == "bars"
     assert len(thirty["chart"]["labels"]) == 30
-    assert thirty["chart"]["values"][26] is None
+    assert thirty["chart"]["values"][25] is None
+    assert thirty["chart"]["values"][-1] is None
     assert thirty["metrics"][2]["label"] == "总时间"
-    assert thirty["metrics"][2]["value"] == "36小时12分钟"
+    assert thirty["metrics"][2]["value"] == "34小时43分钟"
 
 
 def test_rhythm_seven_day_best_day_uses_chronological_date_value():
@@ -545,15 +546,17 @@ def test_rhythm_keeps_all_recorded_values_visible_from_august_thirteenth():
     assert seven["status"]["label"] == "口径已变化"
 
     thirty = rhythm["30d"]
-    assert thirty["date_range"] == ["2026-08-12", "2026-08-19"]
+    assert thirty["date_range"] == ["2026-07-22", "2026-08-20"]
     assert thirty["chart"]["kind"] == "bars"
-    assert thirty["chart"]["labels"] == [
-        "8/12", "8/13", "8/14", "8/15", "8/16", "8/17", "8/18", "8/19"
+    assert thirty["chart"]["labels"][-9:] == [
+        "8/12", "8/13", "8/14", "8/15", "8/16", "8/17", "8/18", "8/19", "8/20"
     ]
-    assert thirty["chart"]["values"] == [
-        1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900
+    assert thirty["chart"]["values"][:21] == [None]*21
+    assert thirty["chart"]["values"][-9:] == [
+        1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900, None
     ]
-    assert thirty["chart"]["value_kinds"] == [
+    assert thirty["chart"]["value_kinds"][:21] == ["missing"]*21
+    assert thirty["chart"]["value_kinds"][-9:] == [
         "current",
         "current",
         "current",
@@ -562,9 +565,10 @@ def test_rhythm_keeps_all_recorded_values_visible_from_august_thirteenth():
         "current",
         "current",
         "legacy",
+        "missing",
     ]
     assert thirty["comparison"]["comparable"] is False
-    assert thirty["conclusion"] == "8/12–8/19"
+    assert thirty["conclusion"] == "7/22–8/20"
 
 
 def test_rhythm_today_baseline_is_clipped_to_the_same_time_of_day():
@@ -1414,14 +1418,15 @@ def test_thirty_day_trend_prefers_engaged_and_marks_new_snapshot_semantics(
     assert snapshot["trend"]["thirty_day_metric"] == "engaged"
 
 
-def test_thirty_day_rhythm_uses_actual_record_start_not_fixed_product_date():
+def test_thirty_day_rhythm_keeps_gaps_before_actual_record_start():
     from daylens.services.dashboard_service import _build_thirty_day_rhythm
 
     captured = datetime(2026, 8, 19, 12, 0, 0)
     rows = [
         {
-            "date": "2026-07-20",
+            "date": "2026-08-05",
             "total_samples": 1,
+            "session_count": 1,
             "engaged_seconds": 600,
             "work_engaged_seconds": 600,
             "metric_versions": ["attention-v1"],
@@ -1431,7 +1436,8 @@ def test_thirty_day_rhythm_uses_actual_record_start_not_fixed_product_date():
 
     model = _build_thirty_day_rhythm(captured, rows)
 
-    assert model["date_range"] == ["2026-07-20", "2026-08-18"]
+    assert model["date_range"] == ["2026-07-21", "2026-08-19"]
+    assert model["chart"]["values"] == [None]*15 + [600] + [None]*14
 
 
 def test_dashboard_can_skip_retired_goals_and_trend_calculations(tmp_path, monkeypatch):

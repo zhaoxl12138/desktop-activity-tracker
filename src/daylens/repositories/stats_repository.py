@@ -437,6 +437,8 @@ def _aggregate_mixed_history(
     dates: list[str],
     session_rows: list[dict],
     legacy_rows: list[dict],
+    *,
+    detail_limit: int | None = 50,
 ) -> dict:
     daily_map = {date_str: _empty_activity_day(date_str) for date_str in dates}
     category_map: dict[tuple[str, str], dict] = {}
@@ -634,6 +636,13 @@ def _aggregate_mixed_history(
         "video_seconds": sum(row["video_seconds"] for row in daily),
         **_merge_trusted_summaries([session_trust, legacy_trust]),
     }
+    detail_rows = sorted(
+        app_detail_map.values(),
+        key=lambda row: row["effective_seconds"],
+        reverse=True,
+    )
+    if detail_limit is not None:
+        detail_rows = detail_rows[:detail_limit]
     return {
         "dates": dates,
         "daily": daily,
@@ -647,11 +656,7 @@ def _aggregate_mixed_history(
             key=lambda row: row["effective_seconds"],
             reverse=True,
         ),
-        "by_app_detail": sorted(
-            app_detail_map.values(),
-            key=lambda row: row["effective_seconds"],
-            reverse=True,
-        )[:50],
+        "by_app_detail": detail_rows,
         "totals": totals,
     }
 
@@ -997,3 +1002,22 @@ def query_date_range_stats(read_conn, db_path: str, dates: list[str]) -> dict:
     payload.pop("by_app_detail", None)
     payload["by_app"] = payload["by_app"][:20]
     return payload
+
+
+def query_category_range_detail(
+    read_conn, db_path: str, dates: list[str], category_key: str, limit: int = 5,
+) -> list[dict]:
+    """Return a category's top details before any global top-N truncation."""
+    from ..utils import normalize_category_bucket_key
+
+    dates = list(dict.fromkeys(dates))
+    if not dates or limit <= 0:
+        return []
+    session_rows, legacy_rows = _load_mixed_history_rows(read_conn, db_path, dates)
+    payload = _aggregate_mixed_history(
+        dates, session_rows, legacy_rows, detail_limit=None,
+    )
+    return [
+        row for row in payload["by_app_detail"]
+        if normalize_category_bucket_key(row["category_key"], row["category_name"]) == category_key
+    ][:limit]

@@ -6,9 +6,9 @@ import queue
 import threading
 from datetime import date
 
-from PySide6.QtCore import QSignalBlocker, Qt, QTimer
+from PySide6.QtCore import QEvent, QSignalBlocker, Qt, QTimer
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout,
+    QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout,
     QHeaderView, QLabel, QPushButton, QScrollArea, QTableView,
     QToolTip, QVBoxLayout, QWidget,
 )
@@ -69,6 +69,8 @@ class DayActivityDialog(QDialog):
         self._pending = None
         self._closed = False
         self._selected_event_id = None
+        self.selected_category = None
+        self.category_buttons = {}
         self.model = {"status": "loading", "events": [], "segments": []}
         self._visible_events = []
         self.setWindowTitle("全天活动详情")
@@ -131,7 +133,8 @@ class DayActivityDialog(QDialog):
         self.scroll.setWidget(content)
         self.timeline = DayActivityCategoryTimeline()
         self.body.addWidget(self.timeline)
-        self.help_label = QLabel("空闲：灰色　未来：点纹　异常：斜纹　无记录：底色（不等于空闲）")
+        self._timeline_help = "空闲／高空闲：留白　未来：点纹　异常：斜纹　无记录：底色（不等于空闲）"
+        self.help_label = QLabel(self._timeline_help)
         self.help_label.setWordWrap(True)
         self.help_label.setStyleSheet(f"color: {style.COLORS['text_secondary']};")
         self.body.addWidget(self.help_label)
@@ -152,6 +155,20 @@ class DayActivityDialog(QDialog):
             f"QCheckBox::indicator:checked {{ background: {style.COLORS['primary']}; border-color: {style.COLORS['primary']}; }}")
         filters.addWidget(self.show_all)
         event_layout.addLayout(filters)
+        self.category_scroll = QScrollArea()
+        self.category_scroll.setWidgetResizable(True)
+        self.category_scroll.setFrameShape(QFrame.NoFrame)
+        self.category_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.category_scroll.setFixedHeight(42)
+        self.category_content = QWidget()
+        self.category_layout = QHBoxLayout(self.category_content)
+        self.category_layout.setContentsMargins(0, 0, 0, 0)
+        self.category_layout.setSpacing(6)
+        self.category_scroll.setWidget(self.category_content)
+        event_layout.addWidget(self.category_scroll)
+        self._category_group = QButtonGroup(self)
+        self._category_group.setExclusive(True)
+        self._populate_category_buttons()
         self.filter_hint = QLabel()
         self.filter_hint.setWordWrap(True)
         self.filter_hint.setStyleSheet(f"color: {style.COLORS['text_secondary']};")
@@ -168,16 +185,18 @@ class DayActivityDialog(QDialog):
         self.events_table.setMinimumHeight(190)
         self.events_table.verticalHeader().hide()
         self.events_table.verticalHeader().setDefaultSectionSize(38)
-        for column, width in ((0, 115), (1, 95), (3, 80), (4, 90), (5, 80)):
-            self.events_table.setColumnWidth(column, width)
-        self.events_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.events_table.horizontalHeader().setStretchLastSection(False)
+        self.events_table.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
         self.events_table.horizontalHeader().setMinimumSectionSize(50)
+        self.events_table.viewport().installEventFilter(self)
+        self._resize_event_columns()
         event_layout.addWidget(self.events_table, 1)
         self.body.addWidget(event_panel, 1)
 
         self.events_table.selectionModel().selectionChanged.connect(lambda *_args: self._select_event())
         self.show_all.toggled.connect(self._render_events)
         self.timeline.event_activated.connect(self._activate_event)
+        self.timeline.category_activated.connect(self._set_category)
         self.day_picker.currentIndexChanged.connect(self.refresh)
         self.refresh_button.clicked.connect(self.refresh)
         self._timer = QTimer(self)
@@ -185,6 +204,74 @@ class DayActivityDialog(QDialog):
         self._timer.timeout.connect(self._poll)
         self._timer.start()
         self.refresh()
+
+    def eventFilter(self, watched, event):  # noqa: N802
+        if watched is self.events_table.viewport() and event.type() == QEvent.Resize:
+            self._resize_event_columns()
+        return super().eventFilter(watched, event)
+
+    def _resize_event_columns(self):
+        """Reserve readable evidence columns instead of stretching titles forever."""
+        if not hasattr(self, "events_table"):
+            return
+        viewport_width = self.events_table.viewport().width()
+        other_minima = (110, 95, 90, 95, 75)
+        title_minimum = 180
+        minimum_total = sum(other_minima) + title_minimum
+        if viewport_width <= minimum_total:
+            widths = [110, 95, title_minimum, 90, 95, 75]
+        else:
+            title_width = min(440, int(viewport_width * .32), viewport_width - sum(other_minima))
+            surplus = viewport_width - sum(other_minima) - title_width
+            weights = (2, 2, 2, 1, 1)
+            extras = [surplus * weight // sum(weights) for weight in weights]
+            extras[-1] += surplus - sum(extras)
+            widths = [other_minima[0] + extras[0], other_minima[1] + extras[1],
+                      title_width, other_minima[2] + extras[2],
+                      other_minima[3] + extras[3], other_minima[4] + extras[4]]
+        for index, width in enumerate(widths):
+            if self.events_table.columnWidth(index) != width:
+                self.events_table.setColumnWidth(index, width)
+
+    def _populate_category_buttons(self):
+        while self.category_layout.count():
+            item = self.category_layout.takeAt(0)
+            if item.widget() is not None:
+                self._category_group.removeButton(item.widget())
+                item.widget().deleteLater()
+        self.category_buttons = {}
+        choices = (("all", "全部分类"),) + tuple(
+            (lane["key"], lane["name"]) for lane in self.timeline.available_categories
+        )
+        for key, label in choices:
+            button = QPushButton(label)
+            button.setCheckable(True)
+            button.setCursor(Qt.PointingHandCursor)
+            button.setStyleSheet(
+                style.get_button_secondary_style()
+                + "QPushButton { padding: 4px 10px; border-radius: 8px; font-size: 12px; }"
+                + f"QPushButton:checked {{ background: {style.COLORS['primary']};"
+                  f" border-color: {style.COLORS['primary']}; color: white; }}"
+            )
+            button.clicked.connect(lambda _checked=False, category=key:
+                                   self._set_category(None if category == "all" else category))
+            self._category_group.addButton(button)
+            self.category_layout.addWidget(button)
+            self.category_buttons[key] = button
+        self.category_buttons["all"].setChecked(True)
+        self.category_layout.addStretch(1)
+
+    def _set_category(self, group):
+        if group is not None and group not in self.category_buttons:
+            return
+        self.selected_category = group
+        self.category_buttons[group or "all"].setChecked(True)
+        self.timeline.set_category_filter(group)
+        if (self._selected_event_id is not None
+                and self.timeline.group_for_event(self._selected_event_id) != group
+                and group is not None):
+            self._selected_event_id = None
+        self._render_events()
 
     @staticmethod
     def _panel():
@@ -201,10 +288,14 @@ class DayActivityDialog(QDialog):
         day = self.day_picker.currentData()
         request = (self._generation, day)
         self.model = {"status": "loading", "day": day, "events": [], "segments": []}
+        self.selected_category = None
+        self._selected_event_id = None
         self.timeline.set_model(self.model)
+        self._populate_category_buttons()
         self._visible_events = []
         self.events_model.set_events([])
         self.filter_hint.hide()
+        self.help_label.setText(self._timeline_help)
         self.status_label.setText("正在读取所选日期的本地记录…")
         self.summary_label.setText("有效活动 — · 独立事件 —")
         self.previous_button.setEnabled(self.day_picker.currentIndex() > 0)
@@ -244,6 +335,8 @@ class DayActivityDialog(QDialog):
             self.model = result
             self._selected_event_id = None
             self.timeline.set_model(result)
+            self.selected_category = None
+            self._populate_category_buttons()
             self._display_status(result, day)
             totals = result.get("totals") or {}
             total = fmt_seconds(int(totals.get("effective_seconds") or 0))
@@ -275,10 +368,15 @@ class DayActivityDialog(QDialog):
     def _render_events(self, *_args):
         events = self.model.get("events", [])
         self._visible_events = sorted((event for event in events
-                                       if self.show_all.isChecked() or int(event.get("effective_seconds") or 0) >= 300),
+                                       if (self.selected_category is None
+                                           or self.timeline.group_for_event(event["id"]) == self.selected_category)
+                                       and (self.show_all.isChecked()
+                                            or int(event.get("effective_seconds") or 0) >= 300)),
                                       key=lambda item: item["start_second"])
         suffix = "全部" if self.show_all.isChecked() else "有效 ≥5分钟"
-        self.events_heading.setText(f"全天事件 · {suffix}（{len(self._visible_events)}）")
+        category = self.category_buttons.get(self.selected_category)
+        category_name = category.text() if category is not None else "全部分类"
+        self.events_heading.setText(f"全天事件 · {category_name} · {suffix}（{len(self._visible_events)}）")
         self.filter_hint.setText("今天没有有效活动达到5分钟的事件，可勾选“显示全部事件”查看短片段。")
         self.filter_hint.setVisible(bool(self.model.get("events") and not self._visible_events))
         with QSignalBlocker(self.events_table.selectionModel()):
@@ -290,6 +388,13 @@ class DayActivityDialog(QDialog):
 
     def _highlight(self):
         self.timeline.select_event(self._selected_event_id)
+        if self._selected_event_id and self.timeline.is_event_hidden(self._selected_event_id):
+            if self.timeline.group_for_event(self._selected_event_id) == "idle":
+                self.help_label.setText("空闲记录未在时间轴绘制；原始记录仍保留在事件明细中。")
+            else:
+                self.help_label.setText("此记录空闲占比超过70%，未在时间轴绘制；仍保留在事件明细和统计中。")
+        else:
+            self.help_label.setText(self._timeline_help)
 
     def _select_event(self):
         row = self.events_table.currentIndex().row()

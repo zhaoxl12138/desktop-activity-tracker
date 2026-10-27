@@ -1,4 +1,4 @@
-"""Fixed full-day category lanes preserve the original activity evidence."""
+"""Activity-fitted category lanes preserve the original full-day evidence."""
 import copy
 import importlib.util
 import os
@@ -48,20 +48,87 @@ def test_fixed_category_component_exists():
     assert importlib.util.find_spec("daylens.gui.widgets.day_activity_category_timeline") is not None
 
 
-def test_fixed_axis_has_exact_full_day_endpoints_and_even_clock_labels(application):
-    widget = canvas(application, width=620)
+def test_axis_fits_first_and_last_activity_with_half_hour_rounding(application):
+    source = model([event("morning", 9*3600+42*60, 10*3600),
+                    event("noon", 12*3600, 12*3600+40*60, "video")])
+    widget = canvas(application, source, width=620)
     try:
         band = widget._band()
-        assert widget.tick_hours == tuple(range(25))
-        assert widget.labelled_hours == tuple(range(0, 25, 2))
-        assert widget._x(0) == band.left()
-        assert widget._x(86400) == band.right()
+        assert (widget.range_start, widget.range_end) == (9*3600+30*60, 13*3600)
+        assert widget._x(widget.range_start) == band.left()
+        assert widget._x(widget.range_end) == band.right()
+        assert widget._second(band.center().x()) == pytest.approx((widget.range_start+widget.range_end)/2)
         assert not hasattr(widget, "viewport")
         labels = widget.hour_labels()
-        assert labels[0][2].startswith("00") and labels[-1][2].startswith("24")
+        assert labels[0][2] == "09:30" and labels[-1][2] == "13:00"
         for (_, left, _), (_, right, _) in zip(labels, labels[1:]):
             assert left.right() <= right.left()
         assert all(0 <= rect.left() < rect.right() <= widget.width() for _, rect, _ in labels)
+    finally:
+        widget.close()
+
+
+@pytest.mark.parametrize("idle, hidden", [(69, False), (70, False), (71, True)])
+def test_high_idle_visibility_uses_strict_seventy_percent_boundary(application, idle, hidden):
+    source = model([event("mixed", 9*3600, 10*3600,
+                          duration_seconds=100, idle_seconds=idle,
+                          effective_seconds=100-idle)])
+    widget = canvas(application, source)
+    try:
+        assert widget.is_event_hidden("mixed") is hidden
+        assert widget.event_rect("mixed").isEmpty() is hidden
+        if hidden:
+            assert (widget.range_start, widget.range_end) == (0, 86400)
+            assert "暂无可展示" in widget.range_title()
+        else:
+            assert (widget.range_start, widget.range_end) == (9*3600, 10*3600)
+    finally:
+        widget.close()
+
+
+def test_high_idle_event_does_not_stretch_axis_or_accept_plot_click(application):
+    from PySide6.QtCore import QPoint
+
+    source = model([event("visible", 9*3600, 10*3600,
+                          duration_seconds=100, idle_seconds=0, effective_seconds=100),
+                    event("hidden", 14*3600, 21*3600, "tools",
+                          duration_seconds=25174, idle_seconds=25173, effective_seconds=1)])
+    widget = canvas(application, source)
+    try:
+        assert (widget.range_start, widget.range_end) == (9*3600, 10*3600)
+        assert widget.event_rect("hidden").isEmpty()
+        assert widget.lanes[-1]["effective_seconds"] == 1
+        spy = QSignalSpy(widget.event_activated)
+        band = widget._band(widget._lane_indices["tools"])
+        QTest.mouseClick(widget, Qt.LeftButton,
+                         pos=QPoint(round(band.center().x()), round(band.center().y())))
+        assert spy.count() == 0
+    finally:
+        widget.close()
+
+
+def test_hidden_event_inside_visible_range_has_no_hit_target(application):
+    from PySide6.QtCore import QPoint
+
+    source = model([event("morning", 9*3600, 10*3600,
+                          duration_seconds=100, idle_seconds=0),
+                    event("hidden", 12*3600, 13*3600, "tools",
+                          duration_seconds=100, idle_seconds=71, effective_seconds=29),
+                    event("evening", 15*3600, 16*3600, "video",
+                          duration_seconds=100, idle_seconds=0)])
+    widget = canvas(application, source)
+    try:
+        assert (widget.range_start, widget.range_end) == (9*3600, 16*3600)
+        assert "空闲占比超过70%" in widget.tooltip_for_second(12*3600+30, "tools")
+        spy = QSignalSpy(widget.event_activated)
+        band = widget._band(widget._lane_indices["tools"])
+        picture = widget.grab().toImage()
+        row = round(band.center().y())
+        assert picture.pixelColor(round(widget._x(12*3600+17*60)), row) == picture.pixelColor(
+            round(widget._x(11*3600+17*60)), row)
+        QTest.mouseClick(widget, Qt.LeftButton,
+                         pos=QPoint(round(widget._x(12*3600+30)), round(band.center().y())))
+        assert spy.count() == 0
     finally:
         widget.close()
 
@@ -94,7 +161,7 @@ def test_empty_and_idle_only_days_keep_primary_orientation_lanes(application):
         assert "idle" not in [lane["key"] for lane in widget.lanes]
         widget.select_event("idle")
         assert widget.selected_event_id == "idle"
-        assert widget.event_rect("idle").height() > widget._band().height()
+        assert widget.event_rect("idle").isEmpty()
         assert "空闲" in widget.tooltip_for_second(50)
     finally:
         widget.close()
@@ -116,10 +183,120 @@ def test_event_geometry_never_expands_short_sources_or_bridges_gaps(application)
     widget = canvas(application, model([event("left", 0, 1), event("right", 3, 4)]))
     try:
         left, right = widget.event_rect("left"), widget.event_rect("right")
-        assert left.width() == pytest.approx(widget._band().width()/86400)
+        assert left.width() == pytest.approx(widget._band().width()/(widget.range_end-widget.range_start))
         assert left.right() < right.left()
         assert "无记录" in widget.tooltip_for_second(2, "work")
         assert widget.event_rect("absent").isNull()
+    finally:
+        widget.close()
+
+
+@pytest.mark.parametrize("start,end,expected", [
+    (0, 1, (0, 1800)),
+    (36000, 36001, (36000, 37800)),
+    (86399, 86400, (84600, 86400)),
+    (0, 86400, (0, 86400)),
+])
+def test_activity_range_midnight_single_event_and_full_day(application, start, end, expected):
+    widget = canvas(application, model([event(start=start, end=end)]))
+    try:
+        assert (widget.range_start, widget.range_end) == expected
+        assert widget.event_rect("one").width() > 0
+        assert widget.hour_labels()[0][2] == f"{expected[0]//3600:02d}:{expected[0]%3600//60:02d}"
+        assert widget.hour_labels()[-1][2] == f"{expected[1]//3600:02d}:{expected[1]%3600//60:02d}"
+    finally:
+        widget.close()
+
+
+def test_leading_and_trailing_idle_do_not_determine_active_range(application):
+    source = model([
+        event("idle_before", 0, 9*3600, "idle", effective_seconds=0),
+        event("active", 9*3600+42*60, 12*3600+40*60),
+        event("zero", 15*3600, 16*3600, effective_seconds=0),
+        event("idle_after", 16*3600, 86400, "idle", effective_seconds=0),
+    ])
+    before = copy.deepcopy(source)
+    widget = canvas(application, source)
+    try:
+        assert (widget.range_start, widget.range_end) == (34200, 46800)
+        assert widget.event_rect("idle_before").isEmpty()
+        assert widget.event_rect("idle_after").isEmpty()
+        assert widget.event_rect("zero").isEmpty()
+        assert len(widget.model["events"]) == 4 and source == before
+    finally:
+        widget.close()
+
+
+def test_internal_idle_and_missing_intervals_keep_real_proportions(application):
+    source = model([event("left", 9*3600, 10*3600), event("right", 12*3600, 13*3600)], [
+        dict(kind="activity", start_second=32400, end_second=36000, event_id="left"),
+        dict(kind="idle", start_second=36000, end_second=39600),
+        dict(kind="missing", start_second=39600, end_second=43200),
+        dict(kind="activity", start_second=43200, end_second=46800, event_id="right"),
+    ])
+    before = copy.deepcopy(source)
+    widget = canvas(application, source)
+    try:
+        assert (widget.range_start, widget.range_end) == (32400, 46800)
+        assert widget._x(43200)-widget._x(36000) == pytest.approx(widget._band().width()/2)
+        assert "空闲" in widget.tooltip_for_second(38000)
+        assert "无记录" in widget.tooltip_for_second(41000)
+        assert source == before
+    finally:
+        widget.close()
+
+
+@pytest.mark.parametrize("span", [(0, 86400), (34200, 46800), (36000, 37800), (1800, 84600)])
+def test_adaptive_clock_labels_never_overlap_at_narrow_and_wide_widths(application, span):
+    source = model([event(start=span[0], end=span[1])])
+    widget = canvas(application, source)
+    try:
+        for width in (420, 620, 1180):
+            widget.resize(width, widget.minimumHeight())
+            labels = widget.hour_labels()
+            assert labels[0][0] == span[0] and labels[-1][0] == span[1]
+            for (_, left, _), (_, right, _) in zip(labels, labels[1:]):
+                assert left.right()+2 <= right.left()
+            assert all(rect.left() >= 0 and rect.right() <= width for _, rect, _ in labels)
+    finally:
+        widget.close()
+
+
+def test_no_effective_activity_keeps_day_reference_and_empty_range_state(application):
+    for source in (model([]), model([event("idle", 10000, 50000, "idle", effective_seconds=0)])):
+        widget = canvas(application, source)
+        try:
+            assert (widget.range_start, widget.range_end) == (0, 86400)
+            assert not widget.has_activity_range
+            assert "暂无可展示活动" in widget.range_title()
+        finally:
+            widget.close()
+
+
+def test_fractional_foreground_end_rounds_outward_and_keeps_mixed_idle_unknown(application):
+    source = model([event("mixed", 34200.5, 45000.25, idle_seconds=200, contains_idle=True)])
+    widget = canvas(application, source)
+    try:
+        assert (widget.range_start, widget.range_end) == (34200, 46800)
+        assert "含空闲" in widget.tooltip_for_second(40000)
+        assert "09:30–13:00" in widget.range_title()
+        assert widget.model["events"][0]["end_second"] == 45000.25
+    finally:
+        widget.close()
+
+
+def test_plot_right_boundary_does_not_select_trimmed_idle_after_activity(application):
+    from PySide6.QtCore import QPoint
+
+    source = model([event("active", 32400, 34200),
+                    event("idle_after", 34200, 86400, "idle", effective_seconds=0)])
+    widget = canvas(application, source)
+    try:
+        spy = QSignalSpy(widget.event_activated)
+        band = widget._band()
+        QTest.mouseClick(widget, Qt.LeftButton, pos=QPoint(round(band.right()), round(band.center().y())))
+        assert spy.count() == 1 and spy.at(0) == ["active"]
+        assert widget.event_rect("idle_after").isEmpty()
     finally:
         widget.close()
 

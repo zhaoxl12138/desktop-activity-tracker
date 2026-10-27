@@ -29,7 +29,7 @@ def build_group_style() -> str:
         border-radius: 14px;
         margin-top: 14px;
         background: {ui_style.COLORS['card_bg']};
-        padding: 24px 16px 16px 16px;
+        padding: 0;
     }}
     QGroupBox::title {{
         subcontrol-origin: margin;
@@ -205,12 +205,13 @@ class SettingsPage(QWidget):
             h = QHBoxLayout()
             h.setSpacing(8)
             lbl = QLabel(label_text)
-            lbl.setFixedWidth(120)
+            lbl.setMinimumWidth(max(120, lbl.sizeHint().width() + 8))
             h.addWidget(lbl)
             edit = QLineEdit()
             edit.setText(get_val)
             if attr == "edit_obsidian":
                 edit.setPlaceholderText("例如: E:\\obsidian_github\\LifeOS\\TimeTracker")
+                edit.setToolTip("自动按 年份/年份-月份 归档；周报归入结束日所在月份。已有年份或月份路径会自动识别，不会重复嵌套。")
             elif attr == "edit_reports":
                 edit.setReadOnly(True)
                 edit.setToolTip("报告目录随数据库路径自动确定")
@@ -266,6 +267,16 @@ class SettingsPage(QWidget):
         btn_save.setCursor(Qt.PointingHandCursor)
         btn_save.clicked.connect(self._save_all)
         layout.addWidget(btn_save, 0, Qt.AlignRight)
+
+        self.monthly_ai_cost = QLabel(self.intelligence_settings.monthly_usage_text)
+        self.monthly_ai_cost.setTextFormat(Qt.PlainText)
+        self.monthly_ai_cost.setWordWrap(True)
+        self.monthly_ai_cost.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.monthly_ai_cost.setStyleSheet(
+            f"font-size: 12px; color: {ui_style.COLORS['text_secondary']};"
+        )
+        self.intelligence_settings.monthly_usage_changed.connect(self.monthly_ai_cost.setText)
+        layout.addWidget(self.monthly_ai_cost)
 
         scroll.setWidget(content)
         outer.addWidget(scroll)

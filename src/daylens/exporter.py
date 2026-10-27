@@ -583,17 +583,27 @@ def _extract_title_key(window_title):
 
 
 def sync_to_obsidian(filepath, obsidian_output_path):
-    """Copy the report file to an Obsidian vault directory."""
+    """Atomically refresh one calendar-organized report in the vault."""
     if not obsidian_output_path or not os.path.exists(filepath):
         return
+    temporary = None
     try:
-        os.makedirs(obsidian_output_path, exist_ok=True)
-        dest = os.path.join(obsidian_output_path, os.path.basename(filepath))
-        shutil.copy2(filepath, dest)
-        return dest
+        from .services.report_archive import obsidian_report_destination
+        destination = obsidian_report_destination(os.path.basename(filepath), obsidian_output_path)
+        if Path(filepath).resolve() == destination.resolve():
+            return str(destination)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(prefix='.daylens-sync-', dir=str(destination.parent))
+        os.close(fd)
+        shutil.copy2(filepath, temporary)
+        os.replace(temporary, destination)
+        return str(destination)
     except Exception as e:
         print(f"[WARN] Obsidian 同步失败: {e}")
         return None
+    finally:
+        if temporary and os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 # ── Weekly / Monthly report helpers ─────────────────────────────────

@@ -8,6 +8,7 @@ import yaml
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
+    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox, QInputDialog,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QSplitter,
@@ -25,8 +27,10 @@ from PySide6.QtWidgets import (
 
 from ...app_scanner import classify_scanned_apps, scan_installed_apps
 from ...classifier import Classifier
-from ...services.rules_service import load_rule_categories, save_rule_categories
+from ...utils import should_hide_rule_category
+from ...services.rules_service import load_rule_categories, save_rule_categories, preview_rule_config
 from .. import style as ui_style
+from ..widgets.rule_application_dialog import RuleApplicationDialog
 
 from ...category_registry import TIMING_POLICIES
 _RULE_OPTIONS = [{'key':key,'title':title} for key,title in TIMING_POLICIES.items()]
@@ -37,6 +41,7 @@ def build_list_style() -> str:
     return f"""
     QListWidget {{
         background: {ui_style.COLORS['panel_bg']};
+        color: {ui_style.COLORS['text']};
         border: 1px solid {ui_style.COLORS['border']};
         border-radius: 10px;
         font-size: 13px;
@@ -115,6 +120,7 @@ class RuleConfigPage(QWidget):
         except (OSError, yaml.YAMLError):
             factory_config = {}
         self._factory_keys = set(factory_config.get("categories", {}))
+        self._factory_config = copy.deepcopy(factory_config)
         self.categories = load_rule_categories(self.config_path, self.db_path)
         self._loading_editor = False
         self._changing_selection = False
@@ -129,7 +135,7 @@ class RuleConfigPage(QWidget):
         title.setStyleSheet(ui_style.get_section_title())
         layout.addWidget(title)
 
-        hint = QLabel("管理分类规则与计时策略。")
+        hint = QLabel("选择分类、添加应用并保存。标题识别与计时策略可在高级设置中调整。")
         hint.setWordWrap(True)
         hint.setStyleSheet(f"font-size: 12px; color: {ui_style.COLORS['text_muted']};")
         layout.addWidget(hint)
@@ -142,7 +148,7 @@ class RuleConfigPage(QWidget):
 
         splitter.addWidget(left)
         splitter.addWidget(right)
-        splitter.setSizes([300, 920])
+        splitter.setSizes([240, 980])
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         layout.addWidget(splitter, 1)
@@ -150,6 +156,7 @@ class RuleConfigPage(QWidget):
         self.edit_name.textChanged.connect(self._mark_dirty)
         self.edit_rule.currentIndexChanged.connect(self._mark_dirty)
         self.edit_processes.textChanged.connect(self._mark_dirty)
+        self.edit_processes.textChanged.connect(self._refresh_applications)
         self.edit_keywords.textChanged.connect(self._mark_dirty)
         self._set_dirty(False)
         self._populate_list()
@@ -265,12 +272,12 @@ class RuleConfigPage(QWidget):
         strategy_layout.addWidget(self.edit_rule)
         strategy_layout.addStretch()
         top_row.addWidget(self.strategy_card, 1)
-        right_layout.addLayout(top_row)
 
         self.match_card, match_layout = _section_card(
-            "识别规则",
-            "进程名用于稳定识别，标题关键词用于浏览器和内容场景。",
+            "应用归属",
+            "为当前分类添加应用，无需填写窗口标题。",
         )
+        self.application_heading = match_layout.itemAt(0).widget()
         self.match_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         self.match_hint_frame = QFrame()
@@ -338,9 +345,41 @@ class RuleConfigPage(QWidget):
 
         editors_row.addLayout(proc_col, 1)
         editors_row.addLayout(kw_col, 1)
-        match_layout.addLayout(editors_row)
-
+        self.application_search = QLineEdit()
+        self.application_search.setPlaceholderText('搜索当前分类的应用')
+        self.application_search.setStyleSheet(ui_style.get_input_style())
+        self.application_search.textChanged.connect(self._filter_applications)
+        match_layout.addWidget(self.application_search)
+        self.applications_list = QListWidget()
+        self.applications_list.setSelectionMode(QListWidget.ExtendedSelection)
+        self.applications_list.setMinimumHeight(160)
+        self.applications_list.setStyleSheet(build_list_style())
+        match_layout.addWidget(self.applications_list, 1)
+        application_actions = QHBoxLayout()
+        self.btn_add_app = QPushButton('添加应用')
+        self.btn_add_app.setStyleSheet(ui_style.get_button_secondary_style())
+        self.btn_add_app.clicked.connect(self._add_application)
+        self.btn_remove_app = QPushButton('移除所选')
+        self.btn_remove_app.setStyleSheet(ui_style.get_button_secondary_style())
+        self.btn_remove_app.clicked.connect(self._remove_applications)
+        application_actions.addWidget(self.btn_add_app)
+        application_actions.addWidget(self.btn_remove_app)
+        application_actions.addStretch(1)
+        match_layout.addLayout(application_actions)
         right_layout.addWidget(self.match_card, 1)
+
+        self.advanced_toggle = QPushButton('高级设置 ▸')
+        self.advanced_toggle.setCheckable(True)
+        self.advanced_toggle.setStyleSheet(ui_style.get_button_secondary_style())
+        right_layout.addWidget(self.advanced_toggle, 0, Qt.AlignLeft)
+        self.advanced_panel = QWidget()
+        advanced_layout = QVBoxLayout(self.advanced_panel)
+        advanced_layout.setContentsMargins(0, 0, 0, 0)
+        advanced_layout.addLayout(top_row)
+        advanced_layout.addLayout(editors_row)
+        self.advanced_panel.hide()
+        self.advanced_toggle.toggled.connect(self._toggle_advanced)
+        right_layout.addWidget(self.advanced_panel)
 
         self.action_bar = QFrame()
         self.action_bar.setObjectName("ruleActionBar")
@@ -376,13 +415,19 @@ class RuleConfigPage(QWidget):
         self.btn_debug.setCursor(Qt.PointingHandCursor)
         self.btn_debug.clicked.connect(self._debug_classification)
 
+        self.btn_more = QPushButton('更多操作')
+        self.btn_more.setStyleSheet(ui_style.get_button_secondary_style())
+        menu = QMenu(self.btn_more)
+        for button in (self.btn_add, self.btn_delete, self.btn_rescan):
+            button.setParent(self.action_bar)
+            button.hide()
+            menu.addAction(button.text(), button.click)
+        self.btn_more.setMenu(menu)
+        btn_row.addWidget(self.btn_more)
         btn_row.addStretch()
-        btn_row.addWidget(self.btn_add)
-        btn_row.addWidget(self.btn_delete)
-        btn_row.addWidget(self.btn_rescan)
         btn_row.addWidget(self.btn_debug)
         btn_row.addWidget(self.btn_save)
-        right_layout.addWidget(self.action_bar)
+        right_layout.insertWidget(0, self.action_bar)
         return right
 
     def _save_to_db(self, candidate: dict[str, dict]) -> bool:
@@ -399,7 +444,8 @@ class RuleConfigPage(QWidget):
             self.cat_list.clear()
             for key, cat in self.categories.items():
                 prefix = "🔒" if key in self._factory_keys else "•"
-                item = QListWidgetItem(f"{prefix} {cat['display_name']} · {key}")
+                item = QListWidgetItem(f"{prefix} {cat['display_name']}")
+                item.setToolTip(f"{cat['display_name']} · {key}")
                 item.setData(Qt.UserRole, key)
                 self.cat_list.addItem(item)
         finally:
@@ -476,55 +522,129 @@ class RuleConfigPage(QWidget):
 
     def _mark_dirty(self, *_args) -> None:
         if not self._loading_editor:
-            self._set_dirty(True)
+            self._set_dirty(self._draft_categories() != self.categories)
 
     def _set_dirty(self, dirty: bool) -> None:
         self._dirty = dirty
-        self.btn_save.setEnabled(dirty)
 
     def _update_category_meta(self, key: str, cat: dict, proc_list: list[str], kw_list: list[str]):
         is_factory = key in self._factory_keys
         self.category_chip.setText("系统保留分类" if is_factory else "自定义分类")
         self.cat_meta.setText(
-            f"{cat.get('display_name', key)} · {len(proc_list)} 个进程 · {len(kw_list)} 个关键词"
+            f"{cat.get('display_name', key)} · 已关联 {len(proc_list)} 个应用"
         )
+        self.application_heading.setText(f"应用归属 · {cat.get('display_name', key)}")
 
     def _update_match_summary(self, proc_list: list[str], kw_list: list[str]):
         self.match_hint.setText(
-            f"当前配置：{len(proc_list)} 个进程规则，{len(kw_list)} 个标题关键词。"
+            f"当前配置：{len(proc_list)} 个应用。已有标题识别规则保留，可在高级设置中查看。"
         )
+
+    def _toggle_advanced(self, expanded: bool) -> None:
+        self.advanced_panel.setVisible(expanded)
+        self.advanced_toggle.setText('高级设置 ▾' if expanded else '高级设置 ▸')
+
+    def _refresh_applications(self) -> None:
+        selected = {item.data(Qt.UserRole) for item in self.applications_list.selectedItems()}
+        self.applications_list.clear()
+        for process in self.edit_processes.toPlainText().splitlines():
+            if not process.strip():
+                continue
+            item = QListWidgetItem(process.strip())
+            item.setData(Qt.UserRole, process.strip())
+            self.applications_list.addItem(item)
+            item.setSelected(process.strip() in selected)
+        self._filter_applications(self.application_search.text())
+        if not self._loading_editor:
+            self._update_match_summary([self.applications_list.item(i).text()
+                for i in range(self.applications_list.count())], [])
+
+    def _filter_applications(self, text: str) -> None:
+        query = text.strip().casefold()
+        for index in range(self.applications_list.count()):
+            item = self.applications_list.item(index)
+            item.setHidden(query not in item.text().casefold())
+
+    def _known_applications(self) -> list[str]:
+        return sorted({process for category in self.categories.values()
+                       for process in category.get('match', {}).get('process_names', [])}, key=str.casefold)
+
+    def _add_application(self) -> None:
+        dialog = RuleApplicationDialog(self._known_applications(), self)
+        if dialog.exec() == QDialog.Accepted:
+            self._append_application(dialog.selected_process())
+
+    def _append_application(self, process: str) -> None:
+        process = process.strip()
+        if not process:
+            return
+        existing = [line.strip() for line in self.edit_processes.toPlainText().splitlines() if line.strip()]
+        if process.casefold() not in {line.casefold() for line in existing}:
+            self.edit_processes.setPlainText('\n'.join([*existing, process]))
+            self.application_search.clear()
+            self.applications_list.setCurrentRow(self.applications_list.count()-1)
+
+    def _remove_applications(self) -> None:
+        selected = {item.data(Qt.UserRole) for item in self.applications_list.selectedItems()}
+        if not selected:
+            return
+        remaining = [line for line in self.edit_processes.toPlainText().splitlines() if line.strip() not in selected]
+        self.edit_processes.setPlainText('\n'.join(remaining))
+
+    def _draft_categories(self) -> dict:
+        candidate = copy.deepcopy(self.categories)
+        if self._current_key not in candidate:
+            return candidate
+        cat = candidate[self._current_key]
+        cat['display_name'] = self.edit_name.text().strip()
+        match = cat.setdefault('match', {})
+        before = copy.deepcopy(match)
+        match['process_names'] = list(dict.fromkeys(line.strip() for line in self.edit_processes.toPlainText().splitlines() if line.strip()))
+        match['title_keywords'] = list(dict.fromkeys(line.strip() for line in self.edit_keywords.toPlainText().splitlines() if line.strip()))
+        for field in ('process_names', 'title_keywords'):
+            if match[field] != before.get(field, []):
+                match[field+'_mode'] = 'replace'
+        cat['active_rule'] = _RULE_OPTIONS[self.edit_rule.currentIndex()]['key']
+        return candidate
+
+    def _test_draft(self, process: str, title: str = '') -> dict:
+        config = preview_rule_config(self._factory_config, self._draft_categories())
+        return Classifier(config=config).classify(process.strip(), title.strip())
 
     def _save_current(self):
         key = self._current_key
         if key is None or key not in self.categories:
             return False
+        candidate = self._draft_categories()
+        if candidate == self.categories:
+            self._set_dirty(False)
+            QMessageBox.information(self, "无需保存", "没有需要保存的修改。")
+            return True
         display_name = self.edit_name.text().strip()
         if not display_name:
             QMessageBox.warning(self, "无法保存", "分类名称不能为空。")
             return False
+        if should_hide_rule_category(key, display_name):
+            QMessageBox.warning(self, "无法保存", "此名称为系统保留状态，请使用其他分类名称。")
+            return False
 
-        candidate = copy.deepcopy(self.categories)
         cat = candidate[key]
-        cat["display_name"] = display_name
-        cat.setdefault("match", {})
-        cat["match"]["process_names"] = list(dict.fromkeys([
-            item.strip() for item in self.edit_processes.toPlainText().split("\n") if item.strip()
-        ]))
-        cat["match"]["title_keywords"] = list(dict.fromkeys([
-            item.strip() for item in self.edit_keywords.toPlainText().split("\n") if item.strip()
-        ]))
-        cat["active_rule"] = _RULE_OPTIONS[self.edit_rule.currentIndex()]["key"]
 
         if not self._save_to_db(candidate):
             return False
-        self.categories = candidate
+        self.categories = load_rule_categories(self.config_path, self.db_path)
         self._populate_list()
         self._select_key(key)
         self._load_category(key)
         if self.worker:
             self.worker.reload_classifier()
 
-        QMessageBox.information(self, "保存成功", f"分类“{cat['display_name']}”已更新。")
+        actual = {p.casefold() for p in self.categories[key].get('match', {}).get('process_names', [])}
+        excluded = [p for p in cat.get('match', {}).get('process_names', []) if p.casefold() not in actual]
+        message = f"分类“{cat['display_name']}”已更新。"
+        if excluded:
+            message += '\n以下应用仍按已有归属规则处理，未调整其优先级：\n'+'、'.join(excluded)
+        QMessageBox.information(self, "保存成功", message)
         return True
 
     def _rescan_apps(self):
@@ -605,19 +725,19 @@ class RuleConfigPage(QWidget):
         QMessageBox.warning(self, "扫描失败", error)
 
     def _debug_classification(self):
-        process, ok = QInputDialog.getText(self, "测试分类", "进程名：")
-        if not ok or not process.strip():
-            return
-        title, ok = QInputDialog.getText(self, "测试分类", "窗口标题：")
-        if not ok:
+        current = self.applications_list.currentItem()
+        dialog = RuleApplicationDialog(self._known_applications(), self, testing=True,
+                                       current=current.text() if current is not None else '')
+        if dialog.exec() != QDialog.Accepted:
             return
         try:
-            result = Classifier(self.config_path, self.db_path).classify(process.strip(), title.strip())
+            result = self._test_draft(dialog.selected_process(), dialog.selected_title())
             QMessageBox.information(
-                self, "分类结果",
+                self, "本地草稿测试结果",
                 f"分类：{result.get('category_name', result.get('category_key', '未知'))}\n"
                 f"规则：{result.get('category_key', 'unknown')}\n"
-                f"策略：{result.get('active_rule', 'unknown')}",
+                f"策略：{result.get('active_rule', 'unknown')}\n\n"
+                "仅测试本地草稿，不包含人工纠错或AI；未保存规则。",
             )
         except Exception as exc:
             QMessageBox.warning(self, "测试失败", str(exc))

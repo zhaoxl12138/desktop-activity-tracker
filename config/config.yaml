@@ -573,7 +573,7 @@ categories:
       process_names: []
       title_keywords: []
   video:
-    display_name: 视频与游戏
+    display_name: 视频娱乐
     active_rule: passive_allowed
     match:
       process_names:

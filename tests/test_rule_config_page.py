@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QRect, Qt
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QWidget
 
 from desktop_activity_tracker import database
@@ -96,7 +96,7 @@ def test_rule_config_page_uses_rule_management_language():
         texts = " ".join(label.text() for label in page.findChildren(QLabel) if label.text())
         assert "规则管理" in texts
         assert "计时策略" in texts
-        assert "管理分类规则与计时策略" in texts
+        assert "选择分类、添加应用并保存" in texts
 
 
 def test_rule_rescan_is_queued_when_application_background_queue_is_available(tmp_path):
@@ -221,12 +221,16 @@ def test_rule_config_page_sections_do_not_overlap_at_runtime_height():
         )
         assert all(hasattr(page, name) for name in required_widgets)
 
-        assert not page.basic_card.geometry().intersects(page.match_card.geometry())
-        assert not page.strategy_card.geometry().intersects(page.match_card.geometry())
+        assert page.advanced_panel.isHidden()
         assert not page.match_card.geometry().intersects(page.action_bar.geometry())
+        page.advanced_toggle.click()
+        page.resize(1346, 1100)
+        app.processEvents()
+        assert not page.advanced_panel.geometry().intersects(page.match_card.geometry())
+        assert not page.advanced_panel.geometry().intersects(page.action_bar.geometry())
 
 
-def test_rule_editors_remain_inside_match_card():
+def test_rule_editors_remain_inside_expanded_advanced_panel():
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         config_path = tmp_path / "config.yaml"
@@ -241,6 +245,8 @@ def test_rule_editors_remain_inside_match_card():
         app.processEvents()
 
         _select_category(page, "coding")
+        page.advanced_toggle.click()
+        page.resize(1346, 1100)
         app.processEvents()
 
         def is_inside(widget: QWidget, parent: QWidget) -> bool:
@@ -248,8 +254,8 @@ def test_rule_editors_remain_inside_match_card():
             bottom_right = widget.mapTo(parent, widget.rect().bottomRight())
             return parent.rect().contains(top_left) and parent.rect().contains(bottom_right)
 
-        assert is_inside(page.edit_processes, page.match_card)
-        assert is_inside(page.edit_keywords, page.match_card)
+        assert is_inside(page.edit_processes, page.advanced_panel)
+        assert is_inside(page.edit_keywords, page.advanced_panel)
         assert page.edit_processes.height() >= 180
         assert page.edit_keywords.height() >= 180
 
@@ -260,7 +266,7 @@ def test_rule_editor_tracks_dirty_fields_without_marking_category_load_dirty(tmp
     _app().processEvents()
 
     assert page._dirty is False
-    assert page.btn_save.isEnabled() is False
+    assert page.btn_save.isEnabled() is True
 
     for editor, mutate in (
         (page.edit_name, lambda: page.edit_name.setText("New name")),
@@ -275,6 +281,182 @@ def test_rule_editor_tracks_dirty_fields_without_marking_category_load_dirty(tmp
         _app().processEvents()
         assert page._dirty is True, editor
         assert page.btn_save.isEnabled() is True
+
+
+@pytest.mark.parametrize("logical_size", [(1280, 720), (1024, 576), (853, 480)])
+@pytest.mark.parametrize("expanded", [False, True])
+def test_save_action_stays_visible_and_separate_at_desktop_scales(monkeypatch, tmp_path, logical_size, expanded):
+    page = _build_page(tmp_path)
+    messages = []
+    monkeypatch.setattr(QMessageBox, "information", lambda _parent, _title, message: messages.append(message))
+    try:
+        page.resize(*logical_size)
+        if expanded:
+            page.advanced_toggle.click()
+        _app().processEvents()
+        assert page.btn_save.isVisible()
+        assert page.btn_save.isEnabled()
+        save_rect = page.btn_save.rect().translated(page.btn_save.mapTo(page, page.btn_save.rect().topLeft()))
+        # A stacked-page host may clip content when Qt's minimum height exceeds
+        # the logical desktop viewport at 125%/150% scaling.
+        viewport = QRect(0, 0, *logical_size)
+        assert viewport.contains(save_rect), (logical_size, page.size(), save_rect)
+        for widget in (page.applications_list, page.advanced_panel):
+            if widget.isVisible():
+                widget_rect = widget.rect().translated(widget.mapTo(page, widget.rect().topLeft()))
+                assert not save_rect.intersects(widget_rect)
+        page.btn_save.click()
+        assert messages and "没有需要保存" in messages[-1]
+    finally:
+        page.close()
+
+
+def test_clean_save_click_reports_no_change_without_persisting_or_reloading(monkeypatch, tmp_path):
+    class Worker:
+        reload_count = 0
+
+        def reload_classifier(self):
+            self.reload_count += 1
+
+    worker = Worker()
+    page = _build_page(tmp_path, worker=worker)
+    messages = []
+    monkeypatch.setattr(QMessageBox, "information", lambda _parent, title, message: messages.append((title, message)))
+    monkeypatch.setattr(
+        "desktop_activity_tracker.gui.pages.rule_config.save_rule_categories",
+        lambda *_args: pytest.fail("clean save must not persist"),
+    )
+    try:
+        page.btn_save.click()
+        assert messages and "没有需要保存" in messages[-1][1]
+        assert worker.reload_count == 0
+    finally:
+        page.close()
+
+
+def test_dirty_save_click_persists_and_reloads_classifier_once(monkeypatch, tmp_path):
+    class Worker:
+        reload_count = 0
+
+        def reload_classifier(self):
+            self.reload_count += 1
+
+    worker = Worker()
+    page = _build_page(tmp_path, worker=worker)
+    _select_category(page, "coding")
+    page.edit_name.setText("专注开发")
+    monkeypatch.setattr(QMessageBox, "information", lambda *_args: None)
+    try:
+        page.btn_save.click()
+        assert database.load_custom_rules(page.db_path)["coding"]["display_name"] == "专注开发"
+        assert worker.reload_count == 1
+        assert page._dirty is False
+    finally:
+        page.close()
+
+
+def test_legacy_duplicate_entertainment_rules_show_distinct_names_and_policies(tmp_path):
+    _app()
+    config_path = tmp_path / "config.yaml"
+    db_path = tmp_path / "usage.db"
+    config_path.write_text(yaml.safe_dump({"categories": {
+        "gaming": {"display_name": "游戏娱乐", "active_rule": "interactive_required", "match": {}},
+        "video": {"display_name": "视频娱乐", "active_rule": "passive_allowed", "match": {}},
+    }}, allow_unicode=True), encoding="utf-8")
+    database.init_db(str(db_path)).close()
+    database.save_custom_rules(str(db_path), {
+        key: {"display_name": "娱乐休闲", "active_rule": policy,
+              "process_names": [], "title_keywords": []}
+        for key, policy in (("gaming", "interactive_required"), ("video", "passive_allowed"))
+    })
+    page = RuleConfigPage(str(config_path), str(db_path))
+    page.show()
+    _app().processEvents()
+    try:
+        labels = {page.cat_list.item(row).data(Qt.UserRole): page.cat_list.item(row).text()
+                  for row in range(page.cat_list.count())}
+        assert "游戏娱乐" in labels["gaming"]
+        assert "视频娱乐" in labels["video"]
+        assert page.categories["gaming"]["active_rule"] == "interactive_required"
+        assert page.categories["video"]["active_rule"] == "passive_allowed"
+        assert {key: rule["display_name"] for key, rule in database.load_custom_rules(str(db_path)).items()} == {
+            "gaming": "娱乐休闲", "video": "娱乐休闲"
+        }
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("field", ["name", "policy", "processes", "keywords"])
+def test_restored_editor_draft_is_clean_and_save_does_not_write_or_reload(
+    field, monkeypatch, tmp_path
+):
+    class Worker:
+        reload_count = 0
+
+        def reload_classifier(self):
+            self.reload_count += 1
+
+    worker = Worker()
+    page = _build_page(tmp_path, worker=worker)
+    _select_category(page, "coding")
+    original = {
+        "name": page.edit_name.text(),
+        "policy": page.edit_rule.currentIndex(),
+        "processes": page.edit_processes.toPlainText(),
+        "keywords": page.edit_keywords.toPlainText(),
+    }
+    messages = []
+    monkeypatch.setattr(QMessageBox, "information", lambda _parent, _title, message: messages.append(message))
+    monkeypatch.setattr(
+        "desktop_activity_tracker.gui.pages.rule_config.save_rule_categories",
+        lambda *_args: pytest.fail("restored draft must not persist"),
+    )
+    try:
+        if field == "name":
+            page.edit_name.setText("临时名称")
+            page.edit_name.setText(original["name"])
+        elif field == "policy":
+            page.edit_rule.setCurrentIndex(1)
+            page.edit_rule.setCurrentIndex(original["policy"])
+        elif field == "processes":
+            page.edit_processes.setPlainText("temporary.exe")
+            page.edit_processes.setPlainText(original["processes"])
+        else:
+            page.edit_keywords.setPlainText("临时关键词")
+            page.edit_keywords.setPlainText(original["keywords"])
+        assert page._dirty is False
+        page.btn_save.click()
+        assert messages and "没有需要保存" in messages[-1]
+        assert worker.reload_count == 0
+    finally:
+        page.close()
+
+
+def test_name_only_save_preserves_raw_inherited_keywords(monkeypatch, tmp_path):
+    page = _build_page(tmp_path)
+    _select_category(page, "coding")
+    raw_rule = {
+        "display_name": "编程开发", "active_rule": "interactive_required",
+        "process_names": [], "process_names_mode": "inherit",
+        "title_keywords": ["私人草稿关键词"], "title_keywords_mode": "inherit",
+        "title_patterns": [], "title_patterns_mode": "inherit",
+    }
+    database.save_custom_rules(page.db_path, {"coding": raw_rule})
+    from desktop_activity_tracker.services.rules_service import load_rule_categories
+    page.categories = load_rule_categories(page.config_path, page.db_path)
+    page._populate_list()
+    page._load_category("coding")
+    assert page.edit_keywords.toPlainText() == "VS Code\nCodex"
+    monkeypatch.setattr(QMessageBox, "information", lambda *_args: None)
+    try:
+        page.edit_name.setText("专注编程")
+        page.btn_save.click()
+        stored = database.load_custom_rules(page.db_path)["coding"]
+        assert stored["display_name"] == "专注编程"
+        assert stored["title_keywords_mode"] == "inherit"
+        assert stored["title_keywords"] == ["私人草稿关键词"]
+    finally:
+        page.close()
 
 
 def test_dirty_category_switch_can_cancel_and_restore_old_editor(monkeypatch, tmp_path):
@@ -713,11 +895,15 @@ def test_dirty_rule_action_save_success_commits_edit_then_proceeds(
 
     monkeypatch.setattr(QMessageBox, "question", answer)
     monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: None)
+    from desktop_activity_tracker.services.rules_service import save_rule_categories as persist
+
+    def capture_and_persist(db_path, categories):
+        calls["saved"].append(copy.deepcopy(categories))
+        persist(db_path, categories)
+
     monkeypatch.setattr(
         "desktop_activity_tracker.gui.pages.rule_config.save_rule_categories",
-        lambda db_path, categories: calls["saved"].append(
-            copy.deepcopy(categories)
-        ),
+        capture_and_persist,
     )
 
     _run_rule_action(page, action)

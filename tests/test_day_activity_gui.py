@@ -47,6 +47,154 @@ def model(day=DAYS[-1]):
                          for e in events]}
 
 
+def mixed_category_model(day=DAYS[-1]):
+    source = model(day)
+    entertainment = dict(source["events"][0])
+    entertainment.update(
+        id="video-long", start_second=10 * 3600, end_second=10 * 3600 + 420,
+        app="腾讯视频", process_name="QQLive.exe", title="完整的娱乐节目标题" * 12,
+        category_key="video", category_name="视频娱乐",
+        effective_seconds=420, engaged_seconds=0, passive_seconds=420,
+        duration_seconds=420, idle_seconds=0, source_session_ids=["video-long"],
+    )
+    short = dict(entertainment)
+    short.update(
+        id="video-short", start_second=11 * 3600, end_second=11 * 3600 + 120,
+        effective_seconds=120, passive_seconds=120, duration_seconds=120,
+        source_session_ids=["video-short"],
+    )
+    source["events"].extend([entertainment, short])
+    source["segments"].extend(
+        {"kind": "activity", "start_second": item["start_second"],
+         "end_second": item["end_second"], "event_id": item["id"]}
+        for item in (entertainment, short)
+    )
+    source["totals"]["effective_seconds"] = 1139
+    return source
+
+
+def test_event_table_uses_balanced_columns_at_compact_and_wide_sizes():
+    from PySide6.QtCore import Qt
+    from daylens.gui.widgets.day_activity_dialog import DayActivityDialog
+
+    application = app()
+    dialog = DayActivityDialog("unused", DAYS[-1], DAYS,
+                               loader=lambda *_a, **_k: mixed_category_model())
+    try:
+        wait_for(application, lambda: dialog.model.get("status") == "ready")
+        for width in (780, 1150, 1600):
+            dialog.resize(width, 700)
+            dialog.show()
+            application.processEvents()
+            dialog.scroll.ensureWidgetVisible(dialog.events_table)
+            application.processEvents()
+            viewport = dialog.events_table.viewport().width()
+            columns = [dialog.events_table.columnWidth(i) for i in range(6)]
+            assert sum(columns) <= viewport + 2
+            assert columns[2] <= max(220, int(viewport * .40))
+            assert columns[0] >= 110 and columns[3] >= 90
+            assert columns[4] >= 95 and columns[5] >= 75
+        tooltip = dialog.events_model.data(dialog.events_model.index(0, 2), Qt.ToolTipRole)
+        assert "学习资料 &lt;不是HTML&gt;" in tooltip
+        assert "长中文标题" * 30 in tooltip
+    finally:
+        dialog.close()
+
+
+def test_category_filter_intersects_duration_toggle_without_changing_totals():
+    from daylens.gui.widgets.day_activity_dialog import DayActivityDialog
+
+    application = app()
+    source = mixed_category_model()
+    dialog = DayActivityDialog("unused", DAYS[-1], DAYS, loader=lambda *_a, **_k: source)
+    try:
+        wait_for(application, lambda: dialog.model.get("status") == "ready")
+        original_summary = dialog.summary_label.text()
+        assert dialog.events_model.rowCount() == 2
+        dialog.category_buttons["entertainment"].click()
+        assert dialog.selected_category == "entertainment"
+        assert dialog.category_buttons["entertainment"].isChecked()
+        assert "QPushButton:checked" in dialog.category_buttons["entertainment"].styleSheet()
+        assert [lane["key"] for lane in dialog.timeline.lanes] == ["entertainment"]
+        assert dialog.events_model.rowCount() == 1
+        assert dialog.events_model.data(dialog.events_model.index(0, 1)) == "腾讯视频"
+        dialog.show_all.setChecked(True)
+        assert dialog.events_model.rowCount() == 2
+        assert dialog.summary_label.text() == original_summary
+        assert dialog.model["totals"]["effective_seconds"] == 1139
+        assert len(source["events"]) == 4
+        dialog.category_buttons["all"].click()
+        assert dialog.selected_category is None
+        assert dialog.events_model.rowCount() == 4
+        assert len(dialog.timeline.lanes) == 2
+    finally:
+        dialog.close()
+
+
+def test_timeline_category_label_filters_and_date_change_resets_to_all():
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+    from daylens.gui.widgets.day_activity_dialog import DayActivityDialog
+
+    application = app()
+    dialog = DayActivityDialog("unused", DAYS[-1], DAYS,
+                               loader=lambda _db, day, **_k: mixed_category_model(day))
+    try:
+        dialog.show()
+        wait_for(application, lambda: dialog.model.get("status") == "ready")
+        dialog.show_all.setChecked(True)
+        video_row = dialog.events_model.row_for_id("video-long")
+        dialog.events_table.selectRow(video_row)
+        assert dialog.timeline.selected_event_id == "video-long"
+        lane_index = next(i for i, lane in enumerate(dialog.timeline.lanes)
+                          if lane["key"] == "work")
+        point = QPoint(25, int(dialog.timeline._band(lane_index).center().y()))
+        QTest.mouseClick(dialog.timeline, Qt.LeftButton, pos=point)
+        assert dialog.selected_category == "work"
+        assert dialog.timeline.selected_event_id is None
+        assert dialog.events_model.row_for_id("video-long") is None
+        dialog.day_picker.setCurrentIndex(0)
+        wait_for(application, lambda: dialog.model.get("day") == DAYS[0]
+                 and dialog.model.get("status") == "ready")
+        assert dialog.selected_category is None
+        assert dialog.category_buttons["all"].isChecked()
+        assert len(dialog.timeline.lanes) == 2
+        assert dialog.events_model.rowCount() == 4
+    finally:
+        dialog.close()
+
+
+def test_filtered_category_keeps_idle_context_but_does_not_select_idle_row():
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+    from daylens.gui.widgets.day_activity_dialog import DayActivityDialog
+
+    application = app()
+    source = mixed_category_model()
+    idle = dict(source["events"][0])
+    idle.update(id="known-idle", start_second=10 * 3600 + 1800,
+                end_second=10 * 3600 + 1860, app="桌面", title="空闲",
+                category_key="idle", category_name="空闲", effective_seconds=0,
+                engaged_seconds=0, passive_seconds=0, idle_seconds=60,
+                duration_seconds=60, source_session_ids=["known-idle"])
+    source["events"].append(idle)
+    source["segments"].append({"kind": "idle", "start_second": idle["start_second"],
+                               "end_second": idle["end_second"], "event_id": idle["id"]})
+    dialog = DayActivityDialog("unused", DAYS[-1], DAYS, loader=lambda *_a, **_k: source)
+    try:
+        dialog.show()
+        wait_for(application, lambda: dialog.model.get("status") == "ready")
+        dialog.category_buttons["entertainment"].click()
+        assert (dialog.timeline.range_start, dialog.timeline.range_end) == (9 * 3600, 11 * 3600 + 1800)
+        band = dialog.timeline._band(0)
+        x = dialog.timeline._x(10 * 3600 + 1830)
+        QTest.mouseClick(dialog.timeline, Qt.LeftButton, pos=QPoint(int(x), int(band.center().y())))
+        assert dialog.timeline.selected_event_id is None
+        assert dialog.events_model.row_for_id("known-idle") is None
+    finally:
+        dialog.close()
+
+
 def test_dialog_filters_details_without_changing_timeline_or_totals():
     from daylens.gui.widgets.day_activity_dialog import DayActivityDialog
 
@@ -66,6 +214,33 @@ def test_dialog_filters_details_without_changing_timeline_or_totals():
         assert "含空闲" in dialog.events_model.data(dialog.events_model.index(1, 5))
         assert dialog.timeline.tooltip_for_second(9 * 3600 + 601)
         assert dialog.day_picker.count() == 7
+    finally:
+        dialog.close()
+
+
+def test_hidden_idle_event_stays_in_details_and_explains_missing_plot_block():
+    from daylens.gui.widgets.day_activity_dialog import DayActivityDialog
+
+    application = app()
+    source = model()
+    hidden = dict(source["events"][0])
+    hidden.update(id="hidden-idle", start_second=12*3600, end_second=12*3600+1100,
+                  start_time=f"{DAYS[-1]} 12:00:00", end_time=f"{DAYS[-1]} 12:18:20",
+                  duration_seconds=1100, effective_seconds=300, engaged_seconds=300,
+                  idle_seconds=800, contains_idle=True, source_session_ids=["hidden-idle"])
+    source["events"].append(hidden)
+    source["segments"].append({"kind": "activity", "start_second": hidden["start_second"],
+                               "end_second": hidden["end_second"], "event_id": hidden["id"]})
+    source["totals"]["effective_seconds"] += 300
+    dialog = DayActivityDialog("unused", DAYS[-1], DAYS, loader=lambda *_a, **_k: source)
+    try:
+        wait_for(application, lambda: dialog.model.get("status") == "ready")
+        assert dialog.events_model.rowCount() == 2
+        assert "14分59秒" in dialog.summary_label.text()
+        assert dialog.timeline.event_rect("hidden-idle").isEmpty()
+        dialog.events_table.selectRow(dialog.events_model.row_for_id("hidden-idle"))
+        assert "空闲占比超过70%" in dialog.help_label.text()
+        assert dialog.model["totals"]["effective_seconds"] == 899
     finally:
         dialog.close()
 
@@ -196,7 +371,7 @@ def test_seven_day_work_columns_emit_iso_dates_for_zero_and_missing_days():
     application.processEvents()
     canvas = card.canvas
     for index in (1, 2):
-        x = 38 + (canvas.width() - 48) * (index + .5) / 7
+        x = canvas._bar_slot(index, canvas._chart_rect()).center().x()
         QTest.mouseClick(canvas, Qt.LeftButton, pos=QPoint(int(x), canvas.height() - 8))
     assert seen == [DAYS[1], DAYS[2]]
     card.set_mode("30d")
@@ -269,7 +444,7 @@ def test_compact_scaled_window_keeps_two_complete_event_rows_visible():
         dialog.close()
 
 
-def test_dialog_returns_to_one_fixed_day_axis_without_zoom_controls():
+def test_dialog_has_one_fitted_day_axis_without_zoom_controls():
     from daylens.gui.widgets.day_activity_dialog import DayActivityDialog
 
     application = app()
@@ -285,13 +460,15 @@ def test_dialog_returns_to_one_fixed_day_axis_without_zoom_controls():
         assert not hasattr(dialog, "zoom_in_button")
         assert not hasattr(dialog, "zoom_out_button")
         assert not hasattr(dialog, "coverage_value")
-        assert dialog.timeline.labelled_hours == tuple(range(0, 25, 2))
+        assert (dialog.timeline.range_start, dialog.timeline.range_end) == (32400, 34200)
         assert not dialog.summary_label.isHidden()
         original_summary = dialog.summary_label.text()
+        original_range = (dialog.timeline.range_start, dialog.timeline.range_end)
         dialog.show_all.setChecked(True)
         assert dialog.events_model.rowCount() == 2
         assert "全天" in dialog.events_heading.text()
         assert dialog.summary_label.text() == original_summary
+        assert (dialog.timeline.range_start, dialog.timeline.range_end) == original_range
         assert len(dialog.timeline.model["events"]) == 2
         assert len(calls) == 1
     finally:

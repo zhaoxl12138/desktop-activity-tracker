@@ -28,6 +28,7 @@ from ...utils import fmt_seconds, parse_nonnegative_int
 from .. import style as ui_style
 from .elided_label import ElidedLabel
 from .ui_primitives import MetricCell
+from .history_card_widgets import HistoryMetricCell, history_range_text, history_captured_text
 from ..style import COLORS, get_category_color
 
 
@@ -1023,6 +1024,7 @@ class RhythmComparisonCard(QFrame):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._mode = "today"
         self._payload: dict[str, dict] = {}
+        self._captured_at = ""
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 10, 16, 10)
@@ -1082,14 +1084,14 @@ class RhythmComparisonCard(QFrame):
 
         self.canvas = _RhythmCanvas()
         self.canvas.day_activated.connect(self.day_activated.emit)
-        self.canvas.setMinimumHeight(80)
+        self.canvas.setMinimumHeight(110)
         root.addWidget(self.canvas, 1)
 
         metrics = QHBoxLayout()
         metrics.setSpacing(8)
         self._metric_labels: list[tuple[QLabel, QLabel, QLabel]] = []
         for _ in range(3):
-            cell = MetricCell()
+            cell = HistoryMetricCell()
             label, value, delta = cell.label, cell.value, cell.detail
             metrics.addWidget(cell, 1)
             self._metric_labels.append((label, value, delta))
@@ -1109,6 +1111,7 @@ class RhythmComparisonCard(QFrame):
         return ""
 
     def set_data(self, payload: dict | None) -> None:
+        self._captured_at = str(dict(payload or {}).get("captured_at") or "")
         self._payload = {
             str(key): dict(value)
             for key, value in dict(payload or {}).items()
@@ -1138,22 +1141,46 @@ class RhythmComparisonCard(QFrame):
             self.canvas.set_data({})
             self._set_metrics([])
             return
-        self._title_label.setText(str(data.get("title", "工作节奏对比")))
+        self._title_label.setText(
+            f"工作节奏 · {'近7天' if self._mode == '7d' else '近30天'}"
+            if self._mode in {"7d", "30d"}
+            else str(data.get("title", "工作节奏对比"))
+        )
         status = dict(data.get("status", {}) or {})
         self._status_label.setText(str(status.get("label", "数据积累中")))
         self._set_status_style(str(status.get("kind", "waiting")))
-        self._conclusion_label.setText(str(data.get("conclusion", "节奏数据积累中")))
+        if self._mode in {"7d", "30d"} and history_range_text(data.get("date_range")):
+            caption = "  ".join(part for part in (
+                history_range_text(data.get("date_range")), history_captured_text(self._captured_at)
+            ) if part)
+        else:
+            caption = str(data.get("conclusion", "节奏数据积累中"))
+        self._conclusion_label.setText(caption)
         chart = dict(data.get("chart", {}) or {})
         chart["show_bar_duration_labels"] = self._mode == "7d"
         chart["day_activation_enabled"] = self._mode == "7d"
+        period = data.get("date_range") or []
+        if self._mode in {"7d", "30d"} and len(period) == 2:
+            chart["today_date"] = period[-1]
         self.canvas.set_data(chart)
         self._set_metrics(list(data.get("metrics", []) or []))
 
     def _set_metrics(self, values: list[dict]) -> None:
         for index, (label, value, delta) in enumerate(self._metric_labels):
+            historical = self._mode in {"7d", "30d"}
+            value.setWordWrap(historical)
+            delta.setWordWrap(historical)
+            delta.setStyleSheet(
+                f"font-size: 13px; font-weight: 600; color: {COLORS['text_secondary']};"
+                if historical else f"font-size: 12px; color: {COLORS['text_muted']};"
+            )
             item = dict(values[index]) if index < len(values) else {}
-            label.setText(str(item.get("label", "")))
-            value.setText(str(item.get("value", "--")))
+            text = ("日均时长", "最高一天", "总时长")[index] if self._mode in {"7d", "30d"} and item else str(item.get("label", ""))
+            label.setText(text)
+            value_text = str(item.get("value", "--"))
+            if index == 1 and self._mode in {"7d", "30d"}:
+                value_text = value_text.split()[0] if value_text.split() else "--"
+            value.setText(value_text)
             delta_text = str(item.get("delta", ""))
             delta.setText(delta_text)
             delta.setVisible(bool(delta_text))
@@ -1204,8 +1231,9 @@ class _RhythmCanvas(QWidget):
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         dates = self._data.get("dates") or []
-        width = self.width() - 48
-        x = event.position().x() - 38
+        chart = self._chart_rect()
+        width = chart.width()
+        x = event.position().x() - chart.left()
         if (event.button() == Qt.LeftButton and self._kind == "bars"
                 and self._data.get("day_activation_enabled") and dates
                 and len(dates) == len(self._data.get("values") or [])
@@ -1217,6 +1245,32 @@ class _RhythmCanvas(QWidget):
                 return
             self.day_activated.emit(value)
         super().mousePressEvent(event)
+
+    def _chart_rect(self) -> QRectF:
+        compact_bars = self._kind == "bars" and len(self._data.get("values") or []) <= 7
+        return QRectF(self.rect()).adjusted(
+            (8 if compact_bars else 24) if self._kind == "bars" else 54,
+            22 if self._show_bar_duration_labels else 8,
+            -12 if compact_bars else -28, -34,
+        )
+
+    def _bar_slot(self, index: int, chart: QRectF) -> QRectF:
+        count = len(self._data.get("values") or [])
+        if not 0 <= index < count:
+            return QRectF()
+        width = chart.width()/count
+        return QRectF(chart.left()+index*width, chart.top(), width, chart.height())
+
+    def _today_index(self) -> int | None:
+        dates = self._data.get("dates") or []
+        today = self._data.get("today_date")
+        if (self._kind != "bars" or not today
+                or len(dates) != len(self._data.get("values") or [])):
+            return None
+        try:
+            return dates.index(today)
+        except ValueError:
+            return None
 
     @staticmethod
     def _bar_duration_label(value) -> str:
@@ -1231,16 +1285,18 @@ class _RhythmCanvas(QWidget):
 
     def _tooltip_text_for_index(self, index: int) -> str:
         contexts = self._data.get("hover_contexts", [])
-        if not isinstance(contexts, (list, tuple)) or not 0 <= index < len(contexts):
-            return ""
-        context = contexts[index]
-        if not isinstance(context, dict):
-            return ""
-        label = str(context.get("label", "") or "").strip()
-        seconds = parse_nonnegative_int(context.get("seconds")) or 0
-        if not label or seconds <= 0:
-            return ""
-        return f"{label}\n参与 {_goal_duration(seconds)}"
+        context = contexts[index] if isinstance(contexts, (list, tuple)) and 0 <= index < len(contexts) else None
+        if isinstance(context, dict):
+            label = str(context.get("label", "") or "").strip()
+            seconds = parse_nonnegative_int(context.get("seconds")) or 0
+            if label and seconds > 0:
+                return f"{label}\n参与 {_goal_duration(seconds)}"
+        values = self._data.get("values") or []
+        labels = self._data.get("labels") or []
+        if self._kind == "bars" and 0 <= index < min(len(values), len(labels)):
+            seconds = parse_nonnegative_int(values[index])
+            return f"{labels[index]}\n工作参与 {_goal_duration(seconds)}" if seconds is not None else f"{labels[index]}\n暂无记录"
+        return ""
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
         if self._kind == "bars":
@@ -1297,19 +1353,16 @@ class _RhythmCanvas(QWidget):
             painter.setPen(QColor(COLORS["text_muted"]))
             painter.drawText(rect, Qt.AlignCenter, "节奏数据积累中")
             return
-        chart = rect.adjusted(
-            38,
-            18 if self._show_bar_duration_labels else 5,
-            -10,
-            -22,
-        )
+        chart = self._chart_rect()
         values = list(self._data.get("current", [])) if self._kind == "cumulative" else list(self._data.get("values", []))
         extra = []
         for key in ("baseline_low", "baseline_high", "baseline_median"):
             extra.extend(value for value in self._data.get(key, []) if value is not None)
         numeric = [float(value) for value in values if value is not None] + [float(value) for value in extra]
-        y_max = max(numeric, default=1.0) * 1.15 or 1.0
-        painter.setPen(QPen(QColor(COLORS["border"]), 1, Qt.DashLine))
+        y_max = max(180.0, max(numeric, default=0.0) * 1.15)
+        grid_color = QColor(COLORS["border"])
+        grid_color.setAlpha(140)
+        painter.setPen(QPen(grid_color, 1, Qt.DashLine))
         for index in range(4):
             y = chart.top() + chart.height() * index / 3
             painter.drawLine(QPointF(chart.left(), y), QPointF(chart.right(), y))
@@ -1349,44 +1402,46 @@ class _RhythmCanvas(QWidget):
 
     def _draw_bars(self, painter: QPainter, chart: QRectF, y_max: float) -> None:
         values = list(self._data.get("values", []))
-        width = chart.width() / max(len(values), 1)
-        painter.setPen(Qt.NoPen)
+        today_index = self._today_index()
+        self._bar_hit_rects = [None] * len(values)
         for index, value in enumerate(values):
+            slot = self._bar_slot(index, chart)
             if value is None:
+                color = QColor(COLORS["text_secondary"] if index == today_index else COLORS["border_light"])
+                painter.setPen(QPen(color, 1, Qt.DashLine))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawRoundedRect(QRectF(slot.left()+slot.width()*.28, chart.bottom()-3,
+                                               slot.width()*.44, 3), 1, 1)
                 continue
+            painter.setPen(QPen(QColor(COLORS["text"]), 1.25) if index == today_index else Qt.NoPen)
             painter.setBrush(self._value_color(index))
-            height = float(value) / y_max * chart.height()
+            height = max(2.0, float(value) / y_max * chart.height())
             bar_rect = QRectF(
-                chart.left() + index * width + width * 0.2,
+                slot.left() + slot.width() * 0.22,
                 chart.bottom() - height,
-                width * 0.6,
+                slot.width() * 0.56,
                 height,
             )
             self._bar_hit_rects[index] = bar_rect
             painter.drawRoundedRect(bar_rect, 3, 3)
             duration_label = self._bar_duration_labels[index]
             if duration_label:
-                painter.setPen(QColor(COLORS["text_secondary"]))
+                painter.setPen(QColor(COLORS["text"]))
                 duration_font = painter.font()
-                duration_font.setPixelSize(9)
+                duration_font.setPixelSize(11)
                 duration_font.setBold(True)
                 painter.setFont(duration_font)
                 painter.drawText(
                     QRectF(
-                        chart.left() + index * width,
-                        max(0.0, chart.bottom() - height - 14),
-                        width,
-                        12,
+                        slot.left(),
+                        max(0.0, chart.bottom() - height - 20),
+                        slot.width(),
+                        18,
                     ),
                     Qt.AlignCenter,
                     duration_label,
                 )
                 painter.setPen(Qt.NoPen)
-        average = self._data.get("average_seconds")
-        if average is not None and not self._show_bar_duration_labels:
-            y = chart.bottom() - float(average) / y_max * chart.height()
-            painter.setPen(QPen(QColor("#91a9c2"), 1.5, Qt.DashLine))
-            painter.drawLine(QPointF(chart.left(), y), QPointF(chart.right(), y))
 
     def _draw_weekly(self, painter: QPainter, chart: QRectF, y_max: float) -> None:
         values = list(self._data.get("values", []))
@@ -1433,34 +1488,50 @@ class _RhythmCanvas(QWidget):
             painter.drawPath(path)
 
     def _draw_y_labels(self, painter: QPainter, chart: QRectF, y_max: float) -> None:
-        painter.setPen(QColor(COLORS["text_muted"]))
+        if self._kind == "bars":
+            return
+        painter.setPen(QColor(COLORS["text_secondary"]))
         font = painter.font()
-        font.setPixelSize(9)
+        font.setPixelSize(11)
+        font.setBold(False)
         painter.setFont(font)
         for index in range(4):
             value = y_max * (3 - index) / 3
             minutes = round(value / 60)
             label = f"{minutes // 60}h" if minutes >= 60 and minutes % 60 == 0 else f"{minutes}m"
             y = chart.top() + chart.height() * index / 3
-            painter.drawText(QRectF(0, y - 7, 32, 14), Qt.AlignRight | Qt.AlignVCenter, label)
+            painter.drawText(QRectF(0, y - 9, chart.left()-14, 18), Qt.AlignRight | Qt.AlignVCenter, label)
 
     def _draw_x_labels(self, painter: QPainter, chart: QRectF) -> None:
         labels = list(self._data.get("labels", []))
         if not labels:
             return
-        painter.setPen(QColor(COLORS["text_muted"]))
         font = painter.font()
-        font.setPixelSize(9)
+        font.setPixelSize(11)
+        font.setBold(False)
         painter.setFont(font)
         if self._kind == "cumulative":
             indices = [0, 12, 24, 36, 47]
+        elif self._kind == "bars":
+            count = min(len(labels), len(self._data.get("values") or []))
+            indices = self._x_label_indices(count)
         else:
             indices = self._x_label_indices(len(labels))
+        today_index = self._today_index()
         for index in indices:
             if index >= len(labels):
                 continue
-            x = chart.left() + chart.width() * index / max(len(labels) - 1, 1)
-            painter.drawText(QRectF(x - 24, chart.bottom() + 4, 48, 14), Qt.AlignCenter, str(labels[index]))
+            font.setBold(index == today_index)
+            painter.setFont(font)
+            painter.setPen(QColor(COLORS["text"] if index == today_index else COLORS["text_secondary"]))
+            if self._kind == "bars":
+                slot = self._bar_slot(index, chart)
+                label_width = slot.width() if count <= 7 else max(48, slot.width())
+                label_rect = QRectF(slot.center().x()-label_width/2, chart.bottom()+8, label_width, 18)
+            else:
+                x = chart.left() + chart.width() * index / max(len(labels) - 1, 1)
+                label_rect = QRectF(x-24, chart.bottom()+8, 48, 18)
+            painter.drawText(label_rect, Qt.AlignCenter, str(labels[index]))
 
 
 class TrendChartWidget(QFrame):
@@ -1793,12 +1864,26 @@ class _TrendCanvas(QWidget):
             return {"width": 2.6 if active else 2.2, "alpha": 255 if active else 220}
         return {"width": 2.0 if active else 1.5, "alpha": 210 if active else 150}
 
+    def _chart_rect(self) -> QRectF:
+        """Shared plot bounds for painting and hover hit-testing."""
+        return QRectF(self.rect()).adjusted(54, 6, -14, -30)
+
+    def _y_label_rect(self, y: float) -> QRectF:
+        return QRectF(0, y - 7, self._chart_rect().left() - 14, 14)
+
+    def _hover_hour_for_x(self, x: float) -> int | None:
+        chart = self._chart_rect()
+        if not self._points or chart.width() <= 0 or x < chart.left() or x > chart.right():
+            return None
+        step = chart.width() / max(len(self._points) - 1, 1)
+        return max(0, min(23, int((x - chart.left()) / step + 0.5)))
+
     def paintEvent(self, event) -> None:  # noqa: N802
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         r = self.rect()
-        chart_rect = r.adjusted(42, 6, -14, -30)
+        chart_rect = self._chart_rect()
 
         state = self._series_state()
         if state == "empty":
@@ -1835,7 +1920,7 @@ class _TrendCanvas(QWidget):
                 label = f"{val:.1f}h"
             else:
                 label = str(int(val))
-            painter.drawText(QRectF(0, y - 7, 34, 14), Qt.AlignRight | Qt.AlignVCenter, label)
+            painter.drawText(self._y_label_rect(y), Qt.AlignRight | Qt.AlignVCenter, label)
 
         if self._mode == "7d":
             self._draw_weekday_lines(painter, chart_rect, y_max)
@@ -2003,8 +2088,7 @@ class _TrendCanvas(QWidget):
             super().mouseMoveEvent(event)
             return
 
-        r = self.rect()
-        chart_rect = r.adjusted(42, 6, -14, -30)
+        chart_rect = self._chart_rect()
         pos = event.position() if hasattr(event, 'position') else event.pos()
 
         ipos = pos.toPoint()
@@ -2013,9 +2097,11 @@ class _TrendCanvas(QWidget):
             super().mouseMoveEvent(event)
             return
 
-        step = chart_rect.width() / max(len(self._points) - 1, 1)
-        hour = int((pos.x() - chart_rect.left()) / step + 0.5)
-        hour = max(0, min(23, hour))
+        hour = self._hover_hour_for_x(pos.x())
+        if hour is None:
+            QToolTip.hideText()
+            super().mouseMoveEvent(event)
+            return
 
         work_m = int(self._work_points[hour]) if hour < len(self._work_points) else 0
         ent_m = int(self._entertainment_points[hour]) if hour < len(self._entertainment_points) else 0
@@ -2503,7 +2589,7 @@ class _EntertainmentHistoryCanvas(QWidget):
             self._draw_bars(painter)
 
     def _draw_bars(self, painter: QPainter) -> None:
-        rect = QRectF(self.rect()).adjusted(4, 18, -4, -19)
+        rect = QRectF(self.rect()).adjusted(4, 22, -4, -34)
         values = [
             parse_nonnegative_int(point.get("seconds")) or 0
             for point in self._points
@@ -2534,28 +2620,29 @@ class _EntertainmentHistoryCanvas(QWidget):
                 painter.drawRoundedRect(bar_rect, 2, 2)
                 duration_label = self._bar_duration_labels[index]
                 if duration_label:
-                    painter.setPen(QColor(COLORS["text_secondary"]))
+                    painter.setPen(QColor(COLORS["text"]))
                     duration_font = painter.font()
-                    duration_font.setPixelSize(9)
+                    duration_font.setPixelSize(11)
                     duration_font.setBold(True)
                     painter.setFont(duration_font)
                     painter.drawText(
-                        QRectF(x, max(0.0, rect.bottom() - height - 14), slot, 12),
+                        QRectF(x, max(0.0, rect.bottom() - height - 20), slot, 18),
                         Qt.AlignCenter,
                         duration_label,
                     )
-            painter.setPen(QColor(COLORS["text_muted"]))
+            painter.setPen(QColor(COLORS["text_secondary"]))
             font = painter.font()
-            font.setPixelSize(9)
+            font.setPixelSize(11)
             font.setBold(bool(point.get("is_today", False)))
             painter.setFont(font)
             if point.get("is_today", False):
-                painter.setPen(QColor(COLORS["text_secondary"]))
+                painter.setPen(QColor(COLORS["text"]))
             label = self._short_date(str(point.get("date", "")), bool(point.get("is_today")))
-            painter.drawText(QRectF(x, rect.bottom() + 4, slot, 13), Qt.AlignCenter, label)
+            painter.drawText(QRectF(x, rect.bottom() + 8, slot, 18), Qt.AlignCenter, label)
 
     def _draw_calendar(self, painter: QPainter) -> None:
-        rect = QRectF(self.rect()).adjusted(22, 16, -4, -4)
+        rect = QRectF(self.rect()).adjusted(26, 22, -4, -4)
+        self._calendar_hit_rects = []
         point_map = {str(point.get("date", "")): point for point in self._points}
         dates = self._calendar_dates
         if not dates:
@@ -2567,18 +2654,19 @@ class _EntertainmentHistoryCanvas(QWidget):
         maximum = max(
             [parse_nonnegative_int(point.get("seconds")) or 0 for point in self._points] + [1]
         )
-        painter.setPen(QColor(COLORS["text_muted"]))
+        painter.setPen(QColor(COLORS["text_secondary"]))
         font = painter.font()
-        font.setPixelSize(8)
+        font.setPixelSize(11)
+        font.setBold(False)
         painter.setFont(font)
         for column, label in enumerate(self._calendar_week_labels):
             painter.drawText(
-                QRectF(rect.left() + column * cell_w, 1, cell_w, 12),
+                QRectF(rect.left() + column * cell_w, 1, cell_w, 18),
                 Qt.AlignCenter,
                 label,
             )
         for weekday, text in enumerate("一二三四五六日"):
-            painter.drawText(QRectF(0, rect.top() + weekday * cell_h, 18, cell_h), Qt.AlignCenter, text)
+            painter.drawText(QRectF(0, rect.top() + weekday * cell_h, 20, cell_h), Qt.AlignCenter, text)
         for index, date_str in enumerate(dates):
             day = date.fromisoformat(date_str)
             offset = first.weekday() + index
@@ -2635,7 +2723,7 @@ class EntertainmentHistoryCard(QFrame):
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 10, 16, 10)
-        root.setSpacing(5)
+        root.setSpacing(6)
         header = QHBoxLayout()
         self._title_label = QLabel("娱乐时间 · 近7天")
         self._title_label.setTextFormat(Qt.PlainText)
@@ -2664,24 +2752,24 @@ class EntertainmentHistoryCard(QFrame):
         details.setSpacing(6)
         self._range_label = QLabel("")
         self._range_label.setTextFormat(Qt.PlainText)
-        self._range_label.setStyleSheet(f"font-size: 10px; color: {COLORS['text_secondary']};")
+        self._range_label.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {COLORS['text_secondary']};")
         details.addWidget(self._range_label)
         self._captured_label = QLabel("")
         self._captured_label.setTextFormat(Qt.PlainText)
-        self._captured_label.setStyleSheet(f"font-size: 10px; color: {COLORS['text_muted']};")
+        self._captured_label.setStyleSheet(f"font-size: 12px; color: {COLORS['text_secondary']};")
         details.addWidget(self._captured_label)
         details.addStretch(1)
         root.addLayout(details)
         self.canvas = _EntertainmentHistoryCanvas()
         self.canvas.day_activated.connect(self.day_activated.emit)
-        self.canvas.setMinimumHeight(78)
+        self.canvas.setMinimumHeight(110)
         root.addWidget(self.canvas, 1)
         summaries = QHBoxLayout()
-        summaries.setSpacing(6)
+        summaries.setSpacing(8)
         self._summary_labels: list[tuple[QLabel, QLabel]] = []
         self._summary_cells: list[MetricCell] = []
-        for title in ("日均娱乐", "最高一天", "总时间"):
-            cell = MetricCell(title)
+        for title in ("日均时长", "最高一天", "总时长"):
+            cell = HistoryMetricCell(title)
             label, value = cell.label, cell.value
             summaries.addWidget(cell, 1)
             self._summary_labels.append((label, value))
@@ -2715,6 +2803,7 @@ class EntertainmentHistoryCard(QFrame):
     def _apply_mode(self) -> None:
         label = "近7天" if self._mode == "7d" else "近30天"
         self._title_label.setText(f"娱乐时间 · {label}")
+        self.canvas.setMinimumHeight(110 if self._mode == "7d" else 126)
         status = self._history.get("status", {})
         status = dict(status) if isinstance(status, dict) else {"kind": str(status)}
         unavailable = status.get("kind") == "unavailable"
@@ -2744,7 +2833,7 @@ class EntertainmentHistoryCard(QFrame):
         maximum = parse_nonnegative_int(summary.get("max_seconds"))
         max_date = summary.get("max_date")
         self._summary_cells[0].set_values(
-            label="日均娱乐",
+            label="日均时长",
             value=_goal_duration(average) if average is not None else "--",
         )
         self._summary_cells[1].set_values(
@@ -2753,27 +2842,17 @@ class EntertainmentHistoryCard(QFrame):
             detail=_goal_duration(maximum) if max_date and maximum is not None else "",
         )
         self._summary_cells[2].set_values(
-            label="总时间",
+            label="总时长",
             value=_goal_duration(total) if total is not None else "--",
         )
 
     @staticmethod
     def _captured_text(value) -> str:
-        try:
-            return f"截至 {datetime.fromisoformat(str(value)).strftime('%H:%M')}"
-        except ValueError:
-            return ""
+        return history_captured_text(value)
 
     @staticmethod
     def _range_text(value) -> str:
-        if not isinstance(value, (list, tuple)) or len(value) != 2:
-            return ""
-        try:
-            start = date.fromisoformat(str(value[0]))
-            end = date.fromisoformat(str(value[1]))
-            return f"{start.month}/{start.day}–{end.month}/{end.day}"
-        except ValueError:
-            return ""
+        return history_range_text(value)
 
     @staticmethod
     def _short_date(value: str) -> str:

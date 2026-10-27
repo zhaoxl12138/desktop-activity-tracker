@@ -67,11 +67,10 @@ from . import style as ui_style
 
 NAV_ITEMS = [
     ("今日概览", "today", "今天的活动结构与节奏"),
-    ("统计", "stats", "按软件或分类查看时间统计"),
+    ("数据统计", "stats", "软件、分类、目标与实时记录"),
     ("分类管理", "rules", "待确认、人工纠错与本地规则"),
     ("报告中心", "reports", "查看日报、周报与月报"),
     ("设置中心", "settings", "管理基础配置与数据路径"),
-    ("实时监控", "live", "诊断当前窗口与记录状态"),
 ]
 
 DISPLAY_NAME_MAPPING = {
@@ -113,8 +112,11 @@ class MainWindow(QMainWindow):
         self.paths = getattr(worker, 'paths', None) or AppPaths.from_database(db_path, program_dir=app_root, reports_dir=reports_dir)
         self._theme_rebuilding = False
         self._last_sample: dict | None = None
+        self._sample_revision = 0
+        self._live_sample_revision = -1
         self._recording_health = getattr(worker, "health", None)
         self._current_nav_key: str | None = None
+        self._stats_navigation_override: str | None = None
         self._dashboard_snapshot: DashboardSnapshot | None = None
         self._day_activity_dialog = None
         self.current_theme = ui_style.apply_theme(self.config.get("theme", "dark"))
@@ -211,7 +213,7 @@ class MainWindow(QMainWindow):
         self.pages["goals"] = DailyGoalsPage(self.paths.intelligence_dir)
         self.pages["stats"] = StatisticsPage(
             self.pages["software"], self.pages["category"],
-            self.pages["goals"]
+            self.pages["goals"], live_page=self.pages["live"]
         )
         self.pages["stats"].tabs.currentChanged.connect(self._sync_statistics_header)
         self.pages["today"].top_app_card.activated.connect(
@@ -327,7 +329,7 @@ class MainWindow(QMainWindow):
 
         self.sidebar_record_status = QLabel("记录中")
         self.sidebar_record_status.setStyleSheet(
-            f"font-size: 14px; color: {ui_style.COLORS['success_green']}; font-weight: 800;"
+            f"font-size: 13px; color: {ui_style.COLORS['success_green']}; font-weight: 600;"
         )
         status_layout.addWidget(self.sidebar_record_status)
 
@@ -403,10 +405,6 @@ class MainWindow(QMainWindow):
         self._summary_capsule = self._build_summary_capsules()
         layout.addWidget(self._summary_capsule)
 
-        self.top_record_status = StatusBadge("待恢复", "neutral")
-        self.top_record_status.setFixedHeight(30)
-        self.top_record_status.setMinimumWidth(82)
-        layout.addWidget(self.top_record_status, 0, Qt.AlignVCenter)
         self.top_data_status = StatusBadge("", "neutral")
         self.top_data_status.hide()
         layout.addWidget(self.top_data_status, 0, Qt.AlignVCenter)
@@ -414,14 +412,10 @@ class MainWindow(QMainWindow):
         self.btn_pause = QPushButton("暂停记录")
         self.btn_pause.setStyleSheet(ui_style.get_button_secondary_style())
         self.btn_pause.clicked.connect(self._toggle_pause)
-
-        self.btn_report = QPushButton("生成日报")
-        self.btn_report.setStyleSheet(ui_style.get_button_primary_style())
-        self.btn_report.clicked.connect(self._quick_report)
+        self.btn_pause.setFixedHeight(44)
         self._top_action_layout = QBoxLayout(QBoxLayout.LeftToRight)
         self._top_action_layout.setSpacing(10)
         self._top_action_layout.addWidget(self.btn_pause)
-        self._top_action_layout.addWidget(self.btn_report)
         layout.addLayout(self._top_action_layout)
 
         self._update_top_bar()
@@ -451,6 +445,10 @@ class MainWindow(QMainWindow):
         self.capsule_values["total"] = value_label
         self.capsule_icons["total"] = icon_label
         self.capsule_labels["total"] = text_label
+        self.top_record_status = StatusBadge("待恢复", "neutral", inline=True)
+        self.top_record_status.setFixedHeight(30)
+        self.top_record_status.setMinimumWidth(82)
+        layout.addWidget(self.top_record_status, 0, 1, Qt.AlignVCenter)
         return capsule
 
     def _make_capsule(self, emoji: str, label_text: str) -> tuple[QFrame, QLabel, QLabel, QLabel]:
@@ -644,6 +642,8 @@ class MainWindow(QMainWindow):
         if not key:
             return
         previous_key = self._current_nav_key
+        if key == "stats" and previous_key != "stats":
+            self.pages["stats"].select_tab(self._stats_navigation_override or "live")
         if previous_key and previous_key != key:
             previous_page = self.pages.get(previous_key)
             if previous_page is not None and hasattr(previous_page, "deactivate"):
@@ -653,7 +653,9 @@ class MainWindow(QMainWindow):
                 self.stack.setCurrentIndex(index)
                 self.lbl_page_title.setText(title)
                 self.lbl_today.setText(self._today_text() if key == "today" else hint)
-                self._summary_capsule.setVisible(key == "today")
+                self._summary_capsule.show()
+                for summary_item in self.summary_capsule_items:
+                    summary_item.setVisible(key == "today")
                 self._current_nav_key = key
                 if key == "stats":
                     self._sync_statistics_header()
@@ -666,8 +668,6 @@ class MainWindow(QMainWindow):
                     if page is not None and hasattr(page, "activate"):
                         page.activate(force=previous_key != key)
                 if self._last_sample is not None:
-                    if key == "live":
-                        self.pages["live"].on_sample_updated(self._last_sample)
                     self.pages["today"].on_sample_updated(self._last_sample)
                 break
 
@@ -678,13 +678,17 @@ class MainWindow(QMainWindow):
         if stats.tabs.currentWidget() is self.pages["goals"]:
             self.lbl_page_title.setText("目标与成果")
             self.lbl_today.setText("管理每天的投入与产出")
+        elif stats.tabs.currentWidget() is self.pages["live"]:
+            self.lbl_page_title.setText("实时监控")
+            self.lbl_today.setText("诊断当前窗口与记录状态")
+            self._deliver_live_sample()
         else:
-            self.lbl_page_title.setText("统计")
+            self.lbl_page_title.setText("数据统计")
             self.lbl_today.setText("按软件或分类查看时间统计")
 
     def navigate_to(self, key: str, *, tab: str | None = None) -> None:
         """Navigate by stable page key; optional tab keeps callers index-free."""
-        if key in {"software", "category"}:
+        if key in {"software", "category", "live"}:
             tab = key
             key = "stats"
         if key == "stats" and tab:
@@ -694,14 +698,25 @@ class MainWindow(QMainWindow):
             -1,
         )
         if row >= 0:
-            self.nav_list.setCurrentRow(row)
+            self._stats_navigation_override = tab if key == "stats" else None
+            try:
+                self.nav_list.setCurrentRow(row)
+            finally:
+                self._stats_navigation_override = None
 
     def _on_sample(self, sample) -> None:
         self._last_sample = sample
-        if self.stack.currentWidget() is self.pages.get("live"):
-            self.pages["live"].on_sample_updated(sample)
+        self._sample_revision += 1
+        if (self._current_nav_key == "stats"
+                and self.pages["stats"].tabs.currentWidget() is self.pages.get("live")):
+            self._deliver_live_sample()
         self.pages["today"].on_sample_updated(sample)
         self._update_sidebar_status_card()
+
+    def _deliver_live_sample(self) -> None:
+        if self._last_sample is not None and self._live_sample_revision != self._sample_revision:
+            self.pages["live"].on_sample_updated(self._last_sample)
+            self._live_sample_revision = self._sample_revision
 
     def _connect_recording_worker(self, worker) -> None:
         worker.sample_updated.connect(self._on_sample)
@@ -783,7 +798,7 @@ class MainWindow(QMainWindow):
         error = str(getattr(health, "error", "") or "").strip()
         self.sidebar_record_status.setText(text)
         self.sidebar_record_status.setStyleSheet(
-            f"font-size: 14px; color: {color}; font-weight: 800;"
+            f"font-size: 13px; color: {color}; font-weight: 600;"
         )
         if error and hasattr(self.sidebar_record_status, "setToolTip"):
             self.sidebar_record_status.setToolTip(error)
@@ -841,7 +856,7 @@ class MainWindow(QMainWindow):
         prefix = "🟢" if self.worker.is_paused() is False else "🟡"
         self.sidebar_record_status.setText(f"{prefix} {text}")
         self.sidebar_record_status.setStyleSheet(
-            f"font-size: 14px; color: {color}; font-weight: 800;"
+            f"font-size: 13px; color: {color}; font-weight: 600;"
         )
         self.top_record_status.setText(text)
         self.top_record_status.set_kind("success" if not self.worker.is_paused() else "warning")

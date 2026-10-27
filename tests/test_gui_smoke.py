@@ -115,12 +115,12 @@ def main():
         app.processEvents()
         assert window.width() == 1280, f"responsive width mismatch: {window.width()}"
         assert window.height() == 720, f"responsive height mismatch: {window.height()}"
-        assert window.stack.count() == 6, f"unexpected page count: {window.stack.count()}"
-        assert window.nav_list.count() == 6, f"unexpected nav count: {window.nav_list.count()}"
+        assert window.stack.count() == 5, f"unexpected page count: {window.stack.count()}"
+        assert window.nav_list.count() == 5, f"unexpected nav count: {window.nav_list.count()}"
         assert not hasattr(window.pages["today"], "action_card")
         assert not hasattr(window.pages["today"], "task_insight_card")
         assert not hasattr(window.pages["today"], "daily_goal_card")
-        assert window.pages["stats"].tabs.count() == 3
+        assert window.pages["stats"].tabs.count() == 4
         assert "tasks" not in window.pages
         window.navigate_to("stats", tab="goals")
         assert window.pages["stats"].tabs.currentWidget() is window.pages["goals"]
@@ -128,7 +128,10 @@ def main():
         assert "投入与产出" in window.lbl_today.text()
         window.navigate_to("stats", tab="software")
         assert window.pages["stats"].tabs.currentWidget() is window.pages["software"]
-        assert window.lbl_page_title.text() == "统计"
+        assert window.lbl_page_title.text() == "数据统计"
+        window.navigate_to("live")
+        assert window.pages["stats"].tabs.currentWidget() is window.pages["live"]
+        assert window._current_nav_key == "stats"
         window.navigate_to("today")
         assert not window.lbl_page_hint.isVisible(), "today status hint stays hidden without an observation"
         assert window.chk_dark_mode.isChecked() is True, "dark mode toggle should default on"
@@ -154,7 +157,7 @@ def main():
             for i in range(window.nav_list.count())
         ]
         assert nav_keys == [
-            "today", "stats", "rules", "reports", "settings", "live"
+            "today", "stats", "rules", "reports", "settings"
         ], f"unexpected navigation: {nav_keys}"
 
         forbidden_text = [

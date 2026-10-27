@@ -44,7 +44,7 @@ def fmt_seconds(total_seconds):
 
 
 # ── Default config as Python dict ──────────────────────────────────
-# Category order: ai_tools, coding, office, reading, video, creative, social,
+# Category order: ai_tools, coding, office, reading, video, gaming, creative, social,
 # tools, browser_general, other
 
 _DEFAULT_CATEGORIES = {
@@ -101,7 +101,7 @@ _DEFAULT_CATEGORIES = {
         ],
     },
     "video": {
-        "display_name": "娱乐休闲",
+        "display_name": "视频娱乐",
         "active_rule": "passive_allowed",
         "process_names": [
             "QyClient.exe", "QyPlayer.exe", "QQLive.exe", "QQMusic.exe",
@@ -112,6 +112,12 @@ _DEFAULT_CATEGORIES = {
             "YouTube", "B站", "bilibili", "腾讯视频", "爱奇艺",
             "Netflix", "抖音", "西瓜视频", "斗鱼", "虎牙", "Twitch",
         ],
+    },
+    "gaming": {
+        "display_name": "游戏娱乐",
+        "active_rule": "interactive_required",
+        "process_names": [],
+        "title_keywords": [],
     },
     "creative": {
         "display_name": "创作工具",
@@ -161,7 +167,7 @@ _DEFAULT_CATEGORIES = {
 
 _CATEGORY_ORDER = [
     'finance',
-    "ai_tools", "coding", "office", "reading", "video", "creative",
+    "ai_tools", "coding", "office", "reading", "video", "gaming", "creative",
     "social", "tools", "browser_general", "other",
 ]
 
@@ -172,7 +178,8 @@ _CATEGORY_COMMENTS = {
     "coding": "编程开发",
     "office": "办公套件",
     "reading": "阅读学习",
-    "video": "娱乐休闲",
+    "video": "视频娱乐",
+    "gaming": "游戏娱乐",
     "creative": "创作工具",
     "social": "社交通讯",
     "tools": "系统工具",
@@ -228,8 +235,8 @@ def normalize_rule_category_display_name(category_key: str, category_name: str =
     name = (category_name or "").strip()
     if key in BROWSER_CATEGORY_KEYS or name in {"浏览器其他", "浏览器兜底"}:
         return "浏览器"
-    if key in ENTERTAINMENT_CATEGORY_KEYS or name in {"视频娱乐", "视频与游戏"}:
-        return "娱乐休闲"
+    if key in {"gaming", "video"} and name == "娱乐休闲":
+        return "游戏娱乐" if key == "gaming" else "视频娱乐"
     return name or normalize_category_display_name(key, name)
 
 

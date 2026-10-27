@@ -7,7 +7,7 @@ from pathlib import Path
 
 import yaml
 from PySide6.QtCore import QObject, Signal, Qt
-from PySide6.QtWidgets import QApplication, QTabWidget
+from PySide6.QtWidgets import QApplication, QPushButton, QTabWidget
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -80,8 +80,9 @@ def test_navigation_merges_statistics_without_recreating_existing_pages():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app, window = _window()
     assert [key for _title, key, _hint in NAV_ITEMS] == [
-        "today", "stats", "rules", "reports", "settings", "live"
+        "today", "stats", "rules", "reports", "settings"
     ]
+    assert NAV_ITEMS[1][0] == "数据统计"
     stats = window.pages["stats"]
     assert isinstance(stats.tabs, QTabWidget)
     assert stats.tabs.widget(0) is window.pages["software"]
@@ -93,13 +94,34 @@ def test_navigation_merges_statistics_without_recreating_existing_pages():
     window.close()
 
 
+def test_sidebar_stats_reentry_defaults_live_but_explicit_navigation_keeps_target_tab():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app, window = _window()
+    stats = window.pages["stats"]
+    try:
+        window.navigate_to("stats", tab="category")
+        assert stats.tabs.currentWidget() is window.pages["category"]
+        window.navigate_to("today")
+        window.nav_list.setCurrentRow(1)  # Direct sidebar click.
+        app.processEvents()
+        assert stats.tabs.currentWidget() is window.pages["live"]
+        assert window.lbl_page_title.text() == "实时监控"
+        for tab in ("software", "category", "goals"):
+            window.navigate_to("today")
+            window.navigate_to("stats", tab=tab)
+            app.processEvents()
+            assert stats.tabs.currentWidget() is window.pages[tab]
+    finally:
+        window.close()
+
+
 def test_task_analysis_entry_is_removed_even_with_legacy_switches():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app, window = _window(legacy_task_settings=True)
     try:
         stats = window.pages["stats"]
         assert [stats.tabs.tabText(i) for i in range(stats.tabs.count())] == [
-            "软件", "分类", "目标与成果",
+            "软件", "分类", "目标与成果", "实时监控",
         ]
         assert "tasks" not in window.pages
         window.navigate_to("stats", tab="goals")
@@ -153,9 +175,76 @@ def test_top_record_status_is_compact_and_vertically_centered():
         app.processEvents()
         badge = window.top_record_status
         assert 28 <= badge.height() <= 36
-        assert abs(badge.geometry().center().y() - window._top_bar.rect().center().y()) <= 2
+        assert badge.parentWidget() is window._summary_capsule
+        assert window._summary_capsule.rect().contains(badge.geometry())
         assert badge.width() >= max(80, badge.sizeHint().width())
+        assert window.btn_pause.height() == 44
+        assert not hasattr(window, "btn_report")
+        assert not any(
+            button.text() == "生成日报"
+            for button in window._top_bar.findChildren(QPushButton)
+        )
     window.close()
+
+
+def test_report_center_remains_available_without_home_report_button():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    _app, window = _window()
+    try:
+        assert not hasattr(window, "btn_report")
+        window.navigate_to("reports")
+        assert window._current_nav_key == "reports"
+        assert window.pages["reports"].isVisible()
+    finally:
+        window.close()
+
+
+def test_recording_status_uses_readable_normal_weight_in_running_and_paused_states():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    _app, window = _window()
+    try:
+        window._update_recording_health_ui()
+        assert "font-weight: 600" in window.sidebar_record_status.styleSheet()
+        assert "font-weight: 600" in window.top_record_status.styleSheet()
+        window._toggle_pause()
+        assert "font-weight: 600" in window.sidebar_record_status.styleSheet()
+        assert "font-weight: 600" in window.top_record_status.styleSheet()
+    finally:
+        window.close()
+
+
+def test_live_tab_reuses_page_and_keeps_sample_routing_and_legacy_navigation(monkeypatch):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app, window = _window()
+    seen = []
+    live = window.pages['live']
+    monkeypatch.setattr(live, 'on_sample_updated', lambda sample: seen.append(sample))
+    try:
+        window._on_sample({'process_name': 'cached.exe'})
+        window.navigate_to('live')
+        app.processEvents()
+        assert len(seen) == 1
+        assert window._current_nav_key == 'stats'
+        assert window.pages['stats'].tabs.currentWidget() is live
+        assert window.lbl_page_title.text() == '实时监控'
+        sample = {'process_name': 'synthetic.exe'}
+        window._on_sample(sample)
+        assert seen[-1] == sample
+        window.navigate_to('stats', tab='software')
+        assert window.lbl_page_title.text() == '数据统计'
+        count = len(seen)
+        window._on_sample({'process_name': 'hidden.exe'})
+        assert len(seen) == count
+        window.navigate_to('stats', tab='live')
+        assert seen[-1]['process_name'] == 'hidden.exe'
+        count = len(seen)
+        window.navigate_to('stats', tab='software')
+        window.navigate_to('stats', tab='live')
+        assert len(seen) == count  # No new worker tick: do not duplicate cached history.
+        window.navigate_to('settings')
+        assert window.top_record_status.isVisible()
+    finally:
+        window.close()
 
 
 def test_today_layout_switches_by_content_width_and_preserves_card_instances():

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import yaml
 
 from .. import database
@@ -26,6 +27,7 @@ def load_rule_categories(config_path: str, db_path: str) -> dict[str, dict]:
             "title_patterns_mode",
         ):
             match[mode_key] = rule.get(mode_key, "inherit")
+        match["_raw_title_keywords"] = list(rule.get("title_keywords", []) or [])
     normalized: dict[str, dict] = {}
     for key, category in categories.items():
         display_name = normalize_rule_category_display_name(key, category.get("display_name", ""))
@@ -36,21 +38,35 @@ def load_rule_categories(config_path: str, db_path: str) -> dict[str, dict]:
     return normalized
 
 
-def save_rule_categories(db_path: str, categories: dict[str, dict]) -> None:
+def _rule_payload(categories: dict[str, dict]) -> dict:
     payload: dict[str, dict] = {}
     for key, category in categories.items():
         match = category.get("match", {})
+        keywords = match.get("title_keywords", [])
+        if match.get("title_keywords_mode") == "inherit":
+            keywords = match.get("_raw_title_keywords", keywords)
         payload[key] = {
             "display_name": category.get("display_name", ""),
             "active_rule": category.get("active_rule", "interactive_required"),
             "process_names": match.get("process_names", []),
             "process_names_mode": match.get("process_names_mode", "replace"),
-            "title_keywords": match.get("title_keywords", []),
+            "title_keywords": keywords,
             "title_keywords_mode": match.get("title_keywords_mode", "replace"),
             "title_patterns": match.get("title_patterns", []),
             "title_patterns_mode": match.get("title_patterns_mode", "replace"),
         }
-    database.save_custom_rules(db_path, payload)
+    return payload
+
+
+def preview_rule_config(factory_config: dict, categories: dict[str, dict]) -> dict:
+    """Use the same pure overlay/ownership resolution as persisted rules."""
+    config = copy.deepcopy(factory_config)
+    database.apply_custom_rules(config, _rule_payload(categories))
+    return config
+
+
+def save_rule_categories(db_path: str, categories: dict[str, dict]) -> None:
+    database.save_custom_rules(db_path, _rule_payload(categories))
 
 
 def save_wizard_classifications(

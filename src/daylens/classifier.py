@@ -1,6 +1,7 @@
 """Classify foreground window into categories based on config.yaml rules."""
 
 import hashlib
+import copy
 import json
 import os
 import re
@@ -109,15 +110,18 @@ class Classifier:
         digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         return f"rules-{digest[:12]}"
 
-    def __init__(self, config_path=None, db_path=None):
-        if config_path is None:
-            config_path = os.path.join(get_app_root(), "config", "config.yaml")
-        with open(config_path, "r", encoding="utf-8") as f:
-            self.config = yaml.safe_load(f)
+    def __init__(self, config_path=None, db_path=None, *, config=None):
+        if config is None:
+            if config_path is None:
+                config_path = os.path.join(get_app_root(), "config", "config.yaml")
+            with open(config_path, "r", encoding="utf-8") as f:
+                self.config = yaml.safe_load(f)
+        else:
+            self.config = copy.deepcopy(config)
         self.categories = self.config.get("categories", {})
 
         # Merge custom rules from database (user overrides)
-        if db_path and os.path.exists(db_path):
+        if config is None and db_path and os.path.exists(db_path):
             from . import database
             database.merge_custom_rules(self.config, db_path)
             self.categories = self.config.get("categories", {})

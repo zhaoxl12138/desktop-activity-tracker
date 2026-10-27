@@ -829,20 +829,16 @@ def _build_seven_day_rhythm(
 
 
 def _build_thirty_day_rhythm(captured_now: datetime, daily_rows: list[dict]) -> dict[str, object]:
-    end = captured_now.date() - timedelta(days=1)
+    end = captured_now.date()
     rolling_start = end - timedelta(days=29)
-    actual_start = _actual_history_start(daily_rows, rolling_start)
-    start = max(rolling_start, actual_start if actual_start <= end else rolling_start)
-    dates = [
-        start + timedelta(days=offset)
-        for offset in range(max(0, (end - start).days + 1))
-    ]
+    history_start = _actual_history_start(daily_rows, rolling_start)
+    dates = [rolling_start + timedelta(days=offset) for offset in range(30)]
     row_map = _daily_row_map(daily_rows)
     points = [
         _rhythm_display_value(
             row_map.get(day.isoformat()),
             day,
-            history_start=start,
+            history_start=history_start,
         )
         for day in dates
     ]
@@ -886,6 +882,7 @@ def _build_thirty_day_rhythm(captured_now: datetime, daily_rows: list[dict]) -> 
         "chart": {
             "kind": "bars",
             "labels": [f"{day.month}/{day.day}" for day in dates],
+            "dates": [day.isoformat() for day in dates],
             "values": values,
             "value_kinds": value_kinds,
             "average_seconds": average_line,
@@ -984,6 +981,7 @@ def build_rhythm_snapshot(
     result = {
         "version": 1,
         "primary_metric": "work_engaged_seconds",
+        "captured_at": captured_now.isoformat(),
         "today": _build_today_rhythm(captured_now, filtered_sessions, daily_rows, query_failed=query_failed),
         "7d": _build_seven_day_rhythm(
             captured_now,

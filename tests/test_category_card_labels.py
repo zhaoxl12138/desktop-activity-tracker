@@ -63,7 +63,7 @@ def test_category_page_removes_empty_placeholder_when_data_arrives(
     monkeypatch.setattr(
         category_stats.category_stats_service,
         "load_category_summary",
-        lambda _db_path: next(summaries),
+        lambda _db_path, _start, _end: next(summaries),
     )
     page = CategoryStatsPage(str(tmp_path / "usage.db"))
     page._is_active = True

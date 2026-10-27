@@ -101,6 +101,7 @@ class DashboardRefreshController(QObject):
     def invalidate_context(self) -> None:
         self._context_day = date.today()
         self.latest_generation += 1
+        self._last_published_payload = None
         if self._closing or not self._foreground:
             return
         if self._worker is not None:
@@ -169,6 +170,7 @@ class DashboardRefreshController(QObject):
             and self._foreground
             and generation == self.latest_generation
         ):
+            self._last_published_payload = None
             self.failed.emit(message)
 
     def _on_finished(self) -> None:

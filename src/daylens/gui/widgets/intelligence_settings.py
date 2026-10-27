@@ -6,7 +6,7 @@ import queue
 import threading
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtWidgets import (QCheckBox, QDoubleSpinBox, QGroupBox, QHBoxLayout,
                                QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout)
 
@@ -19,6 +19,8 @@ from .. import style as ui_style
 
 
 class IntelligenceSettings(QGroupBox):
+    monthly_usage_changed = Signal(str)
+
     def __init__(self, worker=None, parent=None, *, directory=None):
         super().__init__('DeepSeek · 省钱模式', parent)
         self.worker = worker
@@ -95,6 +97,7 @@ class IntelligenceSettings(QGroupBox):
         self.timer.timeout.connect(self._poll)
         self.timer.start()
         self._usage_ticks = 0
+        self.monthly_usage_text = '本月 AI 费用暂不可读'
         self._refresh_usage()
 
     def _reload_worker(self):
@@ -150,12 +153,17 @@ class IntelligenceSettings(QGroupBox):
         try:
             settings = load_settings(self.directory)
             snapshot = IntelligenceBudget(self.directory / 'budget.json', settings['monthly_budget_micros']).snapshot()
+            self.monthly_usage_text = (
+                f"本月 AI 费用保守估算 ¥{snapshot['cost_micros']/1_000_000:.3f}"
+                f" / 月预算 ¥{snapshot['budget_micros']/1_000_000:.2f} · 以服务商账单为准"
+            )
             self.usage.setText(
-                f"本月保守估算 ¥{snapshot['cost_micros']/1_000_000:.3f} / ¥{snapshot['budget_micros']/1_000_000:.2f}"
-                f"　今日 {snapshot['today_titles']}/30 个标题 · {snapshot['today_requests']} 次请求"
-                f"\n按高峰未缓存价格估算；未确认请求保留预算，以服务商账单为准")
+                f"今日 {snapshot['today_titles']}/30 个标题 · {snapshot['today_requests']} 次请求"
+                f"\n未确认请求保留预算")
         except Exception:
+            self.monthly_usage_text = '本月 AI 费用暂不可读，自动请求将保守暂停'
             self.usage.setText('AI用量暂不可读，自动请求将保守暂停')
+        self.monthly_usage_changed.emit(self.monthly_usage_text)
 
     def _test(self):
         if not credentials.read_key():

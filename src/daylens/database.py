@@ -33,6 +33,7 @@ from .repositories.stats_repository import (
     count_consecutive_days as _count_consecutive_days,
     count_recording_days as _count_recording_days,
     query_category_detail as _query_category_detail,
+    query_category_range_detail as _query_category_range_detail,
     query_date as _query_date,
     query_date_range_stats as _query_date_range_stats,
     query_date_stats as _query_date_stats,
@@ -73,6 +74,7 @@ query_sessions_for_dates = partial(_query_sessions_for_dates, read_conn)
 query_sessions_overlapping = partial(_query_sessions_overlapping, read_conn)
 query_completed_history_revision = partial(_query_completed_history_revision, read_conn)
 query_category_detail = partial(_query_category_detail, read_conn)
+query_category_range_detail = partial(_query_category_range_detail, read_conn)
 count_consecutive_days = partial(_count_consecutive_days, read_conn)
 count_recording_days = partial(_count_recording_days, read_conn)
 query_date_range_stats = partial(_query_date_range_stats, read_conn)

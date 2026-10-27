@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QPushButton
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QPushButton, QGroupBox, QLabel
 
 from daylens.gui.pages import settings as settings_page_module
 from daylens.gui.pages.settings import SettingsPage
@@ -172,6 +172,69 @@ def test_report_directory_is_read_only_without_browse_action(tmp_path, monkeypat
     assert page.edit_reports.isReadOnly() is True
     assert len(browse_buttons) == 2
     page.deleteLater()
+
+
+def test_settings_cards_keep_titles_separate_and_compact_at_narrow_and_wide_sizes(tmp_path, monkeypatch):
+    app, page, _worker, _old_db = _build_page(tmp_path, monkeypatch)
+    try:
+        for width, height in ((660, 480), (900, 720), (1600, 900)):
+            page.resize(width, height)
+            page.show()
+            app.processEvents()
+            for group in page.findChildren(QGroupBox):
+                item = group.layout().itemAt(0)
+                while item.widget() is None and item.layout() is not None:
+                    item = item.layout().itemAt(0)
+                first = item.widget()
+                assert first is not None
+                top = first.mapTo(group, first.rect().topLeft()).y()
+                assert group.fontMetrics().height() + 4 <= top <= 38
+            for label_text, edit in (("数据库路径:", page.edit_db),
+                                     ("日报输出路径:", page.edit_reports),
+                                     ("Obsidian 输出路径:", page.edit_obsidian)):
+                label = next(label for label in page.findChildren(QLabel)
+                             if label.text() == label_text)
+                assert label.maximumWidth() > 120
+                assert label.width() >= label.sizeHint().width()
+                assert label.geometry().right() + 4 < edit.geometry().left()
+    finally:
+        page.close()
+        page.deleteLater()
+
+
+def test_monthly_ai_cost_is_at_page_bottom_and_updates_with_existing_budget_snapshot(tmp_path, monkeypatch):
+    from daylens.gui.widgets import intelligence_settings as intelligence_module
+
+    snapshot = {'cost_micros': 297000, 'budget_micros': 4_000_000,
+                'today_titles': 8, 'today_requests': 10}
+    monkeypatch.setattr(intelligence_module.IntelligenceBudget, 'snapshot', lambda self: dict(snapshot))
+    _app, page, _worker, _old_db = _build_page(tmp_path, monkeypatch)
+    try:
+        assert '¥0.297' in page.monthly_ai_cost.text()
+        assert '¥4.00' in page.monthly_ai_cost.text()
+        assert page.monthly_ai_cost.geometry().top() >= page.intelligence_settings.geometry().bottom()
+        assert '今日 8/30 个标题' in page.intelligence_settings.usage.text()
+        assert '本月保守估算' not in page.intelligence_settings.usage.text()
+        snapshot['cost_micros'] = 351000
+        page.intelligence_settings._refresh_usage()
+        assert '¥0.351' in page.monthly_ai_cost.text()
+    finally:
+        page.deleteLater()
+
+
+def test_unreadable_ai_budget_footer_does_not_claim_zero_spend(tmp_path, monkeypatch):
+    from daylens.gui.widgets import intelligence_settings as intelligence_module
+
+    def unreadable(_self):
+        raise OSError('budget unavailable')
+
+    monkeypatch.setattr(intelligence_module.IntelligenceBudget, 'snapshot', unreadable)
+    _app, page, _worker, _old_db = _build_page(tmp_path, monkeypatch)
+    try:
+        assert '暂不可读' in page.monthly_ai_cost.text()
+        assert '¥0' not in page.monthly_ai_cost.text()
+    finally:
+        page.deleteLater()
 
 
 def test_settings_data_quality_action_offers_preview_and_repair(tmp_path, monkeypatch):

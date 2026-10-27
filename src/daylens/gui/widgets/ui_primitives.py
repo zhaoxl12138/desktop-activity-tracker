@@ -57,8 +57,9 @@ class DurationLabel(QLabel):
 
 
 class StatusBadge(QLabel):
-    def __init__(self, text: str = "", kind: str = "neutral", parent=None):
+    def __init__(self, text: str = "", kind: str = "neutral", parent=None, *, inline=False):
         super().__init__(text, parent)
+        self._inline = inline
         self.setTextFormat(Qt.PlainText)
         self.setAlignment(Qt.AlignCenter)
         self.set_kind(kind)
@@ -72,10 +73,13 @@ class StatusBadge(QLabel):
             "neutral": ui_style.COLORS["text_secondary"],
         }
         color = colors.get(kind, colors["neutral"])
+        background = 'transparent' if self._inline else ui_style.COLORS['panel_bg_alt']
+        border = 'none' if self._inline else f"1px solid {ui_style.COLORS['border']}"
+        weight = 600 if self._inline else 800
         self.setStyleSheet(
-            f"font-size: 12px; font-weight: 800; color: {color}; "
-            f"background: {ui_style.COLORS['panel_bg_alt']}; "
-            f"border: 1px solid {ui_style.COLORS['border']}; border-radius: 8px; padding: 3px 8px;"
+            f"font-size: 12px; font-weight: {weight}; color: {color}; "
+            f"background: {background}; "
+            f"border: {border}; border-radius: 8px; padding: 3px 8px;"
         )
 
 

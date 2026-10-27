@@ -143,3 +143,41 @@ def test_refresh_controller_does_not_publish_unchanged_payload_twice():
 
     assert len(received) == 1
     assert controller.shutdown(timeout_ms=1_000) is True
+
+
+def test_refresh_controller_republishes_same_payload_after_context_invalidation():
+    app = _app()
+    controller = DashboardRefreshController(lambda: {"same": 1}, interval_ms=60_000)
+    received = []
+    controller.snapshot_ready.connect(received.append)
+    controller.set_foreground(True)
+    _wait_until(app, lambda: len(received) == 1)
+    controller.invalidate_context()
+    _wait_until(app, lambda: controller._worker is None)
+    assert len(received) == 2
+    assert controller.shutdown(timeout_ms=1_000) is True
+
+
+def test_refresh_controller_republishes_same_payload_after_a_failed_refresh():
+    app = _app()
+    calls = []
+
+    def load_snapshot():
+        calls.append(1)
+        if len(calls) == 2:
+            raise RuntimeError("temporary read failure")
+        return {"same": 1}
+
+    controller = DashboardRefreshController(load_snapshot, interval_ms=60_000)
+    received = []
+    failures = []
+    controller.snapshot_ready.connect(received.append)
+    controller.failed.connect(failures.append)
+    controller.set_foreground(True)
+    _wait_until(app, lambda: len(received) == 1)
+    controller.request_refresh()
+    _wait_until(app, lambda: len(failures) == 1 and controller._worker is None)
+    controller.request_refresh()
+    _wait_until(app, lambda: len(calls) == 3 and controller._worker is None)
+    assert [snapshot.payload for snapshot in received] == [{"same": 1}, {"same": 1}]
+    assert controller.shutdown(timeout_ms=1_000) is True

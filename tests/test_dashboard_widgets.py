@@ -80,7 +80,7 @@ def test_rhythm_comparison_card_switches_modes_without_category_legend():
     card._mode_buttons["7d"].click()
     app.processEvents()
     assert card._mode == "7d"
-    assert card._title_label.text() == "近7天工作节奏"
+    assert card._title_label.text() == "工作节奏 · 近7天"
     assert card.canvas._kind == "bars"
     card.deleteLater()
     app.processEvents()
@@ -804,7 +804,7 @@ def test_entertainment_history_card_matches_work_rhythm_summary_order():
     card.set_data(payload)
 
     assert [label.text() for label, _value in card._summary_labels] == [
-        "日均娱乐", "最高一天", "总时间",
+        "日均时长", "最高一天", "总时长",
     ]
     assert [value.text() for _label, value in card._summary_labels] == [
         "20分钟", "9/1", "2小时",
