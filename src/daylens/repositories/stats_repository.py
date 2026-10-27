@@ -10,11 +10,14 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from functools import lru_cache
 
+from ..utils import WORK_CATEGORY_KEYS
 
-WORK_CATEGORY_KEYS = frozenset(
-    {"ai_tools", "coding", "office", "reading", "creative"}
+# The aggregate ``work`` bucket is valid for presentation and imported data,
+# but the partial index only contains concrete attention-v1 work categories.
+_TRUSTED_WORK_CATEGORY_KEYS = WORK_CATEGORY_KEYS - {"work"}
+_WORK_CATEGORY_SQL = ",".join(
+    f"'{key}'" for key in sorted(_TRUSTED_WORK_CATEGORY_KEYS)
 )
-_WORK_CATEGORY_SQL = "'ai_tools','coding','creative','office','reading'"
 _VALID_ENGAGED_WORK_PREDICATE = (
     "typeof(engaged_seconds) = 'integer' AND engaged_seconds > 0 "
     "AND metric_version = 'attention-v1' "

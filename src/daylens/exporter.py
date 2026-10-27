@@ -272,14 +272,13 @@ def _generate_suggestions(db_path, today_date, stats):
     idle_sec = totals.get("idle_seconds", 0) or 0
     total_sec = effective_sec + idle_sec
 
-    work_cats = {"ai_tools", "coding", "office", "reading", "creative"}
     work_sec = sum(
         c["effective_seconds"] for c in stats["by_category"]
-        if c["category_key"] in work_cats
+        if c["category_key"] in WORK_CATEGORY_KEYS
     )
     video_sec = sum(
         c["effective_seconds"] for c in stats["by_category"]
-        if c["category_key"] in {"video", "gaming"}
+        if c["category_key"] in ENTERTAINMENT_CATEGORY_KEYS
     )
 
     # Rule 1: Today's entertainment > 90 min
@@ -953,8 +952,10 @@ def _gen_weekly_summary(stats, prev, best_days, peak_hours, sink, days_with_data
         parts.append(f"最专注时段集中在{'、'.join(peak_hours)}。")
 
     # Top work apps for productivity mention
-    work_keys = {"ai_tools", "coding", "office", "reading", "creative"}
-    work_apps = [a for a in stats["by_app"] if a.get("category_key") in work_keys][:3]
+    work_apps = [
+        app for app in stats["by_app"]
+        if app.get("category_key") in WORK_CATEGORY_KEYS
+    ][:3]
     if work_apps:
         app_names = [a["process_name"].replace(".exe", "") for a in work_apps]
         parts.append(f"{'、'.join(app_names)}是本周主要生产力工具。")
@@ -1351,8 +1352,6 @@ def export_monthly_report(db_path, year, month, output_dir):
     lines.append("## 📦 时间去向")
     lines.append("")
     # Aggregate into major groups
-    work_keys = {"ai_tools", "coding", "office", "reading", "creative"}
-    entertainment_keys = {"video", "gaming"}
     system_keys = {"system", "tools", "browser_general", "other"}
 
     work_total = 0
@@ -1361,9 +1360,9 @@ def export_monthly_report(db_path, year, month, output_dir):
     for cat in stats["by_category"]:
         ck = cat.get("category_key", "")
         sec = cat.get("effective_seconds", 0) or 0
-        if ck in work_keys:
+        if ck in WORK_CATEGORY_KEYS:
             work_total += sec
-        elif ck in entertainment_keys:
+        elif ck in ENTERTAINMENT_CATEGORY_KEYS:
             ent_total += sec
         else:
             sys_total += sec

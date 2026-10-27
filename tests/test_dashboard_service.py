@@ -13,6 +13,10 @@ sys.path.insert(0, str(SRC))
 from daylens import database  # noqa: E402
 from daylens import timeline  # noqa: E402
 from daylens.services import dashboard_service  # noqa: E402
+from daylens.utils import (  # noqa: E402
+    ENTERTAINMENT_CATEGORY_KEYS,
+    WORK_CATEGORY_KEYS,
+)
 from daylens.services.insights_service import select_primary_insight  # noqa: E402
 from daylens.services.dashboard_service import (  # noqa: E402
     _build_interruptions_section,
@@ -29,6 +33,28 @@ from daylens.services.dashboard_service import (  # noqa: E402
     load_today_snapshot,
 )
 from datetime import date, datetime, timedelta
+
+
+def test_dashboard_category_groups_follow_the_shared_registry_contract():
+    assert dashboard_service.WORK_KEYS == WORK_CATEGORY_KEYS
+    assert dashboard_service.ENTERTAINMENT_KEYS == ENTERTAINMENT_CATEGORY_KEYS
+
+
+def test_aggregate_work_category_is_not_demoted_to_other():
+    totals = dashboard_service.category_seconds(
+        {
+            "by_category": [
+                {
+                    "category_key": "work",
+                    "category_name": "工作学习",
+                    "effective_seconds": 600,
+                }
+            ]
+        }
+    )
+
+    assert totals["work"] == 600
+    assert totals["other"] == 0
 
 
 def _rhythm_session(

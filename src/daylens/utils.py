@@ -3,11 +3,11 @@
 from decimal import Decimal, InvalidOperation
 
 from .category_registry import group_keys
-WORK_CATEGORY_KEYS = group_keys('work')
-ENTERTAINMENT_CATEGORY_KEYS = group_keys('entertainment')
-SOCIAL_CATEGORY_KEYS = group_keys('social')
-BROWSER_CATEGORY_KEYS = group_keys('browser_general')
-TOOLS_CATEGORY_KEYS = group_keys('tools')
+WORK_CATEGORY_KEYS = frozenset(group_keys('work'))
+ENTERTAINMENT_CATEGORY_KEYS = frozenset(group_keys('entertainment'))
+SOCIAL_CATEGORY_KEYS = frozenset(group_keys('social'))
+BROWSER_CATEGORY_KEYS = frozenset(group_keys('browser_general'))
+TOOLS_CATEGORY_KEYS = frozenset(group_keys('tools'))
 HIDDEN_RULE_CATEGORY_KEYS = {"idle", "hangup"}
 
 

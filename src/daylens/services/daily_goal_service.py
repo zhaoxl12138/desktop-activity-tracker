@@ -12,6 +12,7 @@ from copy import deepcopy
 from datetime import date, datetime
 from pathlib import Path
 
+from ..utils import WORK_CATEGORY_KEYS
 from .intelligence_state import atomic_json
 from .task_grouping_service import _trusted
 
@@ -24,7 +25,7 @@ _LOCK = threading.RLock()
 _FILE = "daily_goals_v1.json"
 _PENDING = "daily_goals_v1.pending.json"
 _IDENTIFIER = re.compile(r"[A-Za-z0-9_-]{1,100}\Z")
-_WORK_CATEGORIES = frozenset({"coding", "office", "reading", "creative", "ai_tools"})
+_WORK_CATEGORIES = WORK_CATEGORY_KEYS
 GOAL_CATEGORIES = {
     "work": "工作学习", "entertainment": "娱乐休闲", "social": "社交通讯",
     "finance": "投资理财", "browser": "浏览器", "tools": "系统工具", "other": "其他",

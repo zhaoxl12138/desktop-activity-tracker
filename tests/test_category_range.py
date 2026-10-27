@@ -19,7 +19,32 @@ from daylens.gui.pages.statistics import StatisticsPage
 from daylens import database
 from daylens.services import category_stats_service
 from daylens.session_tracker import ActivitySession
-from daylens.utils import fmt_seconds
+from daylens.utils import ENTERTAINMENT_CATEGORY_KEYS, WORK_CATEGORY_KEYS, fmt_seconds
+
+
+@pytest.mark.parametrize(
+    ("bucket", "expected_keys"),
+    [
+        ("work", WORK_CATEGORY_KEYS),
+        ("entertainment", ENTERTAINMENT_CATEGORY_KEYS),
+    ],
+)
+def test_single_day_detail_expands_buckets_from_shared_registry(
+    monkeypatch, bucket, expected_keys,
+):
+    observed = []
+
+    def query(_db_path, _date_str, category_key, _limit):
+        observed.append(category_key)
+        return []
+
+    monkeypatch.setattr(category_stats_service.database, "query_category_detail", query)
+
+    category_stats_service.load_category_detail(
+        "usage.db", "2026-10-27", bucket, limit=5,
+    )
+
+    assert set(observed) == set(expected_keys)
 
 
 def test_statistics_opens_live_monitor_by_default_and_keeps_explicit_tabs():

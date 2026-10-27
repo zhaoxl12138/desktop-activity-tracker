@@ -66,6 +66,7 @@ def test_exporter_has_no_legacy_work_category_literals():
     source = inspect.getsource(exporter)
 
     assert '{"ai_tools", "coding", "reading", "creative"}' not in source
+    assert '{"ai_tools", "coding", "office", "reading", "creative"}' not in source
     assert "('ai_tools','coding','reading','creative')" not in source
 
 
@@ -73,4 +74,5 @@ def test_office_is_a_work_category_in_shared_ui_and_timeline_rules():
     assert utils.normalize_category_bucket_key("office", "办公套件") == "work"
     assert "office" in timeline.WORK_CATS
     assert TodayOverviewPage._color_for_category(None, "office") == ui_style.COLORS["coding_green"]
+    assert TodayOverviewPage._color_for_category(None, "work") == ui_style.COLORS["coding_green"]
     assert "office" in utils._DEFAULT_CATEGORIES

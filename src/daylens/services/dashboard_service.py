@@ -15,7 +15,9 @@ from .. import database, timeline
 from ..repositories.stats_repository import session_row_is_anomalous
 from ..utils import (
     BROWSER_CATEGORY_KEYS,
+    ENTERTAINMENT_CATEGORY_KEYS,
     TOOLS_CATEGORY_KEYS,
+    WORK_CATEGORY_KEYS,
     fmt_seconds,
     parse_nonnegative_int,
 )
@@ -28,8 +30,10 @@ from .trusted_metrics_service import (
     compare_ranges,
 )
 
-WORK_KEYS = {"ai_tools", "coding", "office", "reading", "creative"}
-ENTERTAINMENT_KEYS = {"video", "gaming"}
+# Compatibility names retained for existing consumers.  The registry-backed
+# sets are the single source of truth for category grouping.
+WORK_KEYS = WORK_CATEGORY_KEYS
+ENTERTAINMENT_KEYS = ENTERTAINMENT_CATEGORY_KEYS
 LOGGER = logging.getLogger(__name__)
 _DASHBOARD_HISTORY_STATS_CACHE = DashboardHistoryCache()
 _DASHBOARD_HISTORY_SESSIONS_CACHE = DashboardHistoryCache()

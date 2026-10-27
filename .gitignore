@@ -8,6 +8,15 @@ release/
 build_temp/
 data/
 /DayLens/
+# Local release rollbacks and runtime artifacts are intentionally kept out of
+# source control.  They may contain bundled dependencies or local diagnostics.
+/release_backup_*/
+/release_previous*/
+/obsolete_release_*/
+/tmp/
+/logs/
+/intelligence/
+/.superpowers/
 *.egg-info/
 *.egg
 *.spec

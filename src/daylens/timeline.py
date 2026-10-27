@@ -6,13 +6,18 @@ from datetime import datetime, timedelta
 
 from . import database
 from .repositories.stats_repository import session_row_is_anomalous
-from .utils import fmt_seconds, parse_nonnegative_int
+from .utils import (
+    ENTERTAINMENT_CATEGORY_KEYS,
+    WORK_CATEGORY_KEYS,
+    fmt_seconds,
+    parse_nonnegative_int,
+)
 
 
 # ── Category groups ──
 
-WORK_CATS = {"ai_tools", "coding", "office", "reading", "creative"}
-ENTERTAINMENT_CATS = {"video"}
+WORK_CATS = WORK_CATEGORY_KEYS
+ENTERTAINMENT_CATS = ENTERTAINMENT_CATEGORY_KEYS
 
 
 # ── Data classes ──

@@ -12,9 +12,23 @@ from desktop_activity_tracker.services import (
 )
 from desktop_activity_tracker.utils import (
     _DEFAULT_CATEGORIES,
+    ENTERTAINMENT_CATEGORY_KEYS,
+    WORK_CATEGORY_KEYS,
     normalize_category_display_name,
     normalize_rule_category_display_name,
 )
+from desktop_activity_tracker import timeline
+from desktop_activity_tracker.repositories import stats_repository
+from desktop_activity_tracker.services import daily_goal_service, dashboard_service
+
+
+def test_statistics_consumers_share_registry_derived_category_groups():
+    assert dashboard_service.WORK_KEYS == WORK_CATEGORY_KEYS
+    assert dashboard_service.ENTERTAINMENT_KEYS == ENTERTAINMENT_CATEGORY_KEYS
+    assert stats_repository.WORK_CATEGORY_KEYS == WORK_CATEGORY_KEYS
+    assert timeline.WORK_CATS == WORK_CATEGORY_KEYS
+    assert timeline.ENTERTAINMENT_CATS == ENTERTAINMENT_CATEGORY_KEYS
+    assert daily_goal_service._WORK_CATEGORIES == WORK_CATEGORY_KEYS
 
 
 def test_normalize_category_display_name_maps_new_global_labels():

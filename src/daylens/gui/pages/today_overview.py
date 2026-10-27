@@ -21,7 +21,11 @@ from PySide6.QtWidgets import (
 
 from ... import get_app_root, timeline
 from ...services.dashboard_service import resolve_display_name
-from ...utils import normalize_category_display_name, parse_nonnegative_int
+from ...utils import (
+    WORK_CATEGORY_KEYS,
+    normalize_category_display_name,
+    parse_nonnegative_int,
+)
 from .. import style as ui_style
 from ..widgets.dashboard_widgets import (
     ActiveRatioRingWidget,
@@ -565,7 +569,7 @@ class TodayOverviewPage(QWidget):
             return None
 
     def _color_for_category(self, category_key: str, category_name: str = "") -> str:
-        if category_key in {"ai_tools", "coding", "office", "reading", "creative"}:
+        if category_key in WORK_CATEGORY_KEYS:
             return ui_style.COLORS["coding_green"]
         if category_key == "video":
             return ui_style.COLORS["video_orange"]

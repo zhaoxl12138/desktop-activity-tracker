@@ -5,7 +5,29 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 
 from .. import database
-from ..utils import fmt_seconds, normalize_category_bucket_key, normalize_category_display_name
+from ..utils import (
+    BROWSER_CATEGORY_KEYS,
+    ENTERTAINMENT_CATEGORY_KEYS,
+    SOCIAL_CATEGORY_KEYS,
+    TOOLS_CATEGORY_KEYS,
+    WORK_CATEGORY_KEYS,
+    fmt_seconds,
+    normalize_category_bucket_key,
+    normalize_category_display_name,
+)
+
+
+_BUCKET_SOURCE_KEYS = {
+    "work": WORK_CATEGORY_KEYS,
+    "entertainment": ENTERTAINMENT_CATEGORY_KEYS,
+    "social": SOCIAL_CATEGORY_KEYS,
+    "tools": TOOLS_CATEGORY_KEYS,
+    "browser_general": BROWSER_CATEGORY_KEYS,
+}
+
+
+def _source_keys_for_bucket(category_key: str) -> tuple[str, ...]:
+    return tuple(sorted(_BUCKET_SOURCE_KEYS.get(category_key, (category_key,))))
 
 
 def load_category_summary(
@@ -41,15 +63,8 @@ def load_category_summary(
 
 
 def load_category_detail(db_path: str, date_str: str, category_key: str, limit: int = 5) -> list[dict]:
-    source_keys = {
-        "work": ["ai_tools", "coding", "office", "reading", "creative"],
-        "entertainment": ["video", "gaming"],
-        "social": ["social"],
-        "tools": ["tools", "system_tools"],
-        "browser_general": ["browser_general", "browser_other"],
-    }.get(category_key, [category_key])
     rows: list[dict] = []
-    for source_key in source_keys:
+    for source_key in _source_keys_for_bucket(category_key):
         rows.extend(database.query_category_detail(db_path, date_str, source_key, limit))
     rows.sort(key=lambda item: int(item.get("effective_seconds", 0) or 0), reverse=True)
     return rows[:limit]
