@@ -99,6 +99,44 @@ def test_rule_config_page_uses_rule_management_language():
         assert "选择分类、添加应用并保存" in texts
 
 
+def test_category_list_uses_stable_business_group_headers(tmp_path):
+    page = _build_page(tmp_path)
+    try:
+        rows = [page.cat_list.item(row) for row in range(page.cat_list.count())]
+        headers = [item for item in rows if item.data(Qt.UserRole) is None]
+        category_keys = [item.data(Qt.UserRole) for item in rows if item.data(Qt.UserRole)]
+
+        assert [item.text() for item in headers] == [
+            "工作学习",
+            "娱乐休闲",
+            "系统与兜底",
+        ]
+        assert all(not (item.flags() & Qt.ItemIsSelectable) for item in headers)
+        assert category_keys == ["coding", "video", "browser_general", "other"]
+        assert _selected_key(page) == "coding"
+    finally:
+        page.close()
+
+
+def test_clicking_category_group_header_does_not_change_editor_selection(tmp_path):
+    page = _build_page(tmp_path)
+    try:
+        _select_category(page, "video")
+        selected_before = _selected_key(page)
+        header_row = next(
+            row
+            for row in range(page.cat_list.count())
+            if page.cat_list.item(row).data(Qt.UserRole) is None
+        )
+
+        page._on_cat_selected(header_row)
+
+        assert _selected_key(page) == selected_before
+        assert page._current_key == selected_before
+    finally:
+        page.close()
+
+
 def test_rule_rescan_is_queued_when_application_background_queue_is_available(tmp_path):
     class FakeQueue:
         def __init__(self):

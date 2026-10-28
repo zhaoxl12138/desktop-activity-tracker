@@ -6,6 +6,7 @@ import copy
 
 import yaml
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -35,6 +36,14 @@ from ..widgets.rule_application_dialog import RuleApplicationDialog
 from ...category_registry import TIMING_POLICIES
 _RULE_OPTIONS = [{'key':key,'title':title} for key,title in TIMING_POLICIES.items()]
 _RULE_INDEX = {item["key"]: index for index, item in enumerate(_RULE_OPTIONS)}
+
+_CATEGORY_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("工作学习", ("ai_tools", "coding", "office", "reading", "creative")),
+    ("娱乐休闲", ("gaming", "video")),
+    ("社交通讯", ("social",)),
+    ("投资理财", ("finance",)),
+    ("系统与兜底", ("tools", "browser_general", "other")),
+)
 
 
 def build_list_style() -> str:
@@ -160,8 +169,9 @@ class RuleConfigPage(QWidget):
         self.edit_keywords.textChanged.connect(self._mark_dirty)
         self._set_dirty(False)
         self._populate_list()
-        if self.cat_list.count() > 0:
-            self.cat_list.setCurrentRow(0)
+        first_category_row = self._first_category_row()
+        if first_category_row >= 0:
+            self.cat_list.setCurrentRow(first_category_row)
         if self.background_tasks is not None:
             completed = getattr(self.background_tasks, "task_completed", None)
             failed = getattr(self.background_tasks, "task_failed", None)
@@ -457,21 +467,51 @@ class RuleConfigPage(QWidget):
         was_blocked = self.cat_list.blockSignals(True)
         try:
             self.cat_list.clear()
-            for key, cat in self.categories.items():
-                prefix = "🔒" if key in self._factory_keys else "•"
-                item = QListWidgetItem(f"{prefix} {cat['display_name']}")
-                item.setToolTip(f"{cat['display_name']} · {key}")
-                item.setData(Qt.UserRole, key)
-                self.cat_list.addItem(item)
+            grouped_keys: list[tuple[str, list[str]]] = []
+            assigned: set[str] = set()
+            for group_name, known_keys in _CATEGORY_GROUPS:
+                keys = [key for key in known_keys if key in self.categories]
+                if keys:
+                    grouped_keys.append((group_name, keys))
+                    assigned.update(keys)
+            custom_keys = [key for key in self.categories if key not in assigned]
+            if custom_keys:
+                grouped_keys.append(("自定义", custom_keys))
+
+            for group_name, keys in grouped_keys:
+                header = QListWidgetItem(group_name)
+                header.setFlags(Qt.ItemIsEnabled)
+                header_font = header.font()
+                header_font.setBold(True)
+                header.setFont(header_font)
+                header.setForeground(QColor(ui_style.COLORS["text_secondary"]))
+                header.setToolTip(f"{group_name}分类")
+                self.cat_list.addItem(header)
+                for key in keys:
+                    cat = self.categories[key]
+                    prefix = "🔒" if key in self._factory_keys else "•"
+                    item = QListWidgetItem(f"{prefix} {cat['display_name']}")
+                    item.setToolTip(f"{cat['display_name']} · {key}")
+                    item.setData(Qt.UserRole, key)
+                    self.cat_list.addItem(item)
         finally:
             self.cat_list.blockSignals(was_blocked)
-        self.cat_header.setText(f"分类列表（{self.cat_list.count()}）")
+        self.cat_header.setText(f"分类列表（{len(self.categories)}）")
+
+    def _first_category_row(self) -> int:
+        for row in range(self.cat_list.count()):
+            if self.cat_list.item(row).data(Qt.UserRole):
+                return row
+        return -1
 
     def _on_cat_selected(self, row):
         if row < 0 or self._changing_selection:
             return
 
         key = self.cat_list.item(row).data(Qt.UserRole)
+        if key is None:
+            self._select_key(self._current_key)
+            return
         if (
             self._current_key
             and key != self._current_key
@@ -806,7 +846,8 @@ class RuleConfigPage(QWidget):
             if self.worker:
                 self.worker.reload_classifier()
             self._populate_list()
-            if self.cat_list.count() > 0:
-                first_key = self.cat_list.item(0).data(Qt.UserRole)
+            first_category_row = self._first_category_row()
+            if first_category_row >= 0:
+                first_key = self.cat_list.item(first_category_row).data(Qt.UserRole)
                 self._select_key(first_key)
                 self._load_category(first_key)
