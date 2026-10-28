@@ -20,4 +20,12 @@
 - `python -m compileall -q src`：exit 0。
 - `python tests/test_gui_smoke.py`：100%、125%、150% 顺序运行均通过。
 - `git diff --check`：exit 0，仅有既有 LF/CRLF 提示。
+- `python tools/build_release.py --stage-only`：exit 0，打包 Qt 与 Windows 凭据 smoke 通过。
+
+## 发布确认
+
+- 旧回退版保留为 `release_previous_20261028_before_sampling_gap/`，刚替换下来的分类口径版保留在 `release_previous/`。
+- 新版通过维护命令安全退出旧程序后原子替换，只启动一次；最终唯一进程 PID 65044，窗口可见且响应正常。
+- 运行心跳更新到 `2026-10-28T10:33:16+08:00`，采样诊断更新到 `2026-10-28T10:33:15`，记录线程已工作。
+- 新版 SHA-256：`8F7F1663E005D19BF893E8230F6E33A5CE27D9D7A3D75F5AD075FDD4E8EB701C`；上一版 SHA-256：`C8CB97949790901926E606D41E0661652D3863ACD44ABE39F77A041934E72697`。
 
