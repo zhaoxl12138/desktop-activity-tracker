@@ -30,6 +30,7 @@ from ...app_scanner import classify_scanned_apps, scan_installed_apps
 from ...classifier import Classifier
 from ...utils import should_hide_rule_category
 from ...services.rules_service import load_rule_categories, save_rule_categories, preview_rule_config
+from ...services.rule_usage_service import load_rule_usage_snapshot
 from .. import style as ui_style
 from ..widgets.rule_application_dialog import RuleApplicationDialog
 
@@ -131,6 +132,7 @@ class RuleConfigPage(QWidget):
         self._factory_keys = set(factory_config.get("categories", {}))
         self._factory_config = copy.deepcopy(factory_config)
         self.categories = load_rule_categories(self.config_path, self.db_path)
+        self._reload_usage_snapshot()
         self._loading_editor = False
         self._changing_selection = False
         self._current_key: str | None = None
@@ -222,6 +224,7 @@ class RuleConfigPage(QWidget):
             return False
         selected = self._current_key
         self.categories = load_rule_categories(self.config_path, self.db_path)
+        self._reload_usage_snapshot()
         self._populate_list()
         if selected not in self.categories:
             selected = next(iter(self.categories), None)
@@ -490,7 +493,11 @@ class RuleConfigPage(QWidget):
                 for key in keys:
                     cat = self.categories[key]
                     prefix = "🔒" if key in self._factory_keys else "•"
-                    item = QListWidgetItem(f"{prefix} {cat['display_name']}")
+                    usage = self._usage_snapshot.categories.get(key)
+                    visible_count = len(usage.visible_processes) if usage else 0
+                    item = QListWidgetItem(
+                        f"{prefix} {cat['display_name']}  · {visible_count}"
+                    )
                     item.setToolTip(f"{cat['display_name']} · {key}")
                     item.setData(Qt.UserRole, key)
                     self.cat_list.addItem(item)
@@ -560,6 +567,7 @@ class RuleConfigPage(QWidget):
         proc_list = cat.get("match", {}).get("process_names", [])
         kw_list = cat.get("match", {}).get("title_keywords", [])
 
+        self._current_key = key
         self._loading_editor = True
         try:
             self.edit_name.setText(cat.get("display_name", ""))
@@ -570,7 +578,6 @@ class RuleConfigPage(QWidget):
             self.edit_rule.setCurrentIndex(_RULE_INDEX.get(rule, 0))
         finally:
             self._loading_editor = False
-        self._current_key = key
         self._update_category_meta(key, cat, proc_list, kw_list)
         self._update_match_summary(proc_list, kw_list)
         self._set_dirty(False)
@@ -585,15 +592,32 @@ class RuleConfigPage(QWidget):
     def _update_category_meta(self, key: str, cat: dict, proc_list: list[str], kw_list: list[str]):
         is_factory = key in self._factory_keys
         self.category_chip.setText("系统保留分类" if is_factory else "自定义分类")
-        self.cat_meta.setText(
-            f"{cat.get('display_name', key)} · 已关联 {len(proc_list)} 个应用"
-        )
+        usage = self._usage_snapshot.categories.get(key)
+        if usage is None:
+            self.cat_meta.setText(
+                f"{cat.get('display_name', key)} · 已关联 {len(proc_list)} 个应用"
+            )
+        else:
+            summary = (
+                f"{cat.get('display_name', key)} · {len(usage.visible_processes)} 个有效应用\n"
+                f"近30天 {usage.hits} 次 · 有效活动 {usage.effective_seconds}秒"
+            )
+            if usage.hidden_factory_count:
+                summary += f" · 隐藏 {usage.hidden_factory_count} 条内置候选"
+            if self._usage_snapshot.degraded:
+                summary += " · 使用统计暂不可用"
+            self.cat_meta.setText(summary)
         self.application_heading.setText(f"应用归属 · {cat.get('display_name', key)}")
 
     def _update_match_summary(self, proc_list: list[str], kw_list: list[str]):
-        self.match_hint.setText(
-            f"当前配置：{len(proc_list)} 个应用。已有标题识别规则保留，可在高级设置中查看。"
-        )
+        usage = self._usage_snapshot.categories.get(self._current_key or "")
+        visible_count = self.applications_list.count()
+        hidden_count = usage.hidden_factory_count if usage else 0
+        text = f"当前配置：{visible_count} 个应用。"
+        if hidden_count:
+            text += f"另有 {hidden_count} 条未使用内置候选，仅在高级设置中保留。"
+        text += "已有标题识别规则保持不变。"
+        self.match_hint.setText(text)
 
     def _toggle_advanced(self, expanded: bool) -> None:
         self.advanced_panel.setVisible(expanded)
@@ -602,13 +626,52 @@ class RuleConfigPage(QWidget):
     def _refresh_applications(self) -> None:
         selected = {item.data(Qt.UserRole) for item in self.applications_list.selectedItems()}
         self.applications_list.clear()
-        for process in self.edit_processes.toPlainText().splitlines():
-            if not process.strip():
+        usage = self._usage_snapshot.categories.get(self._current_key or "")
+        visible_usage = {
+            item.process_name.casefold(): item
+            for item in (usage.visible_processes if usage else ())
+        }
+        factory_processes = {
+            str(process).strip().casefold()
+            for process in (
+                (self._factory_config.get("categories", {}).get(self._current_key or "", {})
+                 .get("match", {}).get("process_names", []))
+            )
+            if str(process).strip()
+        }
+        seen: set[str] = set()
+        for raw_process in self.edit_processes.toPlainText().splitlines():
+            process = raw_process.strip()
+            key = process.casefold()
+            if not process or key in seen:
                 continue
-            item = QListWidgetItem(process.strip())
-            item.setData(Qt.UserRole, process.strip())
+            seen.add(key)
+            metadata = visible_usage.get(key)
+            learned = key not in factory_processes
+            if (
+                usage is not None
+                and self._usage_snapshot.has_history
+                and not self._usage_snapshot.degraded
+                and metadata is None
+                and not learned
+            ):
+                continue
+            item = QListWidgetItem(process)
+            item.setData(Qt.UserRole, process)
+            if metadata is not None and metadata.source == "recent":
+                tooltip = (
+                    f"来源：最近使用 · 30天命中 {metadata.hits} 次 · "
+                    f"有效活动 {metadata.effective_seconds}秒"
+                )
+                if metadata.last_seen:
+                    tooltip += f" · 最近 {metadata.last_seen}"
+            elif learned:
+                tooltip = "来源：人工/AI学习 · 尚无30天活动"
+            else:
+                tooltip = "来源：内置识别库"
+            item.setToolTip(tooltip)
             self.applications_list.addItem(item)
-            item.setSelected(process.strip() in selected)
+            item.setSelected(process in selected)
         self._filter_applications(self.application_search.text())
         if not self._loading_editor:
             self._update_match_summary([self.applications_list.item(i).text()
@@ -621,8 +684,19 @@ class RuleConfigPage(QWidget):
             item.setHidden(query not in item.text().casefold())
 
     def _known_applications(self) -> list[str]:
-        return sorted({process for category in self.categories.values()
-                       for process in category.get('match', {}).get('process_names', [])}, key=str.casefold)
+        visible = {
+            item.process_name
+            for usage in self._usage_snapshot.categories.values()
+            for item in usage.visible_processes
+        }
+        return sorted(visible, key=str.casefold)
+
+    def _reload_usage_snapshot(self) -> None:
+        self._usage_snapshot = load_rule_usage_snapshot(
+            self.db_path,
+            self.categories,
+            self._factory_config.get("categories", {}),
+        )
 
     def _add_application(self) -> None:
         dialog = RuleApplicationDialog(self._known_applications(), self)
@@ -688,6 +762,7 @@ class RuleConfigPage(QWidget):
         if not self._save_to_db(candidate):
             return False
         self.categories = load_rule_categories(self.config_path, self.db_path)
+        self._reload_usage_snapshot()
         self._populate_list()
         self._select_key(key)
         self._load_category(key)
@@ -752,6 +827,7 @@ class RuleConfigPage(QWidget):
                 return
             selected_key = self._current_key
             self.categories = candidate
+            self._reload_usage_snapshot()
             self._populate_list()
             self._select_key(selected_key)
             if selected_key:
@@ -813,6 +889,7 @@ class RuleConfigPage(QWidget):
         if not self._save_to_db(candidate):
             return
         self.categories = candidate
+        self._reload_usage_snapshot()
         self._populate_list()
         if self.worker:
             self.worker.reload_classifier()
@@ -843,6 +920,7 @@ class RuleConfigPage(QWidget):
             if not self._save_to_db(candidate):
                 return
             self.categories = candidate
+            self._reload_usage_snapshot()
             if self.worker:
                 self.worker.reload_classifier()
             self._populate_list()

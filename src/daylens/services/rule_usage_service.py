@@ -51,7 +51,8 @@ def _unique_processes(category: dict) -> list[str]:
 def _usage_rows(
     db_path: str, *, start_day: str, end_day: str
 ) -> tuple[bool, dict[str, dict[str, int | str]]]:
-    with sqlite3.connect(db_path, timeout=2) as conn:
+    conn = sqlite3.connect(db_path, timeout=2)
+    try:
         has_history = conn.execute(
             "SELECT EXISTS(SELECT 1 FROM activity_sessions LIMIT 1)"
         ).fetchone()[0] == 1
@@ -67,14 +68,16 @@ def _usage_rows(
             """,
             (start_day, end_day),
         ).fetchall()
-    return has_history, {
-        str(row[0]).casefold(): {
-            "hits": int(row[1] or 0),
-            "effective_seconds": int(row[2] or 0),
-            "last_seen": str(row[3] or ""),
+        return has_history, {
+            str(row[0]).casefold(): {
+                "hits": int(row[1] or 0),
+                "effective_seconds": int(row[2] or 0),
+                "last_seen": str(row[3] or ""),
+            }
+            for row in rows
         }
-        for row in rows
-    }
+    finally:
+        conn.close()
 
 
 def load_rule_usage_snapshot(

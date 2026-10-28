@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import os
+import sqlite3
 import tempfile
 from pathlib import Path
 
@@ -133,6 +134,78 @@ def test_clicking_category_group_header_does_not_change_editor_selection(tmp_pat
 
         assert _selected_key(page) == selected_before
         assert page._current_key == selected_before
+    finally:
+        page.close()
+
+
+def test_rule_page_shows_recent_and_learned_apps_without_unused_factory_candidates(tmp_path):
+    app = _app()
+    config_path = tmp_path / "config.yaml"
+    db_path = tmp_path / "usage.db"
+    _write_config(config_path)
+    database.init_db(str(db_path)).close()
+    database.save_custom_rules(
+        str(db_path),
+        {
+            "coding": {
+                "display_name": "编程开发",
+                "active_rule": "interactive_required",
+                "process_names": ["Code.exe", "WindowsTerminal.exe", "learned.exe"],
+                "process_names_mode": "replace",
+                "title_keywords": [],
+                "title_keywords_mode": "inherit",
+                "title_patterns": [],
+                "title_patterns_mode": "inherit",
+            }
+        },
+    )
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO activity_sessions (
+                session_id, start_time, end_time, date, process_name,
+                category_key, category_name, active_rule,
+                duration_seconds, effective_seconds, engaged_seconds
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "rule-visible",
+                "2026-10-27 10:00:00",
+                "2026-10-27 10:02:00",
+                "2026-10-27",
+                "code.exe",
+                "coding",
+                "编程开发",
+                "interactive_required",
+                120,
+                120,
+                120,
+            ),
+        )
+
+    page = RuleConfigPage(str(config_path), str(db_path))
+    page.show()
+    app.processEvents()
+    try:
+        _select_category(page, "coding")
+        app.processEvents()
+
+        assert [
+            page.applications_list.item(index).text()
+            for index in range(page.applications_list.count())
+        ] == ["Code.exe", "learned.exe"]
+        assert "最近使用" in page.applications_list.item(0).toolTip()
+        assert "120秒" in page.applications_list.item(0).toolTip()
+        assert "人工/AI学习" in page.applications_list.item(1).toolTip()
+        assert "WindowsTerminal.exe" in page.edit_processes.toPlainText()
+        assert "2 个有效应用" in page.cat_meta.text()
+        assert "隐藏 1 条内置候选" in page.cat_meta.text()
+        coding_item = next(
+            page.cat_list.item(row)
+            for row in range(page.cat_list.count())
+            if page.cat_list.item(row).data(Qt.UserRole) == "coding"
+        )
+        assert "2" in coding_item.text()
     finally:
         page.close()
 
