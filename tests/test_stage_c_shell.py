@@ -85,8 +85,9 @@ def test_navigation_merges_statistics_without_recreating_existing_pages():
     assert NAV_ITEMS[1][0] == "数据统计"
     stats = window.pages["stats"]
     assert isinstance(stats.tabs, QTabWidget)
-    assert stats.tabs.widget(0) is window.pages["software"]
-    assert stats.tabs.widget(1) is window.pages["category"]
+    assert stats.tabs.widget(0) is window.pages["live"]
+    assert stats.tabs.widget(1) is window.pages["software"]
+    assert stats.tabs.widget(2) is window.pages["category"]
     window.navigate_to("stats", tab="software")
     app.processEvents()
     assert window._current_nav_key == "stats"
@@ -121,7 +122,7 @@ def test_task_analysis_entry_is_removed_even_with_legacy_switches():
     try:
         stats = window.pages["stats"]
         assert [stats.tabs.tabText(i) for i in range(stats.tabs.count())] == [
-            "软件", "分类", "目标与成果", "实时监控",
+            "实时监控", "软件", "分类", "目标与成果",
         ]
         assert "tasks" not in window.pages
         window.navigate_to("stats", tab="goals")

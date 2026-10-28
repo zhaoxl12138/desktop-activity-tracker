@@ -28,12 +28,13 @@ class StatisticsPage(QWidget):
             f"background: {ui_style.COLORS['panel_bg_alt']}; border: 1px solid {ui_style.COLORS['border']}; }} "
             f"QTabBar::tab:selected {{ color: white; background: {ui_style.COLORS['primary']}; }}"
         )
+        if live_page is not None:
+            self.tabs.addTab(live_page, "实时监控")
         self.tabs.addTab(software_page, "软件")
         self.tabs.addTab(category_page, "分类")
         if goal_page is not None:
             self.tabs.addTab(goal_page, "目标与成果")
         if live_page is not None:
-            self.tabs.addTab(live_page, "实时监控")
             self.tabs.setCurrentWidget(live_page)
         self.tabs.currentChanged.connect(self._activate_current)
         layout.addWidget(self.tabs)

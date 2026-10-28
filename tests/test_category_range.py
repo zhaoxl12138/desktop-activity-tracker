@@ -123,8 +123,11 @@ def test_legacy_idle_labeled_effective_sample_is_also_reported_as_other(tmp_path
 
 def test_statistics_opens_live_monitor_by_default_and_keeps_explicit_tabs():
     app = QApplication.instance() or QApplication([])
-    software, category, live = QWidget(), QWidget(), QWidget()
-    page = StatisticsPage(software, category, live_page=live)
+    software, category, goals, live = QWidget(), QWidget(), QWidget(), QWidget()
+    page = StatisticsPage(software, category, goals, live_page=live)
+    assert [page.tabs.tabText(index) for index in range(page.tabs.count())] == [
+        "实时监控", "软件", "分类", "目标与成果",
+    ]
     assert page.tabs.currentWidget() is live
     page.select_tab("category")
     assert page.tabs.currentWidget() is category
