@@ -82,6 +82,8 @@ def test_management_tabs_and_explicit_correction_scope(tmp_path, monkeypatch):
     rules = __import__('PySide6.QtWidgets', fromlist=['QWidget']).QWidget()
     page = ClassificationManagementPage(live, rules)
     assert [page.tabs.tabText(i) for i in range(page.tabs.count())] == ['待确认','人工纠错','本地规则']
+    assert '当天' in page.manual_hint.text()
+    assert '仅对后续记录生效' not in page.manual_hint.text()
     dialog = ClassificationDialog(app_name='chrome.exe',title='课程',current_category='reading')
     assert dialog.scope_combo.count() == 2
     assert dialog.selected_scope() in {'exact','similar'}

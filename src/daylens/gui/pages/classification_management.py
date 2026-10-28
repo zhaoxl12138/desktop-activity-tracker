@@ -55,10 +55,13 @@ class ClassificationManagementPage(QWidget):
         self.tabs.addTab(pending, '待确认')
         manual = QWidget()
         layout = QVBoxLayout(manual)
-        hint = QLabel('启停默认影响此次决定的精确标题与关联模式；旧版未关联决定保持独立。仅对后续记录生效。')
-        hint.setWordWrap(True)
-        hint.setTextFormat(Qt.PlainText)
-        layout.addWidget(hint)
+        self.manual_hint = QLabel(
+            '纠正会同步修正当天同应用、同标题记录；普通应用自动加入本地规则，'
+            '通用浏览器仅保存标题规则。'
+        )
+        self.manual_hint.setWordWrap(True)
+        self.manual_hint.setTextFormat(Qt.PlainText)
+        layout.addWidget(self.manual_hint)
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(['应用','标题 / 示例','分类','范围 / 关联','状态','命中','最近命中'])
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
