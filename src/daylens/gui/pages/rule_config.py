@@ -206,6 +206,21 @@ class RuleConfigPage(QWidget):
         left_layout.addWidget(self.cat_list, 1)
         return left
 
+    def reload_from_storage(self) -> bool:
+        """Reload externally changed rules without discarding an editor draft."""
+        if self._dirty:
+            return False
+        selected = self._current_key
+        self.categories = load_rule_categories(self.config_path, self.db_path)
+        self._populate_list()
+        if selected not in self.categories:
+            selected = next(iter(self.categories), None)
+        if selected is not None:
+            self._select_key(selected)
+            self._load_category(selected)
+        self._set_dirty(False)
+        return True
+
     def _build_editor_panel(self) -> QFrame:
         right = QFrame()
         self.editor_panel = right

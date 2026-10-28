@@ -58,6 +58,7 @@ class LiveMonitorPage(QWidget):
     """Realtime foreground-window monitor."""
 
     classification_corrected = Signal()
+    classification_history_changed = Signal(object)
     management_requested = Signal()
 
     def __init__(self, *, paths=None, categories=None):
@@ -111,11 +112,62 @@ class LiveMonitorPage(QWidget):
             return
         category = dialog.selected_category()
         try:
-            from ...services.intelligence_state import save_override
-            save_override(self._review_directory(), sample.get('process_name'),
-                          sample.get('window_title'), category, scope=dialog.selected_scope(), categories=self.categories)
             from ...category_registry import category_choices
-            self._decision_saved(f'已纠正为{dict((key, name) for name, key in category_choices(self.categories))[category]}')
+            category_name = dict(
+                (key, name) for name, key in category_choices(self.categories)
+            )[category]
+            if self.paths is None:
+                from ...services.intelligence_state import save_override
+                save_override(
+                    self._review_directory(), sample.get('process_name'),
+                    sample.get('window_title'), category,
+                    scope=dialog.selected_scope(), categories=self.categories,
+                )
+                self._decision_saved(f'已纠正为{category_name}')
+                return
+
+            from ...services.classification_correction_service import (
+                apply_classification_correction,
+            )
+            result = apply_classification_correction(
+                db_path=str(self.paths.database),
+                intelligence_dir=self._review_directory(),
+                process_name=sample.get('process_name'),
+                window_title=sample.get('window_title'),
+                normalized_title=(
+                    sample.get('normalized_title')
+                    or sample.get('window_title')
+                ),
+                category_key=category,
+                categories=self.categories,
+                scope=dialog.selected_scope(),
+            )
+            if result.shared_browser:
+                if result.updated_sessions:
+                    message = (
+                        f'已修正今天{result.updated_sessions}条记录，并保存标题规则'
+                    )
+                else:
+                    message = f'已保存{category_name}标题规则，后续记录将直接使用'
+            elif result.rule_changed:
+                if result.updated_sessions:
+                    message = (
+                        f'已修正今天{result.updated_sessions}条记录，并加入本地规则'
+                    )
+                else:
+                    message = f'已加入{category_name}本地规则，后续记录将直接使用'
+            elif result.updated_sessions:
+                message = (
+                    f'已修正今天{result.updated_sessions}条记录，本地规则已存在'
+                )
+            else:
+                message = f'已确认{category_name}，本地规则已存在'
+            self._decision_saved(message)
+            self.classification_history_changed.emit({
+                'updated_sessions': result.updated_sessions,
+                'rule_changed': result.rule_changed,
+                'shared_browser': result.shared_browser,
+            })
         except Exception as exc:
             QMessageBox.warning(self, '保存失败', f'无法保存此标题的分类纠正：{exc}')
 

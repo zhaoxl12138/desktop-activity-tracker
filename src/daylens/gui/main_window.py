@@ -234,6 +234,9 @@ class MainWindow(QMainWindow):
         if callable(getattr(self.worker, 'reload_intelligence', None)):
             self.pages['live'].classification_corrected.connect(
                 lambda: self.worker.reload_intelligence())
+        live.classification_history_changed.connect(
+            self._on_classification_history_changed
+        )
         self.pages["settings"].restart_requested.connect(self._restart_app)
         for _, key, _ in NAV_ITEMS:
             self.stack.addWidget(self.pages[key])
@@ -712,6 +715,29 @@ class MainWindow(QMainWindow):
             self._deliver_live_sample()
         self.pages["today"].on_sample_updated(sample)
         self._update_sidebar_status_card()
+
+    def _on_classification_history_changed(self, result: object) -> None:
+        payload = result if isinstance(result, dict) else {}
+        if payload.get('rule_changed'):
+            reload_classifier = getattr(self.worker, 'reload_classifier', None)
+            if callable(reload_classifier):
+                reload_classifier()
+            rules_page = self.pages.get('rules')
+            editor = getattr(rules_page, 'rules_editor', None)
+            reload_rules = getattr(editor, 'reload_from_storage', None)
+            if callable(reload_rules):
+                reload_rules()
+
+        refresh = getattr(self, 'dashboard_refresh', None)
+        invalidate = getattr(refresh, 'invalidate_context', None)
+        if callable(invalidate):
+            invalidate()
+        for key in ('software', 'category'):
+            page = self.pages.get(key)
+            controller = getattr(page, '_refresh_controller', None)
+            invalidate = getattr(controller, 'invalidate_context', None)
+            if callable(invalidate):
+                invalidate()
 
     def _deliver_live_sample(self) -> None:
         if self._last_sample is not None and self._live_sample_revision != self._sample_revision:

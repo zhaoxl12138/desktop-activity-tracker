@@ -24,6 +24,8 @@ class DummyWorker(QObject):
     def __init__(self):
         super().__init__()
         self._paused = False
+        self.reload_intelligence_calls = 0
+        self.reload_classifier_calls = 0
 
     def is_paused(self):
         return self._paused
@@ -36,6 +38,12 @@ class DummyWorker(QObject):
 
     def update_settings(self, _config):
         return None
+
+    def reload_intelligence(self):
+        self.reload_intelligence_calls += 1
+
+    def reload_classifier(self):
+        self.reload_classifier_calls += 1
 
     def stop(self):
         return None
@@ -244,6 +252,46 @@ def test_live_tab_reuses_page_and_keeps_sample_routing_and_legacy_navigation(mon
         assert len(seen) == count  # No new worker tick: do not duplicate cached history.
         window.navigate_to('settings')
         assert window.top_record_status.isVisible()
+    finally:
+        window.close()
+
+
+def test_classification_correction_reloads_rules_and_invalidates_statistics(monkeypatch):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    _app, window = _window()
+    invalidated = []
+    rules_reloaded = []
+    monkeypatch.setattr(
+        window.dashboard_refresh,
+        "invalidate_context",
+        lambda: invalidated.append("dashboard"),
+    )
+    monkeypatch.setattr(
+        window.pages["software"]._refresh_controller,
+        "invalidate_context",
+        lambda: invalidated.append("software"),
+    )
+    monkeypatch.setattr(
+        window.pages["category"]._refresh_controller,
+        "invalidate_context",
+        lambda: invalidated.append("category"),
+    )
+    monkeypatch.setattr(
+        window.pages["rules"].rules_editor,
+        "reload_from_storage",
+        lambda: rules_reloaded.append(True) or True,
+    )
+    try:
+        window.pages["live"].classification_corrected.emit()
+        window.pages["live"].classification_history_changed.emit({
+            "updated_sessions": 6,
+            "rule_changed": True,
+            "shared_browser": False,
+        })
+        assert window.worker.reload_intelligence_calls == 1
+        assert window.worker.reload_classifier_calls == 1
+        assert invalidated == ["dashboard", "software", "category"]
+        assert rules_reloaded == [True]
     finally:
         window.close()
 

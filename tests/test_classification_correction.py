@@ -98,3 +98,75 @@ def test_cancel_correction_writes_nothing(tmp_path, monkeypatch):
     monkeypatch.setattr(module.ClassificationDialog, 'exec', lambda self: QDialog.Rejected)
     page._correct_current()
     assert not (tmp_path / 'manual_decisions.json').exists()
+
+
+def test_immediate_correction_reports_history_and_local_rule(tmp_path, monkeypatch):
+    from daylens.app_paths import AppPaths
+    from daylens.gui.pages import live_monitor as module
+    from daylens.services import classification_correction_service as service
+    from daylens.services.classification_correction_service import CorrectionResult
+
+    app = QApplication.instance() or QApplication([])
+    paths = AppPaths.from_database(tmp_path / "usage.db", program_dir=tmp_path)
+    page = module.LiveMonitorPage(paths=paths)
+    page._samples = [{
+        "process_name": "Probably Stolen.exe",
+        "window_title": "Probably Stolen",
+        "normalized_title": "Probably Stolen",
+        "category_key": "other",
+    }]
+
+    monkeypatch.setattr(
+        module.ClassificationDialog,
+        "exec",
+        lambda self: (
+            self.category_combo.setCurrentIndex(self.category_combo.findData("gaming"))
+            or QDialog.Accepted
+        ),
+    )
+    captured = {}
+
+    def apply(**kwargs):
+        captured.update(kwargs)
+        return CorrectionResult(6, True, False, True, str(tmp_path / "audit.json"))
+
+    monkeypatch.setattr(service, "apply_classification_correction", apply)
+    emitted = []
+    page.classification_history_changed.connect(emitted.append)
+    page._correct_current()
+
+    assert captured["db_path"] == str(paths.database)
+    assert captured["normalized_title"] == "Probably Stolen"
+    assert captured["category_key"] == "gaming"
+    assert "已修正今天6条记录，并加入本地规则" in page.correction_status.text()
+    assert emitted == [{
+        "updated_sessions": 6,
+        "rule_changed": True,
+        "shared_browser": False,
+    }]
+
+
+def test_browser_correction_reports_title_rule_without_process_rule(tmp_path, monkeypatch):
+    from daylens.app_paths import AppPaths
+    from daylens.gui.pages import live_monitor as module
+    from daylens.services import classification_correction_service as service
+    from daylens.services.classification_correction_service import CorrectionResult
+
+    app = QApplication.instance() or QApplication([])
+    paths = AppPaths.from_database(tmp_path / "usage.db", program_dir=tmp_path)
+    page = module.LiveMonitorPage(paths=paths)
+    page._samples = [{
+        "process_name": "chrome.exe",
+        "window_title": "Movie - Google Chrome",
+        "normalized_title": "Movie",
+        "category_key": "other",
+    }]
+    monkeypatch.setattr(module.ClassificationDialog, "exec", lambda self: QDialog.Accepted)
+    monkeypatch.setattr(
+        service,
+        "apply_classification_correction",
+        lambda **_kwargs: CorrectionResult(2, False, True, True, str(tmp_path / "audit.json")),
+    )
+
+    page._correct_current()
+    assert "已修正今天2条记录，并保存标题规则" in page.correction_status.text()
