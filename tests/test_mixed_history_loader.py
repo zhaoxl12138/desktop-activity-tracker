@@ -82,6 +82,7 @@ def test_empty_range_uses_the_public_range_shape():
         "daily": [],
         "by_category": [],
         "by_app": [],
+        "category_details": {},
         "totals": {
             "effective_seconds": 0,
             "idle_seconds": 0,
