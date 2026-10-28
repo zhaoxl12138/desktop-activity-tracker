@@ -111,6 +111,8 @@ def _move_process_rule(
 
     changed = False
     for key, row in rows.items():
+        if key == category_key:
+            continue
         original = [item for item in str(row["process_names"] or "").splitlines() if item]
         kept = [item for item in original if item.casefold() != folded]
         if kept != original:

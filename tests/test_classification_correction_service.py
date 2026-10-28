@@ -154,6 +154,20 @@ def test_ordinary_app_correction_updates_only_exact_today_and_moves_process_rule
     assert audit["updated_sessions"] == 2
     assert not ({"title", "window_title", "normalized_title"} & set(audit))
 
+    repeated = apply_classification_correction(
+        db_path=str(db),
+        intelligence_dir=tmp_path / "intelligence",
+        process_name="Probably Stolen.exe",
+        window_title="Probably Stolen",
+        normalized_title="Probably Stolen",
+        category_key="gaming",
+        categories={},
+        day=date(2026, 10, 28),
+        scope="similar",
+    )
+    assert repeated.updated_sessions == 0
+    assert repeated.rule_changed is False
+
 
 @pytest.mark.parametrize(
     "process",
