@@ -202,7 +202,8 @@ class SessionTracker:
     def __init__(self, config, classifier,
                  on_session_end=None, on_flush=None,
                  audio_detector=None, monotonic_clock=None,
-                 on_session_rewrite=None):
+                 on_session_rewrite=None,
+                 on_ai_classification_applied=None):
         tracker = config.get("tracker", {})
         self.sample_interval = tracker.get("sample_interval_seconds",
             config.get("sample_interval_seconds", 1))
@@ -227,6 +228,8 @@ class SessionTracker:
         # Rewrites are idempotent upserts of an already-ended session_id.
         # They intentionally use a distinct callback from lifecycle events.
         self._on_session_rewrite = on_session_rewrite
+        self._on_ai_classification_applied = on_ai_classification_applied
+        self._delivered_ai_classifications: dict[tuple[str, str, str], None] = {}
         self._audio_detector = audio_detector
         self._monotonic_clock = monotonic_clock or time.monotonic
         self._last_flush_at = self._monotonic_clock()
@@ -392,6 +395,29 @@ class SessionTracker:
         self._last_cursor_pos = None
         self._last_kb_state = None
         self._activity_from_hook = True
+
+    def _notify_ai_classification_applied(self, payload: dict) -> None:
+        """Deliver each adopted high-confidence title once per tracker run."""
+        callback = self._on_ai_classification_applied
+        if callback is None:
+            return
+        key = (
+            str(payload.get('process_name') or '').casefold(),
+            str(payload.get('normalized_title') or '').casefold(),
+            str(payload.get('category_key') or ''),
+        )
+        if key in self._delivered_ai_classifications:
+            return
+        try:
+            delivered = callback(dict(payload))
+        except Exception:
+            return
+        if delivered is False:
+            return
+        self._delivered_ai_classifications[key] = None
+        while len(self._delivered_ai_classifications) > 256:
+            oldest = next(iter(self._delivered_ai_classifications))
+            self._delivered_ai_classifications.pop(oldest, None)
         self._awaiting_activity = False
         self._video_silent_idle = 0.0
 
@@ -726,6 +752,7 @@ class SessionTracker:
 
         base_category = cat_key
         ai_decision = None
+        high_ai_applied = False
         intelligence = getattr(self, 'intelligence', None)
         if intelligence is not None and cat_key != "idle":
             try:
@@ -751,9 +778,16 @@ class SessionTracker:
                     cat_key = proposed
                     cat_name = category['display_name']
                     active_rule = category['active_rule']
+                    high_ai_applied = (
+                        base_category in ('browser_general', 'other')
+                        and (ai_decision or {}).get('certainty') == 'high'
+                        and decision_source not in ('手动', '人工模式')
+                    )
             except Exception:
                 ai_decision = None
+                high_ai_applied = False
         previous_ai = getattr(self, '_ai_display', {})
+        classification_boundary_ready = True
         if (self._current is not None and self._current.process_name == process_name
                 and self._current.window_title == raw_title
                 and self._current.category_key != cat_key
@@ -762,6 +796,7 @@ class SessionTracker:
             # This is reclassification of the same page, not a user task switch:
             # bypass cross-group grace, and preserve already recorded counters.
             if not self.finish_current('ai_classification'):
+                classification_boundary_ready = False
                 cat_key = self._current.category_key
                 cat_name = self._current.category_name
                 active_rule = self._current.active_rule
@@ -774,6 +809,17 @@ class SessionTracker:
         )
 
         norm_title = normalize_window_title(process_name, raw_title)
+        if high_ai_applied and classification_boundary_ready and cat_key != base_category:
+            self._notify_ai_classification_applied({
+                'process_name': process_name,
+                'window_title': raw_title,
+                'normalized_title': norm_title,
+                'base_category': base_category,
+                'category_key': cat_key,
+                'certainty': 'high',
+                'source': (ai_decision or {}).get('source') or 'AI',
+                'day': date_str,
+            })
         new_domain = _get_domain(cat_key)
 
         if self._current is not None:

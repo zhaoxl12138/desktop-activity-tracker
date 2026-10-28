@@ -2,6 +2,8 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from daylens.classifier import Classifier as ConfigClassifier
 from daylens.session_tracker import SessionTracker
 
@@ -79,6 +81,102 @@ def test_ai_splits_prospectively_without_grace_or_rewriting_prior_time(monkeypat
     assert recorded[-1].engaged_seconds == ai_time
     for session in recorded:
         assert session.duration_seconds == session.engaged_seconds + session.passive_seconds + session.idle_seconds
+
+
+def test_adopted_high_ai_event_runs_after_fallback_session_is_persisted(monkeypatch):
+    now = [datetime(2026, 10, 28, 16, 51, 3)]
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls):
+            return now[0]
+
+    monkeypatch.setattr('daylens.session_tracker.datetime', Clock)
+    monkeypatch.setattr('daylens.session_tracker._get_cursor_pos', lambda: (0, 0))
+    monkeypatch.setattr('daylens.session_tracker._get_keyboard_snapshot', lambda: bytes(256))
+    recorded = []
+    events = []
+
+    def persist(session):
+        recorded.append(replace(session))
+        return True
+
+    def applied(payload):
+        events.append((payload, len(recorded), recorded[-1].category_key))
+        return True
+
+    tracker = SessionTracker(
+        {'tracker': {'sample_interval_seconds': 1, 'min_session_seconds': 0}},
+        Classifier(), on_session_end=persist,
+        on_ai_classification_applied=applied,
+    )
+    intelligence = Intelligence()
+    tracker.intelligence = intelligence
+    window = {'process_name': 'Hades2.exe', 'window_title': 'Hades II', 'pid': 42}
+    tracker.tick(0, window)
+    now[0] += timedelta(seconds=46)
+    intelligence.decision = {
+        'status': 'applied', 'source': 'AI', 'category': 'gaming',
+        'certainty': 'high', 'reason': 'Hades II is a video game', 'apply': True,
+    }
+
+    tracker.tick(0, window)
+
+    assert len(events) == 1
+    payload, persisted_count, persisted_category = events[0]
+    assert persisted_count == 1
+    assert persisted_category == 'browser_general'
+    assert payload == {
+        'process_name': 'Hades2.exe',
+        'window_title': 'Hades II',
+        'normalized_title': 'Hades II',
+        'base_category': 'browser_general',
+        'category_key': 'gaming',
+        'certainty': 'high',
+        'source': 'AI',
+        'day': '2026-10-28',
+    }
+
+
+def test_cached_high_ai_event_is_emitted_once_on_first_tick(monkeypatch):
+    monkeypatch.setattr('daylens.session_tracker._get_cursor_pos', lambda: (0, 0))
+    monkeypatch.setattr('daylens.session_tracker._get_keyboard_snapshot', lambda: bytes(256))
+    events = []
+    tracker = SessionTracker(
+        {'tracker': {'sample_interval_seconds': 1}}, Classifier(),
+        on_ai_classification_applied=lambda payload: events.append(payload) or True,
+    )
+    tracker.intelligence = Intelligence()
+    tracker.intelligence.decision = {
+        'category': 'gaming', 'certainty': 'high', 'reason': 'video game',
+    }
+    window = {'process_name': 'Hades2.exe', 'window_title': 'Hades II', 'pid': 2}
+
+    tracker.tick(0, window)
+    tracker.tick(0, window)
+
+    assert len(events) == 1
+    assert events[0]['category_key'] == 'gaming'
+
+
+@pytest.mark.parametrize('certainty', ['medium', 'low', 'conflict'])
+def test_non_high_ai_result_never_emits_rule_event(monkeypatch, certainty):
+    monkeypatch.setattr('daylens.session_tracker._get_cursor_pos', lambda: (0, 0))
+    monkeypatch.setattr('daylens.session_tracker._get_keyboard_snapshot', lambda: bytes(256))
+    events = []
+    tracker = SessionTracker(
+        {'tracker': {'sample_interval_seconds': 1}}, Classifier(),
+        on_ai_classification_applied=lambda payload: events.append(payload) or True,
+    )
+    tracker.intelligence = Intelligence()
+    tracker.intelligence.decision = {
+        'status': 'applied', 'source': 'AI', 'category': 'reading',
+        'certainty': certainty, 'reason': 'evidence', 'apply': True,
+    }
+
+    tracker.tick(0, {'process_name': 'app.exe', 'window_title': 'Title', 'pid': 3})
+
+    assert events == []
 
 
 def test_high_confidence_video_category_applies_prospectively(monkeypatch):
