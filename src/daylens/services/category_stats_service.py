@@ -48,6 +48,9 @@ def load_category_summary(
         dates = [(start + timedelta(days=offset)).isoformat() for offset in range(span + 1)]
         stats = database.query_date_range_stats(db_path, dates)
     categories = _merge_categories(stats.get("by_category", []))
+    category_details = _merge_category_details(
+        stats.get("category_details", {}),
+    )
     total_eff = sum(category.get("effective_seconds", 0) or 0 for category in categories)
     period_label = "今日" if start_day == end_day == today else (
         start_day if start_day == end_day else f"{start_day}—{end_day}"
@@ -57,8 +60,50 @@ def load_category_summary(
         "range_start": start_day,
         "range_end": end_day,
         "categories": categories,
+        "category_details": category_details,
         "total_effective_seconds": total_eff,
         "total_label": f"{period_label}有效时间总计：{fmt_seconds(total_eff)}  |  {len(categories)} 个分类",
+    }
+
+
+def _merge_category_details(
+    source: dict[str, list[dict]], limit: int = 5,
+) -> dict[str, list[dict]]:
+    """Merge detailed source categories into the page's large buckets."""
+    merged: dict[str, dict[tuple[str, str], dict]] = {}
+    for source_key, rows in (source or {}).items():
+        for raw in rows or []:
+            row = dict(raw)
+            category_key = str(row.get("category_key") or source_key or "other")
+            category_name = str(row.get("category_name") or "")
+            target_key = normalize_category_bucket_key(category_key, category_name)
+            identity = (
+                str(row.get("process_name") or ""),
+                str(row.get("window_title") or ""),
+            )
+            target = merged.setdefault(target_key, {})
+            existing = target.get(identity)
+            if existing is None:
+                row["category_key"] = target_key
+                row["category_name"] = normalize_category_display_name(
+                    category_key, category_name,
+                )
+                target[identity] = row
+                continue
+            for field in (
+                "effective_seconds", "engaged_seconds", "passive_seconds",
+                "idle_seconds", "total_seconds", "samples",
+            ):
+                existing[field] = int(existing.get(field, 0) or 0) + int(
+                    row.get(field, 0) or 0
+                )
+    return {
+        key: sorted(
+            rows.values(),
+            key=lambda row: int(row.get("effective_seconds", 0) or 0),
+            reverse=True,
+        )[:limit]
+        for key, rows in merged.items()
     }
 
 

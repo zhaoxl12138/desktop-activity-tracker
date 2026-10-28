@@ -161,6 +161,55 @@ def test_range_summary_uses_one_inclusive_query_and_existing_category_merge(monk
     assert result["total_effective_seconds"] == 360
 
 
+def test_range_summary_contains_bounded_normalized_category_details(monkeypatch):
+    rows = [
+        {
+            "process_name": f"game{index}.exe",
+            "window_title": f"Game {index}",
+            "category_key": "gaming",
+            "category_name": "游戏娱乐",
+            "effective_seconds": 100 - index,
+        }
+        for index in range(6)
+    ]
+    rows.append({
+        "process_name": "video.exe",
+        "window_title": "Video",
+        "category_key": "video",
+        "category_name": "视频娱乐",
+        "effective_seconds": 99,
+    })
+    monkeypatch.setattr(
+        category_stats_service.database,
+        "query_date_range_stats",
+        lambda *_args: {
+            "by_category": [
+                {
+                    "category_key": "gaming",
+                    "category_name": "游戏娱乐",
+                    "effective_seconds": 500,
+                },
+                {
+                    "category_key": "video",
+                    "category_name": "视频娱乐",
+                    "effective_seconds": 99,
+                },
+            ],
+            "category_details": {"gaming": rows[:6], "video": rows[6:]},
+        },
+    )
+
+    result = category_stats_service.load_category_summary(
+        "usage.db", "2026-10-20", "2026-10-22",
+    )
+
+    details = result["category_details"]["entertainment"]
+    assert len(details) == 5
+    assert [row["process_name"] for row in details] == [
+        "game0.exe", "game1.exe", "video.exe", "game2.exe", "game3.exe",
+    ]
+
+
 @pytest.mark.parametrize("start,end", [
     ("2026-10-23", "2026-10-22"),
     ("2026-10-01", "2027-10-02"),
@@ -207,15 +256,22 @@ def test_custom_range_is_inclusive_validated_and_invalidates_pending_results(tmp
     app.processEvents()
 
 
-def test_category_page_uses_selected_range_for_summary_and_expanded_detail(tmp_path, monkeypatch):
+def test_category_page_uses_selected_range_and_clicks_without_detail_query(tmp_path, monkeypatch):
     app = QApplication.instance() or QApplication([])
     seen = []
     monkeypatch.setattr(category_stats_service, "load_category_summary", lambda db, start, end: seen.append(("summary", start, end)) or {
         "today": end, "range_start": start, "range_end": end,
         "categories": [{"category_key": "work", "category_name": "工作学习", "effective_seconds": 60}],
+        "category_details": {"work": [
+            {"process_name": "work.exe", "window_title": "Work", "effective_seconds": 60},
+        ]},
         "total_effective_seconds": 60, "total_label": "range total",
     })
-    monkeypatch.setattr(category_stats_service, "load_category_range_detail", lambda db, start, end, key, limit: seen.append(("detail", start, end, key, limit)) or [])
+    monkeypatch.setattr(
+        category_stats_service,
+        "load_category_range_detail",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("unexpected detail query")),
+    )
     page = CategoryStatsPage(str(tmp_path / "usage.db"))
     page.period_combo.setCurrentIndex(page.period_combo.findData("custom"))
     page.start_edit.setDate(QDate(2026, 10, 20))
@@ -223,11 +279,12 @@ def test_category_page_uses_selected_range_for_summary_and_expanded_detail(tmp_p
     page._is_active = True
     page.refresh()
     page._expand_card("work")
-    _wait_for(app, lambda: len(seen) == 2 and page._detail_refresh_controller._worker is None)
-    assert seen == [
-        ("summary", "2026-10-20", "2026-10-22"),
-        ("detail", "2026-10-20", "2026-10-22", "work", 5),
-    ]
+    page._collapse_card("work")
+    page._expand_card("work")
+    assert seen == [("summary", "2026-10-20", "2026-10-22")]
+    table = page._cards["work"]._detail.layout().itemAt(0).widget()
+    assert isinstance(table, QTableWidget)
+    assert table.item(0, 0).text() == "work.exe"
     page.shutdown()
     page.deleteLater()
     app.processEvents()
@@ -249,52 +306,6 @@ def test_background_summary_loader_uses_captured_selection_not_qt_widgets(tmp_pa
     app.processEvents()
 
 
-def test_expanded_category_shows_read_failure_instead_of_no_records(tmp_path, monkeypatch):
-    app = QApplication.instance() or QApplication([])
-    page = CategoryStatsPage(str(tmp_path / "usage.db"))
-    page._apply_summary({
-        "today": "2026-10-26", "range_start": "2026-10-20", "range_end": "2026-10-26",
-        "categories": [{"category_key": "work", "category_name": "工作学习", "effective_seconds": 60}],
-        "total_effective_seconds": 60, "total_label": "范围总计",
-    })
-    def fail(*_args):
-        raise RuntimeError("synthetic read failure")
-    monkeypatch.setattr(category_stats_service, "load_category_range_detail", fail)
-    page._is_active = True
-    page._expand_card("work")
-    _wait_for(app, lambda: page._detail_refresh_controller._worker is None)
-    texts = [label.text() for label in page._cards["work"]._detail.findChildren(QLabel)]
-    assert any("读取失败" in text for text in texts)
-    assert not any("暂无记录" in text for text in texts)
-    page.shutdown()
-    page.deleteLater()
-    app.processEvents()
-
-
-def test_expanded_category_shows_read_failure_when_exception_message_is_empty(tmp_path, monkeypatch):
-    app = QApplication.instance() or QApplication([])
-    page = CategoryStatsPage(str(tmp_path / "usage.db"))
-    page._apply_summary({
-        "today": "2026-10-26", "range_start": "2026-10-20", "range_end": "2026-10-26",
-        "categories": [{"category_key": "work", "category_name": "工作学习", "effective_seconds": 60}],
-        "total_effective_seconds": 60, "total_label": "范围总计",
-    })
-
-    def fail(*_args):
-        raise RuntimeError()
-
-    monkeypatch.setattr(category_stats_service, "load_category_range_detail", fail)
-    page._is_active = True
-    page._expand_card("work")
-    _wait_for(app, lambda: page._detail_refresh_controller._worker is None)
-    texts = [label.text() for label in page._cards["work"]._detail.findChildren(QLabel)]
-    assert any("读取失败" in text for text in texts)
-    assert not any("暂无记录" in text for text in texts)
-    page.shutdown()
-    page.deleteLater()
-    app.processEvents()
-
-
 def _wait_for(app, predicate, timeout=3):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -310,70 +321,44 @@ def _summary_for_detail(seconds=60, *, start="2026-10-20", end="2026-10-26"):
     return {
         "today": end, "range_start": start, "range_end": end,
         "categories": [{"category_key": "work", "category_name": "工作学习", "effective_seconds": seconds}],
+        "category_details": {"work": [
+            {"process_name": "work.exe", "window_title": "Work", "effective_seconds": seconds},
+        ]},
         "total_effective_seconds": seconds, "total_label": "范围总计",
     }
 
 
-def test_detail_load_does_not_block_gui_and_ignores_range_change(tmp_path, monkeypatch):
+def test_summary_failure_keeps_expanded_snapshot(tmp_path):
     app = QApplication.instance() or QApplication([])
-    started = threading.Event()
-    release = threading.Event()
-    worker_thread = []
-
-    def load_detail(*_args):
-        worker_thread.append(threading.get_ident())
-        started.set()
-        release.wait(timeout=2)
-        return [{"process_name": "old.exe", "window_title": "Old", "effective_seconds": 60}]
-
-    monkeypatch.setattr(category_stats_service, "load_category_range_detail", load_detail)
     page = CategoryStatsPage(str(tmp_path / "usage.db"))
     page._apply_summary(_summary_for_detail())
-    page._is_active = True
-    main_thread = threading.get_ident()
-    try:
-        page._expand_card("work")
-        assert started.wait(timeout=1)
-        assert worker_thread != [main_thread]
-        labels = [label.text() for label in page._cards["work"]._detail.findChildren(QLabel)]
-        assert any("加载" in label for label in labels)
-        page.period_combo.setCurrentIndex(page.period_combo.findData("today"))
-        release.set()
-        _wait_for(app, lambda: page._detail_refresh_controller._worker is None)
-        assert page._cards == {}
-    finally:
-        release.set()
-        page.shutdown()
-        page.deleteLater()
-        app.processEvents()
+    page._expand_card("work")
+    table = page._cards["work"]._detail.layout().itemAt(0).widget()
+    assert isinstance(table, QTableWidget)
+
+    page._show_refresh_error("synthetic read failure")
+
+    assert page.error_lbl.isHidden() is False
+    assert page._cards["work"]._detail.layout().itemAt(0).widget() is table
+    page.shutdown()
+    page.deleteLater()
+    app.processEvents()
 
 
-def test_changed_summary_refreshes_expanded_detail(tmp_path, monkeypatch):
+def test_changed_summary_refreshes_expanded_detail(tmp_path):
     app = QApplication.instance() or QApplication([])
-    calls = []
-
-    def load_detail(_db, start, end, key, _limit):
-        calls.append((start, end, key))
-        seconds = 60 if len(calls) == 1 else 120
-        return [{"process_name": "work.exe", "window_title": "Work", "effective_seconds": seconds}]
-
-    monkeypatch.setattr(category_stats_service, "load_category_range_detail", load_detail)
     page = CategoryStatsPage(str(tmp_path / "usage.db"))
     page._apply_summary(_summary_for_detail())
-    page._is_active = True
-    try:
-        page._expand_card("work")
-        _wait_for(app, lambda: len(calls) == 1 and page._detail_refresh_controller._worker is None)
-        page._apply_summary(_summary_for_detail(120))
-        _wait_for(app, lambda: len(calls) == 2 and page._detail_refresh_controller._worker is None)
-        table = page._cards["work"]._detail.layout().itemAt(0).widget()
-        assert isinstance(table, QTableWidget)
-        assert table.item(0, 2).text() == fmt_seconds(120)
-        assert calls == [("2026-10-20", "2026-10-26", "work")] * 2
-    finally:
-        page.shutdown()
-        page.deleteLater()
-        app.processEvents()
+    page._expand_card("work")
+
+    page._apply_summary(_summary_for_detail(120))
+
+    table = page._cards["work"]._detail.layout().itemAt(0).widget()
+    assert isinstance(table, QTableWidget)
+    assert table.item(0, 2).text() == fmt_seconds(120)
+    page.shutdown()
+    page.deleteLater()
+    app.processEvents()
 
 
 def test_preset_date_fields_follow_new_summary_day_at_midnight(tmp_path):
@@ -387,92 +372,45 @@ def test_preset_date_fields_follow_new_summary_day_at_midnight(tmp_path):
     app.processEvents()
 
 
-def test_reexpand_same_category_republishes_identical_detail(tmp_path, monkeypatch):
+def test_reexpand_same_category_uses_the_same_snapshot(tmp_path, monkeypatch):
     app = QApplication.instance() or QApplication([])
-    calls = []
-
-    def load_detail(*_args):
-        calls.append(1)
-        return [{"process_name": "same.exe", "window_title": "Same", "effective_seconds": 60}]
-
-    monkeypatch.setattr(category_stats_service, "load_category_range_detail", load_detail)
+    monkeypatch.setattr(
+        category_stats_service,
+        "load_category_range_detail",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("unexpected detail query")),
+    )
     page = CategoryStatsPage(str(tmp_path / "usage.db"))
     page._apply_summary(_summary_for_detail())
-    page._is_active = True
-    try:
-        page._expand_card("work")
-        _wait_for(app, lambda: len(calls) == 1 and page._detail_refresh_controller._worker is None)
-        page._collapse_card("work")
-        page._expand_card("work")
-        _wait_for(app, lambda: len(calls) == 2 and page._detail_refresh_controller._worker is None)
-        detail = page._cards["work"]._detail.layout().itemAt(0).widget()
-        assert isinstance(detail, QTableWidget)
-        assert detail.item(0, 0).text() == "same.exe"
-    finally:
-        page.shutdown()
-        page.deleteLater()
-        app.processEvents()
+
+    page._expand_card("work")
+    page._collapse_card("work")
+    page._expand_card("work")
+
+    detail = page._cards["work"]._detail.layout().itemAt(0).widget()
+    assert isinstance(detail, QTableWidget)
+    assert detail.item(0, 0).text() == "work.exe"
+    page.shutdown()
+    page.deleteLater()
+    app.processEvents()
 
 
-def test_expanded_detail_refreshes_when_distribution_changes_but_total_does_not(tmp_path, monkeypatch):
+def test_detail_only_summary_change_refreshes_expanded_card(tmp_path):
     app = QApplication.instance() or QApplication([])
-    calls = []
-
-    def load_detail(*_args):
-        calls.append(1)
-        process = "first.exe" if len(calls) == 1 else "second.exe"
-        return [{"process_name": process, "window_title": process, "effective_seconds": 60}]
-
-    monkeypatch.setattr(category_stats_service, "load_category_range_detail", load_detail)
     page = CategoryStatsPage(str(tmp_path / "usage.db"))
-    page._apply_summary(_summary_for_detail())
-    page._is_active = True
-    try:
-        page._expand_card("work")
-        _wait_for(app, lambda: len(calls) == 1 and page._detail_refresh_controller._worker is None)
-        assert page._detail_refresh_controller.timer.interval() == 30_000
-        page._detail_refresh_controller.request_refresh()
-        _wait_for(app, lambda: len(calls) == 2 and page._detail_refresh_controller._worker is None)
-        detail = page._cards["work"]._detail.layout().itemAt(0).widget()
-        assert isinstance(detail, QTableWidget)
-        assert detail.item(0, 0).text() == "second.exe"
-    finally:
-        page.shutdown()
-        page.deleteLater()
-        app.processEvents()
+    first = _summary_for_detail()
+    page._apply_summary(first)
+    page._expand_card("work")
+    changed = _summary_for_detail()
+    changed["category_details"]["work"][0]["process_name"] = "second.exe"
 
+    page._apply_summary(changed)
 
-def test_expanded_detail_recovers_when_retry_returns_same_rows(tmp_path, monkeypatch):
-    app = QApplication.instance() or QApplication([])
-    calls = []
-    rows = [{"process_name": "same.exe", "window_title": "Same", "effective_seconds": 60}]
-
-    def load_detail(*_args):
-        calls.append(1)
-        if len(calls) == 2:
-            raise RuntimeError("temporary read failure")
-        return rows
-
-    monkeypatch.setattr(category_stats_service, "load_category_range_detail", load_detail)
-    page = CategoryStatsPage(str(tmp_path / "usage.db"))
-    page._apply_summary(_summary_for_detail())
-    page._is_active = True
-    try:
-        page._expand_card("work")
-        _wait_for(app, lambda: len(calls) == 1 and page._detail_refresh_controller._worker is None)
-        page._detail_refresh_controller.request_refresh()
-        _wait_for(app, lambda: len(calls) == 2 and page._detail_refresh_controller._worker is None)
-        error = page._cards["work"]._detail.layout().itemAt(0).widget()
-        assert isinstance(error, QLabel) and "读取失败" in error.text()
-        page._detail_refresh_controller.request_refresh()
-        _wait_for(app, lambda: len(calls) == 3 and page._detail_refresh_controller._worker is None)
-        detail = page._cards["work"]._detail.layout().itemAt(0).widget()
-        assert isinstance(detail, QTableWidget)
-        assert detail.item(0, 0).text() == "same.exe"
-    finally:
-        page.shutdown()
-        page.deleteLater()
-        app.processEvents()
+    detail = page._cards["work"]._detail.layout().itemAt(0).widget()
+    assert isinstance(detail, QTableWidget)
+    assert detail.item(0, 0).text() == "second.exe"
+    page.shutdown()
+    page.deleteLater()
+    app.processEvents()
 
 
 def test_category_summary_clears_error_when_retry_returns_same_snapshot(tmp_path, monkeypatch):

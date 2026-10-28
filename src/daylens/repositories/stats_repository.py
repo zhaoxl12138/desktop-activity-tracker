@@ -697,6 +697,19 @@ def _aggregate_mixed_history(
     }
 
 
+def _bounded_category_details(
+    rows: list[dict], limit: int = 5,
+) -> dict[str, list[dict]]:
+    """Keep a small ranked detail snapshot for each source category."""
+    result: dict[str, list[dict]] = {}
+    for row in rows:
+        key = str(row.get("category_key", "") or "other")
+        bucket = result.setdefault(key, [])
+        if len(bucket) < limit:
+            bucket.append(dict(row))
+    return result
+
+
 def query_date_stats(read_conn, db_path: str, date_str: str) -> dict:
     session_rows, legacy_rows = _load_mixed_history_rows(
         read_conn,
@@ -707,6 +720,7 @@ def query_date_stats(read_conn, db_path: str, date_str: str) -> dict:
         [date_str],
         session_rows,
         legacy_rows,
+        detail_limit=None,
     )
     day = payload["daily"][0]
     totals = {
@@ -723,7 +737,10 @@ def query_date_stats(read_conn, db_path: str, date_str: str) -> dict:
         "totals": totals,
         "by_category": payload["by_category"],
         "by_app": payload["by_app"],
-        "by_app_detail": payload["by_app_detail"],
+        "by_app_detail": payload["by_app_detail"][:50],
+        "category_details": _bounded_category_details(
+            payload["by_app_detail"],
+        ),
     }
 
 
@@ -1034,7 +1051,12 @@ def query_date_range_stats(read_conn, db_path: str, dates: list[str]) -> dict:
         if dates
         else ([], [])
     )
-    payload = _aggregate_mixed_history(dates, session_rows, legacy_rows)
+    payload = _aggregate_mixed_history(
+        dates, session_rows, legacy_rows, detail_limit=None,
+    )
+    payload["category_details"] = _bounded_category_details(
+        payload["by_app_detail"],
+    )
     payload.pop("by_app_detail", None)
     payload["by_app"] = payload["by_app"][:20]
     return payload

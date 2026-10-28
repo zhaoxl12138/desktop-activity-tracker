@@ -221,11 +221,10 @@ class CategoryStatsPage(QWidget):
         super().__init__()
         self.db_path = db_path
         self._cards = {}
+        self._category_details: dict[str, list[dict]] = {}
         self._expanded_key = None
         self._range_start = ""
         self._range_end = ""
-        self._detail_query: tuple[str, str, str] | None = None
-        self._detail_active = False
         self._is_active = False
         self._last_signature = None
         self._empty_label: QLabel | None = None
@@ -292,13 +291,6 @@ class CategoryStatsPage(QWidget):
         )
         self._refresh_controller.failed.connect(self._show_refresh_error)
         self.timer = self._refresh_controller.timer
-        self._detail_refresh_controller = DashboardRefreshController(
-            self._load_selected_detail,
-            interval_ms=30_000,
-            parent=self,
-        )
-        self._detail_refresh_controller.snapshot_ready.connect(self._apply_detail)
-        self._detail_refresh_controller.failed.connect(self._show_detail_error)
         self.period_combo.currentIndexChanged.connect(self._on_period_changed)
         self.start_edit.dateChanged.connect(self._on_period_changed)
         self.end_edit.dateChanged.connect(self._on_period_changed)
@@ -332,60 +324,13 @@ class CategoryStatsPage(QWidget):
             start, end = custom_start, custom_end
         return category_stats_service.load_category_summary(self.db_path, start, end)
 
-    def _load_selected_detail(self) -> dict[str, object]:
-        context = self._detail_query
-        if context is None:
-            return {"context": None, "rows": []}
-        start, end, key = context
-        rows = category_stats_service.load_category_range_detail(
-            self.db_path, start, end, key, 5,
-        )
-        return {"context": context, "rows": rows}
-
-    def _apply_detail(self, snapshot) -> None:
-        payload = snapshot.payload
-        context = payload.get("context")
-        if context is None or context != self._detail_query:
-            return
-        start, end, key = context
-        if (self._expanded_key != key or start != self._range_start
-                or end != self._range_end):
-            return
-        card = self._cards.get(key)
-        if card is not None:
-            card.set_expanded(True, payload.get("rows", []))
-
-    def _show_detail_error(self, message: str) -> None:
-        if self._detail_query is None:
-            return
-        key = self._detail_query[2]
-        if self._expanded_key != key:
-            return
-        card = self._cards.get(key)
-        if card is not None:
-            card.set_expanded(True, [], error_message=message)
-
-    def _stop_detail_query(self) -> None:
-        self._detail_query = None
-        self._detail_active = False
-        self._detail_refresh_controller.set_foreground(False)
-
     def _refresh_expanded_detail(self) -> None:
         key = self._expanded_key
         card = self._cards.get(key) if key is not None else None
         if card is None:
-            self._stop_detail_query()
             self._expanded_key = None
             return
-        self._detail_query = (self._range_start, self._range_end, key)
-        card.set_expanded(True, [], status_message="正在加载明细…")
-        if self._is_active:
-            if self._detail_active:
-                self._detail_refresh_controller.invalidate_context()
-            else:
-                self._detail_active = True
-                self._detail_refresh_controller.invalidate_context()
-                self._detail_refresh_controller.set_foreground(True)
+        card.set_expanded(True, self._category_details.get(key, []))
 
     def _on_period_changed(self, *_args) -> None:
         period = self.period_combo.currentData()
@@ -418,18 +363,12 @@ class CategoryStatsPage(QWidget):
     def activate(self, force: bool = False) -> None:
         self._is_active = True
         self._refresh_controller.set_foreground(True)
-        if self._detail_query is not None:
-            self._detail_active = True
-            self._detail_refresh_controller.invalidate_context()
-            self._detail_refresh_controller.set_foreground(True)
         if force:
             self._refresh_controller.request_refresh()
 
     def deactivate(self) -> None:
         self._is_active = False
         self._refresh_controller.set_foreground(False)
-        self._detail_active = False
-        self._detail_refresh_controller.set_foreground(False)
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -461,6 +400,10 @@ class CategoryStatsPage(QWidget):
                     with QSignalBlocker(edit):
                         edit.setDate(QDate.fromString(day, "yyyy-MM-dd"))
             categories = list(summary["categories"])
+            category_details = {
+                str(key): [dict(row) for row in rows]
+                for key, rows in (summary.get("category_details") or {}).items()
+            }
             total_eff = int(summary["total_effective_seconds"])
             signature = (
                 self._range_start,
@@ -470,10 +413,24 @@ class CategoryStatsPage(QWidget):
                     (item.get("category_key"), item.get("effective_seconds"), item.get("category_name"))
                     for item in categories
                 ),
+                tuple(
+                    (
+                        key,
+                        tuple(
+                            (
+                                row.get("process_name"), row.get("window_title"),
+                                row.get("effective_seconds"),
+                            )
+                            for row in rows
+                        ),
+                    )
+                    for key, rows in sorted(category_details.items())
+                ),
             )
             if signature == self._last_signature:
                 return
             self._last_signature = signature
+            self._category_details = category_details
             self.total_label.setText(str(summary["total_label"]))
 
             if not categories:
@@ -525,21 +482,18 @@ class CategoryStatsPage(QWidget):
         self.error_lbl.show()
 
     def shutdown(self, timeout_ms: int = 5_000) -> bool:
-        detail_done = self._detail_refresh_controller.shutdown(timeout_ms)
-        summary_done = self._refresh_controller.shutdown(timeout_ms)
-        return detail_done and summary_done
+        return self._refresh_controller.shutdown(timeout_ms)
 
     def resume(self) -> None:
         self._refresh_controller.resume(self._is_active)
-        self._detail_refresh_controller.resume(self._is_active and self._detail_query is not None)
 
     def _clear_all_cards(self):
-        self._stop_detail_query()
         while self.cards_container.count():
             item = self.cards_container.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
         self._cards.clear()
+        self._category_details = {}
         self._expanded_key = None
         self._empty_label = None
         self.cards_container.addStretch()
@@ -572,4 +526,3 @@ class CategoryStatsPage(QWidget):
             card.set_expanded(False)
         if self._expanded_key == cat_key:
             self._expanded_key = None
-            self._stop_detail_query()
