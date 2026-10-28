@@ -89,7 +89,7 @@ def _upsert_rule(conn: sqlite3.Connection, row: dict) -> None:
     )
 
 
-def _move_process_rule(
+def move_process_rule(
     conn: sqlite3.Connection,
     process_name: str,
     category_key: str,
@@ -250,7 +250,7 @@ def apply_classification_correction(
                     ),
                 )
             if not shared_browser:
-                rule_changed, rule_snapshot = _move_process_rule(
+                rule_changed, rule_snapshot = move_process_rule(
                     conn, process, definition.id, definition.name,
                     definition.timing_policy,
                 )
