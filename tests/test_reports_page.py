@@ -106,6 +106,26 @@ def test_reports_page_paginates_all_report_types_and_restores_each_page(
     assert page.page_status.text() == "第 3 / 3 页 · 共 142 份"
 
 
+def test_reports_page_loads_rows_only_for_visible_tab(tmp_path: Path, monkeypatch):
+    app = _app()
+    calls = []
+
+    def load_page(_root, subdir, *, page, page_size):
+        calls.append((subdir, page, page_size))
+        return reports_service.ReportPage([], 0, 1, 1, page_size)
+
+    monkeypatch.setattr(reports_service, "list_report_page", load_page)
+    page = ReportsPage(str(tmp_path / "usage.db"), str(tmp_path / "reports"))
+
+    page.activate()
+    assert calls == [("daily", 1, 50)]
+
+    page.tabs.setCurrentWidget(page.tab_weekly)
+    app.processEvents()
+    assert calls == [("daily", 1, 50), ("weekly", 1, 50)]
+    page.deactivate()
+
+
 def test_report_page_change_clears_selection_and_refresh_clamps_removed_page(
     tmp_path: Path,
 ):

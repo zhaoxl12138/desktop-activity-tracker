@@ -284,6 +284,7 @@ class CategoryStatsPage(QWidget):
         self._refresh_controller = DashboardRefreshController(
             self._load_selected_summary,
             interval_ms=30_000,
+            max_age_ms=30_000,
             parent=self,
         )
         self._refresh_controller.snapshot_ready.connect(

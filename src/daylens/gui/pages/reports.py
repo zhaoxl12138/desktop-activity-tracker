@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 
 from PySide6.QtCore import QItemSelectionModel, Qt, QTimer
 from PySide6.QtWidgets import (
@@ -41,6 +42,7 @@ class ReportsPage(QWidget):
         self._page_size = 50
         self._report_pages = {"daily": 1, "weekly": 1, "monthly": 1}
         self._page_results: dict[str, reports_service.ReportPage] = {}
+        self._report_loaded_at: dict[str, float] = {}
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 24)
@@ -301,7 +303,6 @@ class ReportsPage(QWidget):
         return table
 
     def refresh(self, force_subdir: str | None = None):
-        from pathlib import Path
         from ...services.intelligence_report_schedule import schedule_status
         self.automation_status.setText(schedule_status(self.paths.intelligence_dir))
         table_specs = [
@@ -309,38 +310,39 @@ class ReportsPage(QWidget):
             (self.tab_weekly, "weekly", "周报"),
             (self.tab_monthly, "monthly", "月报"),
         ]
-        current_table = self.tabs.currentWidget()
-        current_table_changed = False
-        for index, (table, subdir, title) in enumerate(table_specs):
-            result = reports_service.list_report_page(
-                self.reports_dir,
-                subdir,
-                page=self._report_pages[subdir],
-                page_size=self._page_size,
-            )
-            self._report_pages[subdir] = result.page
-            self._page_results[subdir] = result
-            rows = result.rows
-            signature = tuple(
+        subdir = force_subdir or self._current_subdir()
+        index = ("daily", "weekly", "monthly").index(subdir)
+        table, _subdir, _title = table_specs[index]
+        result = reports_service.list_report_page(
+            self.reports_dir,
+            subdir,
+            page=self._report_pages[subdir],
+            page_size=self._page_size,
+        )
+        self._report_pages[subdir] = result.page
+        self._page_results[subdir] = result
+        self._report_loaded_at[subdir] = time.monotonic()
+        rows = result.rows
+        signature = (
+            result.page,
+            result.total_pages,
+            result.total_count,
+            tuple(
                 (row.get("filename"), row.get("size_text"), row.get("modified_text"))
                 for row in rows
+            ),
+        )
+        for tab_index, (_table, tab_subdir, title) in enumerate(table_specs):
+            count = (
+                result.total_count
+                if tab_subdir == subdir
+                else reports_service.count_reports(self.reports_dir, tab_subdir)
             )
-            signature = (
-                result.page,
-                result.total_pages,
-                result.total_count,
-                signature,
-            )
-            self.tabs.setTabText(index, f"{title}  {result.total_count}")
-            if (
-                subdir != force_subdir
-                and self._last_signature is not None
-                and self._last_signature[index] == signature
-            ):
-                continue
+            self.tabs.setTabText(tab_index, f"{title}  {count}")
+        if self._last_signature is None:
+            self._last_signature = [None, None, None]
+        if self._last_signature[index] != signature or subdir == force_subdir:
             selected_paths = self._selected_file_paths(table)
-            if table is current_table:
-                current_table_changed = True
             table.blockSignals(True)
             table.clearSelection()
             table.clearContents()
@@ -359,11 +361,9 @@ class ReportsPage(QWidget):
                         QItemSelectionModel.Select | QItemSelectionModel.Rows,
                     )
             table.blockSignals(False)
-            if self._last_signature is None:
-                self._last_signature = [None, None, None]
             self._last_signature[index] = signature
-        if current_table_changed:
-            self._select_from_table(current_table)
+            if table is self.tabs.currentWidget():
+                self._select_from_table(table)
         self._update_pager()
 
     def _current_subdir(self) -> str:
@@ -371,6 +371,11 @@ class ReportsPage(QWidget):
 
     def _on_tab_changed(self, *_args) -> None:
         self._clear_selection()
+        subdir = self._current_subdir()
+        loaded_at = self._report_loaded_at.get(subdir)
+        if loaded_at is None or time.monotonic() - loaded_at >= 60:
+            self.refresh(force_subdir=subdir)
+            return
         self._update_pager()
 
     def _previous_page(self) -> None:

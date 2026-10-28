@@ -6,6 +6,7 @@ import glob
 import os
 import shutil
 import sqlite3
+from pathlib import Path
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Literal
@@ -161,6 +162,14 @@ def list_report_rows(reports_dir: str, subdir: str, limit: int = 50) -> list[dic
         page=1,
         page_size=limit,
     ).rows
+
+
+def count_reports(reports_dir: str, subdir: str) -> int:
+    """Count report files without reading row metadata for hidden tabs."""
+    directory = Path(reports_dir) / subdir
+    if not directory.is_dir():
+        return 0
+    return sum(1 for path in directory.rglob("*.md") if path.is_file())
 
 
 def download_report(source_path: str, destination_path: str) -> str:

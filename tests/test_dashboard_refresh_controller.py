@@ -97,6 +97,38 @@ def test_refresh_controller_pauses_hidden_window_and_refreshes_on_restore():
     assert controller.shutdown(timeout_ms=1_000) is True
 
 
+def test_refresh_controller_reuses_fresh_snapshot_on_restore():
+    app = _app()
+    calls = 0
+    now = [100.0]
+
+    def load_snapshot():
+        nonlocal calls
+        calls += 1
+        return {"call": calls}
+
+    controller = DashboardRefreshController(
+        load_snapshot,
+        interval_ms=60_000,
+        max_age_ms=30_000,
+        monotonic=lambda: now[0],
+    )
+    controller.set_foreground(True)
+    _wait_until(app, lambda: calls == 1 and controller._worker is None)
+
+    controller.set_foreground(False)
+    now[0] += 10
+    controller.set_foreground(True)
+    app.processEvents()
+    assert calls == 1
+
+    controller.set_foreground(False)
+    now[0] += 31
+    controller.set_foreground(True)
+    _wait_until(app, lambda: calls == 2 and controller._worker is None)
+    assert controller.shutdown(timeout_ms=1_000) is True
+
+
 def test_refresh_controller_can_resume_when_exit_wait_times_out():
     app = _app()
     release = threading.Event()
