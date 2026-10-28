@@ -718,7 +718,7 @@ class MainWindow(QMainWindow):
 
     def _on_classification_history_changed(self, result: object) -> None:
         payload = result if isinstance(result, dict) else {}
-        if payload.get('rule_changed'):
+        if payload.get('rule_changed') and not payload.get('classifier_reloaded'):
             reload_classifier = getattr(self.worker, 'reload_classifier', None)
             if callable(reload_classifier):
                 reload_classifier()
@@ -746,6 +746,11 @@ class MainWindow(QMainWindow):
 
     def _connect_recording_worker(self, worker) -> None:
         worker.sample_updated.connect(self._on_sample)
+        history_changed = getattr(
+            worker, 'classification_history_changed', None
+        )
+        if history_changed is not None:
+            history_changed.connect(self._on_classification_history_changed)
         applied = getattr(worker, 'classification_applied', None)
         if applied is not None:
             applied.connect(self.pages['live'].on_classification_applied)

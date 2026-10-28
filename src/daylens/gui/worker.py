@@ -18,6 +18,10 @@ from .. import activity_detector, classifier, window_detector
 from ..services.session_recovery_service import SessionRecoverySpool
 from ..services.session_runtime_service import SessionRuntimeStore
 from ..services.measurement_shadow_service import MeasurementShadowRecorder
+from ..services.ai_classification_backfill_service import (
+    apply_ai_classification_backfill,
+    result_payload as ai_backfill_payload,
+)
 from ..measurement import observe_sample_interval
 from ..session_tracker import SessionTracker
 
@@ -92,6 +96,7 @@ class RecordingWorker(QThread):
     error_occurred = Signal(str)
     health_updated = Signal(object)
     classification_applied = Signal(int)
+    classification_history_changed = Signal(object)
 
     def __init__(
         self,
@@ -340,6 +345,7 @@ class RecordingWorker(QThread):
                 on_session_end=self._persist_or_queue,
                 on_flush=self._persist_or_queue,
                 on_session_rewrite=self._rewrite_or_queue,
+                on_ai_classification_applied=self._apply_ai_classification,
                 audio_detector=audio_detector,
             )
             try:
@@ -667,6 +673,36 @@ class RecordingWorker(QThread):
     def _rewrite_or_queue(self, session) -> bool:
         """Hand an idempotent session_id rewrite to the bounded worker queue."""
         return self._persist_or_queue(session, rewrite=True)
+
+    def _apply_ai_classification(self, payload: dict) -> bool:
+        """Apply one adopted AI decision without blocking future sampling."""
+        try:
+            result = apply_ai_classification_backfill(
+                db_path=self.db_path,
+                process_name=str(payload.get("process_name") or ""),
+                window_title=str(payload.get("window_title") or ""),
+                normalized_title=str(payload.get("normalized_title") or ""),
+                category_key=str(payload.get("category_key") or ""),
+                categories=self.config.get("categories", {}),
+                day=str(payload.get("day") or ""),
+            )
+            if not result.shared_browser:
+                replacement_classifier = classifier.Classifier(
+                    self.config_path, self.db_path,
+                )
+                if self._tracker is None or not self._tracker.replace_classifier(
+                    replacement_classifier
+                ):
+                    raise RuntimeError(
+                        "AI classification rule reload could not finish"
+                    )
+            event = ai_backfill_payload(result)
+            event["classifier_reloaded"] = not result.shared_browser
+            self.classification_history_changed.emit(event)
+            return True
+        except Exception as error:
+            self._report_error(error, "degraded")
+            return False
 
     def _retry_pending_once(self) -> None:
         if not self._pending_persists:

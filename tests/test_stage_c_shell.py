@@ -20,6 +20,7 @@ from desktop_activity_tracker.services import settings_service  # noqa: E402
 
 class DummyWorker(QObject):
     sample_updated = Signal(dict)
+    classification_history_changed = Signal(object)
 
     def __init__(self):
         super().__init__()
@@ -137,6 +138,30 @@ def test_task_analysis_entry_is_removed_even_with_legacy_switches():
         app.processEvents()
         assert stats.tabs.currentWidget() is window.pages["goals"]
         assert window.lbl_page_title.text() == "目标与成果"
+    finally:
+        window.close()
+
+
+def test_worker_ai_history_signal_refreshes_without_double_classifier_reload(
+    monkeypatch,
+):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app, window = _window()
+    invalidations = []
+    monkeypatch.setattr(
+        window.dashboard_refresh, "invalidate_context",
+        lambda: invalidations.append("dashboard"),
+    )
+    try:
+        window.worker.classification_history_changed.emit({
+            "updated_sessions": 1,
+            "rule_changed": True,
+            "classifier_reloaded": True,
+        })
+        app.processEvents()
+
+        assert invalidations == ["dashboard"]
+        assert window.worker.reload_classifier_calls == 0
     finally:
         window.close()
 

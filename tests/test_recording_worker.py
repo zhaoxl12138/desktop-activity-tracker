@@ -5,8 +5,10 @@ from datetime import datetime
 
 import pytest
 
+from daylens.app_paths import AppPaths
 from daylens.gui import worker as worker_module
 from daylens.session_tracker import ActivitySession, SessionTracker
+from daylens.services.ai_classification_backfill_service import AiBackfillResult
 
 
 class TrackerStub:
@@ -465,6 +467,93 @@ def test_classifier_reload_failure_keeps_old_classifier_and_reports_error(monkey
     assert tracker.classifier is original_classifier
     assert worker.health.status == "degraded"
     assert errors == ["classifier replacement could not finish current session"]
+
+
+def test_high_ai_event_backfills_reloads_rules_and_emits_history_change(
+    monkeypatch, tmp_path,
+):
+    db_path = tmp_path / "usage.db"
+    paths = AppPaths.from_database(db_path, program_dir=tmp_path)
+    worker = worker_module.RecordingWorker(
+        str(tmp_path / "config.yaml"), str(db_path),
+        {"categories": {}}, paths=paths,
+    )
+    tracker = TrackerStub()
+    worker._tracker = tracker
+    captured = {}
+    replacement_classifier = object()
+    emitted = []
+    worker.classification_history_changed.connect(emitted.append)
+
+    def apply(**kwargs):
+        captured.update(kwargs)
+        return AiBackfillResult(
+            updated_sessions=1,
+            updated_effective_seconds=46,
+            rule_changed=True,
+            shared_browser=False,
+            time_conserved=True,
+            audit_path=str(tmp_path / "audit.json"),
+        )
+
+    monkeypatch.setattr(
+        worker_module, "apply_ai_classification_backfill", apply,
+    )
+    monkeypatch.setattr(
+        worker_module.classifier, "Classifier",
+        lambda *_args: replacement_classifier,
+    )
+
+    delivered = worker._apply_ai_classification({
+        "process_name": "Hades2.exe",
+        "window_title": "Hades II",
+        "normalized_title": "Hades II",
+        "category_key": "gaming",
+        "day": "2026-10-28",
+    })
+
+    assert delivered is True
+    assert captured["db_path"] == str(db_path)
+    assert captured["process_name"] == "Hades2.exe"
+    assert captured["normalized_title"] == "Hades II"
+    assert tracker.replacement_calls == [replacement_classifier]
+    assert emitted == [{
+        "updated_sessions": 1,
+        "updated_effective_seconds": 46,
+        "rule_changed": True,
+        "shared_browser": False,
+        "time_conserved": True,
+        "audit_path": str(tmp_path / "audit.json"),
+        "classifier_reloaded": True,
+    }]
+
+
+def test_high_ai_backfill_failure_is_retryable_and_does_not_stop_worker(
+    monkeypatch, tmp_path,
+):
+    worker = worker_module.RecordingWorker(
+        str(tmp_path / "config.yaml"), str(tmp_path / "usage.db"), {},
+    )
+    worker._tracker = TrackerStub()
+    errors = []
+    emitted = []
+    worker.error_occurred.connect(errors.append)
+    worker.classification_history_changed.connect(emitted.append)
+    monkeypatch.setattr(
+        worker_module, "apply_ai_classification_backfill",
+        lambda **_kwargs: (_ for _ in ()).throw(OSError("database busy")),
+    )
+
+    delivered = worker._apply_ai_classification({
+        "process_name": "Hades2.exe", "window_title": "Hades II",
+        "normalized_title": "Hades II", "category_key": "gaming",
+        "day": "2026-10-28",
+    })
+
+    assert delivered is False
+    assert worker.health.status == "degraded"
+    assert errors == ["database busy"]
+    assert emitted == []
 
 
 def test_settings_reload_failure_keeps_previous_settings_and_classifier(monkeypatch):
