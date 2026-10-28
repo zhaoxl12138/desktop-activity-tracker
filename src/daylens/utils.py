@@ -8,6 +8,7 @@ ENTERTAINMENT_CATEGORY_KEYS = frozenset(group_keys('entertainment'))
 SOCIAL_CATEGORY_KEYS = frozenset(group_keys('social'))
 BROWSER_CATEGORY_KEYS = frozenset(group_keys('browser_general'))
 TOOLS_CATEGORY_KEYS = frozenset(group_keys('tools'))
+IDLE_CATEGORY_KEYS = frozenset(group_keys('idle'))
 HIDDEN_RULE_CATEGORY_KEYS = {"idle", "hangup"}
 
 

@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from functools import lru_cache
 
-from ..utils import WORK_CATEGORY_KEYS
+from ..utils import IDLE_CATEGORY_KEYS, WORK_CATEGORY_KEYS
 
 # The aggregate ``work`` bucket is valid for presentation and imported data,
 # but the partial index only contains concrete attention-v1 work categories.
@@ -448,6 +448,18 @@ def _aggregate_mixed_history(
     app_map: dict[tuple[str, str], dict] = {}
     app_detail_map: dict[tuple[str, str, str, str], dict] = {}
 
+    def presentation_row(row: dict) -> tuple[dict, bool]:
+        category_key = str(row.get("category_key", "") or "")
+        category_name = str(row.get("category_name", "") or "")
+        is_idle = category_key in IDLE_CATEGORY_KEYS or category_name == "空闲"
+        if not is_idle:
+            return row, False
+        return {
+            **row,
+            "category_key": "other",
+            "category_name": "其他",
+        }, True
+
     def add_category(
         row: dict,
         *,
@@ -561,18 +573,28 @@ def _aggregate_mixed_history(
             idle=idle,
             duration=duration,
         )
-        if str(row.get("category_name", "") or "") != "空闲":
+        display_row, is_idle_category = presentation_row(row)
+        if not is_idle_category:
             add_category(
-                row,
+                display_row,
                 effective=effective,
                 engaged=engaged,
                 passive=passive,
                 idle=idle,
                 duration=duration,
             )
+        elif effective > 0:
+            add_category(
+                display_row,
+                effective=effective,
+                engaged=engaged,
+                passive=passive,
+                idle=0,
+                duration=effective,
+            )
         if effective > 0:
             add_app(
-                row,
+                display_row,
                 title=str(row.get("normalized_title", "") or ""),
                 effective=effective,
                 engaged=engaged,
@@ -591,17 +613,28 @@ def _aggregate_mixed_history(
             idle=idle,
             duration=duration,
         )
-        add_category(
-            row,
-            effective=effective,
-            engaged=0,
-            passive=0,
-            idle=idle,
-            duration=duration,
-        )
+        display_row, is_idle_category = presentation_row(row)
+        if not is_idle_category:
+            add_category(
+                display_row,
+                effective=effective,
+                engaged=0,
+                passive=0,
+                idle=idle,
+                duration=duration,
+            )
+        elif effective > 0:
+            add_category(
+                display_row,
+                effective=effective,
+                engaged=0,
+                passive=0,
+                idle=0,
+                duration=effective,
+            )
         if effective > 0:
             add_app(
-                row,
+                display_row,
                 title=str(row.get("window_title", "") or ""),
                 effective=effective,
                 engaged=0,

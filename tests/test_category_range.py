@@ -47,6 +47,80 @@ def test_single_day_detail_expands_buckets_from_shared_registry(
     assert set(observed) == set(expected_keys)
 
 
+def test_idle_labeled_session_reports_only_its_effective_part_as_other(tmp_path):
+    db_path = tmp_path / "usage.db"
+    conn = database.init_db(str(db_path))
+    start = datetime(2026, 10, 27, 9, 0, 0)
+    database.insert_session(
+        conn,
+        ActivitySession(
+            session_id="idle-with-effective-evidence",
+            start_time=start,
+            end_time=start + timedelta(seconds=100),
+            date="2026-10-27",
+            process_name="explorer.exe",
+            exe_path="C:/Windows/explorer.exe",
+            window_title="Program Manager",
+            normalized_title="Program Manager",
+            category_key="idle",
+            category_name="空闲",
+            active_rule="interactive_required",
+            duration_seconds=100,
+            effective_seconds=60,
+            engaged_seconds=60,
+            passive_seconds=0,
+            idle_seconds=40,
+            metric_version="attention-v1",
+            classification_version="rules-test",
+        ),
+    )
+    database.close_db(conn)
+
+    result = database.query_date_range_stats(str(db_path), ["2026-10-27"])
+    categories = {row["category_key"]: row for row in result["by_category"]}
+
+    assert result["totals"]["effective_seconds"] == 60
+    assert categories["other"]["effective_seconds"] == 60
+    assert categories["other"]["idle_seconds"] == 0
+    assert categories["other"]["total_seconds"] == 60
+    assert "idle" not in categories
+    assert result["by_app"][0]["category_key"] == "other"
+
+
+def test_legacy_idle_labeled_effective_sample_is_also_reported_as_other(tmp_path):
+    db_path = tmp_path / "usage.db"
+    conn = database.init_db(str(db_path))
+    conn.execute(
+        """
+        INSERT INTO activity_logs
+            (timestamp, date, process_name, window_title, category_key,
+             category_name, is_effective, idle_seconds, duration_seconds)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "2026-10-27 09:00:00",
+            "2026-10-27",
+            "explorer.exe",
+            "Program Manager",
+            "idle",
+            "空闲",
+            1,
+            0,
+            30,
+        ),
+    )
+    conn.commit()
+    database.close_db(conn)
+
+    result = database.query_date_range_stats(str(db_path), ["2026-10-27"])
+    categories = {row["category_key"]: row for row in result["by_category"]}
+
+    assert result["totals"]["effective_seconds"] == 30
+    assert categories["other"]["effective_seconds"] == 30
+    assert "idle" not in categories
+    assert result["by_app"][0]["category_key"] == "other"
+
+
 def test_statistics_opens_live_monitor_by_default_and_keeps_explicit_tabs():
     app = QApplication.instance() or QApplication([])
     software, category, live = QWidget(), QWidget(), QWidget()
