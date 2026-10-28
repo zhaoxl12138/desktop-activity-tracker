@@ -80,7 +80,7 @@ class DailyGoalsPage(QWidget):
 
         header = QHBoxLayout()
         heading = QVBoxLayout()
-        title = QLabel("目标与成果")
+        title = QLabel("设置目标")
         title.setStyleSheet(f"font-size: 22px; font-weight: 700; color: {ui_style.COLORS['text']};")
         heading.addWidget(title)
         subtitle = QLabel("管理每天的投入与产出")

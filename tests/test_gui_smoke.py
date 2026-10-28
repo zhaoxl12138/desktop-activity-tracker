@@ -124,7 +124,7 @@ def main():
         assert "tasks" not in window.pages
         window.navigate_to("stats", tab="goals")
         assert window.pages["stats"].tabs.currentWidget() is window.pages["goals"]
-        assert window.lbl_page_title.text() == "目标与成果"
+        assert window.lbl_page_title.text() == "设置目标"
         assert "投入与产出" in window.lbl_today.text()
         window.navigate_to("stats", tab="software")
         assert window.pages["stats"].tabs.currentWidget() is window.pages["software"]

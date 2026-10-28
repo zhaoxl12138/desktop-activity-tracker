@@ -126,7 +126,7 @@ def test_statistics_opens_live_monitor_by_default_and_keeps_explicit_tabs():
     software, category, goals, live = QWidget(), QWidget(), QWidget(), QWidget()
     page = StatisticsPage(software, category, goals, live_page=live)
     assert [page.tabs.tabText(index) for index in range(page.tabs.count())] == [
-        "实时监控", "软件", "分类", "目标与成果",
+        "实时监控", "导出数据", "数据统计", "设置目标",
     ]
     assert page.tabs.currentWidget() is live
     page.select_tab("category")

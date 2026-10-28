@@ -30,10 +30,10 @@ class StatisticsPage(QWidget):
         )
         if live_page is not None:
             self.tabs.addTab(live_page, "实时监控")
-        self.tabs.addTab(software_page, "软件")
-        self.tabs.addTab(category_page, "分类")
+        self.tabs.addTab(software_page, "导出数据")
+        self.tabs.addTab(category_page, "数据统计")
         if goal_page is not None:
-            self.tabs.addTab(goal_page, "目标与成果")
+            self.tabs.addTab(goal_page, "设置目标")
         if live_page is not None:
             self.tabs.setCurrentWidget(live_page)
         self.tabs.currentChanged.connect(self._activate_current)

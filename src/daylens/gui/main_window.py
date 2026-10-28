@@ -67,7 +67,7 @@ from . import style as ui_style
 
 NAV_ITEMS = [
     ("今日概览", "today", "今天的活动结构与节奏"),
-    ("数据统计", "stats", "软件、分类、目标与实时记录"),
+    ("数据统计", "stats", "导出、统计、目标与实时记录"),
     ("分类管理", "rules", "待确认、人工纠错与本地规则"),
     ("报告中心", "reports", "查看日报、周报与月报"),
     ("设置中心", "settings", "管理基础配置与数据路径"),
@@ -679,7 +679,7 @@ class MainWindow(QMainWindow):
             return
         stats = self.pages["stats"]
         if stats.tabs.currentWidget() is self.pages["goals"]:
-            self.lbl_page_title.setText("目标与成果")
+            self.lbl_page_title.setText("设置目标")
             self.lbl_today.setText("管理每天的投入与产出")
         elif stats.tabs.currentWidget() is self.pages["live"]:
             self.lbl_page_title.setText("实时监控")
