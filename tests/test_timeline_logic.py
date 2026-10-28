@@ -293,6 +293,51 @@ def test_large_sampling_gap_closes_session(monkeypatch):
     )
 
 
+def test_short_sampling_gap_leaves_unknown_time_between_sessions(monkeypatch):
+    monkeypatch.setattr("daylens.session_tracker._get_cursor_pos", lambda: (0, 0))
+    monkeypatch.setattr("daylens.session_tracker._get_keyboard_snapshot", lambda: b"")
+    ended = []
+    tracker = SessionTracker(
+        config={"tracker": {"sample_interval_seconds": 1, "flush_interval_seconds": 99, "min_session_seconds": 1}},
+        classifier=FakeClassifier(), on_session_end=ended.append,
+    )
+    window = {"process_name": "Code.exe", "window_title": "main.py", "exe_path": ""}
+    tracker.tick(0, window)
+    original_session_id = tracker.current_session.session_id
+    last_observed_at = tracker._last_tick_wall_time
+    tracker._last_tick_wall_time -= timedelta(seconds=10)
+
+    tracker.tick(0, window)
+
+    assert ended and ended[0].switch_reason == "sampling_gap"
+    assert ended[0].session_id == original_session_id
+    assert ended[0].end_time == last_observed_at - timedelta(seconds=10)
+    assert ended[0].duration_seconds == 1
+    assert tracker.current_session is not None
+    assert tracker.current_session.session_id != original_session_id
+    assert tracker.current_session.duration_seconds == 1
+
+
+def test_normal_sampling_jitter_does_not_split_session(monkeypatch):
+    monkeypatch.setattr("daylens.session_tracker._get_cursor_pos", lambda: (0, 0))
+    monkeypatch.setattr("daylens.session_tracker._get_keyboard_snapshot", lambda: b"")
+    ended = []
+    tracker = SessionTracker(
+        config={"tracker": {"sample_interval_seconds": 1, "flush_interval_seconds": 99, "min_session_seconds": 1}},
+        classifier=FakeClassifier(), on_session_end=ended.append,
+    )
+    window = {"process_name": "Code.exe", "window_title": "main.py", "exe_path": ""}
+    tracker.tick(0, window)
+    session_id = tracker.current_session.session_id
+    tracker._last_tick_wall_time -= timedelta(seconds=2)
+
+    tracker.tick(0, window)
+
+    assert ended == []
+    assert tracker.current_session.session_id == session_id
+    assert tracker.current_session.duration_seconds == 2
+
+
 def test_cross_day_boundary_preserves_attention_counters(monkeypatch):
     monkeypatch.setattr("daylens.session_tracker._get_cursor_pos", lambda: (0, 0))
     monkeypatch.setattr("daylens.session_tracker._get_keyboard_snapshot", lambda: b"")

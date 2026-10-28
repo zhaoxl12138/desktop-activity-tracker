@@ -589,14 +589,22 @@ class SessionTracker:
         now = datetime.now()
         date_str = now.strftime("%Y-%m-%d")
 
-        # Lock/sleep can pause the worker for minutes or hours. Treat a large
-        # sampling gap as a hard boundary instead of attributing the gap to
-        # the foreground application.
-        if (
-            self._last_tick_wall_time is not None
-            and (now - self._last_tick_wall_time).total_seconds()
-            > max(120, self.idle_threshold * 2)
-        ):
+        # A stalled sampler cannot prove which application owned the missing
+        # wall-clock interval.  Split ordinary stalls from longer lock/sleep
+        # gaps, but never credit either interval to foreground or idle time.
+        elapsed_since_tick = (
+            (now - self._last_tick_wall_time).total_seconds()
+            if self._last_tick_wall_time is not None
+            else 0.0
+        )
+        system_gap_threshold = max(120, self.idle_threshold * 2)
+        sampling_gap_threshold = max(5.0, float(self.sample_interval) * 3.0)
+        gap_reason = None
+        if elapsed_since_tick > system_gap_threshold:
+            gap_reason = "system_gap"
+        elif elapsed_since_tick > sampling_gap_threshold:
+            gap_reason = "sampling_gap"
+        if gap_reason is not None:
             if self._current is not None:
                 gap_session = self._current
                 original_session_state = (
@@ -624,7 +632,7 @@ class SessionTracker:
                     )
                     self._pending_switch = None
                 gap_session.end_time = self._last_tick_wall_time
-                gap_session.switch_reason = "system_gap"
+                gap_session.switch_reason = gap_reason
                 try:
                     persisted = self._emit_session()
                 except Exception:
@@ -676,7 +684,7 @@ class SessionTracker:
             self._pending_switch = None
             self._reset_idle_epoch()
             self._video_silent_idle = 0.0
-            self._awaiting_activity = True
+            self._awaiting_activity = gap_reason == "system_gap"
         self._last_tick_wall_time = now
 
         # Resolve window info
