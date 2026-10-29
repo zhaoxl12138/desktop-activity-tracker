@@ -40,3 +40,10 @@
 
 - 本轮只修复已确认的 P1 稳定性与布局问题，没有重构大型页面文件，也没有调整核心计量逻辑。
 - `release_staging/` 是本地发布产物，不纳入 Git 提交。
+
+## 正式发布
+
+- 主分支以 fast-forward 合并到 `97f9adf`，合并后全量复测为 `1397 passed in 42.86s`。
+- 已有 `release_previous` 先归档为 `release_previous_20261029_before_stability_layout`，随后使用维护退出和原子目录替换发布；没有强制终止进程。
+- 正式发布版与本次构建产物 SHA-256 均为 `CD4D88E89CD520159FBF49002B47A7C9A1069A0511152D67BBE066380D8E5965`。
+- 已启动唯一正式进程 PID `48028`，路径为 `D:\OfficeSoftware\DayLens\release\DayLens.exe`；主窗口首次启动即可见且响应正常。
