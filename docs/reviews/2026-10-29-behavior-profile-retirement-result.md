@@ -32,3 +32,10 @@
 - 运行时代码和 README 中已无 `BehaviorDialog`、`behavior_profile_service`、`behavior_experiment_service` 或画像入口引用。
 - `behavior_analysis_enabled` 仅留在兼容设置读写与对应回归测试中，不再触发业务功能。
 - `trusted_metrics_service` 仍由 exporter、dashboard 和 insights 服务使用，并保留原测试覆盖。
+
+## 正式发布
+
+- 主分支 fast-forward 至 `9c3c344` 后，使用维护退出和原子目录替换完成发布；没有强制终止记录进程。
+- 上一回退版保留在 `release_previous`，更早回退版归档为 `release_previous_20261029_before_behavior_profile_retirement`。
+- 正式版与构建产物 SHA-256 均为 `610FDF02F09B2D42CD20C327BF98B0B5423F3401E80C757008E2A075F5712FE4`。
+- 新版唯一进程 PID `18604`，主窗口首次启动可见且响应正常。
