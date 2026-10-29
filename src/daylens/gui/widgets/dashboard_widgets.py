@@ -30,7 +30,6 @@ from .elided_label import ElidedLabel
 from .ui_primitives import MetricCell
 from .history_card_widgets import (
     HistoryMetricCell,
-    compact_app_name,
     history_captured_text,
     history_range_text,
 )
@@ -1095,8 +1094,8 @@ class RhythmComparisonCard(QFrame):
         metrics = QHBoxLayout()
         metrics.setSpacing(8)
         self._metric_labels: list[tuple[QLabel, QLabel, QLabel]] = []
-        for _ in range(3):
-            cell = HistoryMetricCell()
+        for index in range(3):
+            cell = HistoryMetricCell(elide_value=index == 1)
             label, value, delta = cell.label, cell.value, cell.detail
             metrics.addWidget(cell, 1)
             self._metric_labels.append((label, value, delta))
@@ -1184,11 +1183,7 @@ class RhythmComparisonCard(QFrame):
             label.setText(text)
             value_text = str(item.get("value", "--"))
             if index == 1 and self._mode in {"7d", "30d"}:
-                full_name = value_text if value_text != "--" else ""
-                value_text = compact_app_name(full_name)
-                value.setToolTip(full_name)
-            else:
-                value.setToolTip("")
+                value_text = value_text if value_text != "--" else "--"
             value.setText(value_text)
             delta_text = str(item.get("delta", ""))
             delta.setText(delta_text)
@@ -2777,8 +2772,8 @@ class EntertainmentHistoryCard(QFrame):
         summaries.setSpacing(8)
         self._summary_labels: list[tuple[QLabel, QLabel]] = []
         self._summary_cells: list[MetricCell] = []
-        for title in ("日均时长", "最高一天", "总时长"):
-            cell = HistoryMetricCell(title)
+        for index, title in enumerate(("日均时长", "偏爱应用", "总时长")):
+            cell = HistoryMetricCell(title, elide_value=index == 1)
             label, value = cell.label, cell.value
             summaries.addWidget(cell, 1)
             self._summary_labels.append((label, value))
@@ -2847,14 +2842,13 @@ class EntertainmentHistoryCard(QFrame):
         )
         self._summary_cells[1].set_values(
             label="偏爱应用",
-            value=compact_app_name(favorite_name),
+            value=favorite_name or "--",
             detail=(
                 _goal_duration(favorite_seconds)
                 if favorite_name and favorite_seconds is not None
                 else ""
             ),
         )
-        self._summary_cells[1].value.setToolTip(favorite_name)
         self._summary_cells[2].set_values(
             label="总时长",
             value=_goal_duration(total) if total is not None else "--",

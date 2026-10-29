@@ -1,6 +1,9 @@
 """Presentation shared only by work/entertainment history cards."""
 from datetime import date, datetime
 
+from PySide6.QtCore import Qt
+
+from .elided_label import ElidedLabel
 from .ui_primitives import MetricCell
 from ..style import COLORS
 
@@ -8,21 +11,26 @@ from ..style import COLORS
 class HistoryMetricCell(MetricCell):
     """Keep peak duration readable without changing unrelated dashboard cells."""
 
-    def __init__(self, label="", parent=None):
+    def __init__(self, label="", parent=None, *, elide_value: bool = False):
         super().__init__(label, parent=parent)
-        self.value.setWordWrap(True)
+        if elide_value:
+            old_value = self.value
+            self.layout().removeWidget(old_value)
+            old_value.setParent(None)
+            old_value.deleteLater()
+            self.value = ElidedLabel("--", max_lines=1)
+            self.value.setTextFormat(Qt.PlainText)
+            self.value.setStyleSheet(
+                f"font-size: 16px; font-weight: 800; color: {COLORS['text']};"
+            )
+            self.layout().insertWidget(1, self.value)
+            self.value.setWordWrap(False)
+        else:
+            self.value.setWordWrap(True)
         self.detail.setWordWrap(True)
         self.detail.setStyleSheet(
             f"font-size: 13px; font-weight: 600; color: {COLORS['text_secondary']};"
         )
-
-
-def compact_app_name(value: object, limit: int = 5) -> str:
-    """Keep app names inside compact metric cells without losing the source."""
-    text = str(value or "").strip()
-    if not text:
-        return "--"
-    return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 def history_range_text(value) -> str:

@@ -4,7 +4,7 @@
 
 **Goal:** 将工作节奏和娱乐时间7天／30天摘要中的“最高一天”替换为对应分类累计时长最高的“偏爱应用”。
 
-**Architecture:** 服务层从首页已读取的30天会话中，按日期范围、分类集合和既有秒数口径聚合应用，生成完整应用名及累计秒数。GUI 复用统一历史指标单元格，仅负责5字符截断、时长显示和完整名称悬停，不增加数据库查询。
+**Architecture:** 服务层从首页已读取的30天会话中，按日期范围、分类集合和既有秒数口径聚合应用，生成完整应用名及累计秒数。GUI 复用统一历史指标单元格，按控件实际像素宽度动态省略并保留完整名称悬停，不增加数据库查询。
 
 **Tech Stack:** Python 3、PySide6、pytest、现有 dashboard snapshot 服务。
 
@@ -84,7 +84,7 @@ Expected: PASS。
 
 - [ ] **Step 1: Write failing presentation tests**
 
-断言两张卡片第二格标题为“偏爱应用”，`ChatGPT` 显示为 `Chat…`，次值显示累计时长，值标签悬停为完整 `ChatGPT`；5字符以内的“腾讯视频”不截断。
+断言两张卡片第二格标题为“偏爱应用”，宽度足够时显示完整 `ChatGPT`，次值显示累计时长；缩窄后才出现省略号，悬停保留完整 `ChatGPT`。
 
 - [ ] **Step 2: Run tests and verify RED**
 
@@ -94,19 +94,15 @@ Expected: FAIL，因为卡片仍强制写“最高一天”且没有统一截断
 
 - [ ] **Step 3: Add shared presentation helper**
 
-在 `history_card_widgets.py` 增加：
+在 `HistoryMetricCell` 中复用现有 `ElidedLabel` 作为值标签：
 
 ```python
-def compact_app_name(value: object, limit: int = 5) -> str:
-    text = str(value or "").strip()
-    if not text:
-        return "--"
-    return text if len(text) <= limit else text[: limit - 1] + "…"
+self.value = ElidedLabel("--", max_lines=1)
 ```
 
 - [ ] **Step 4: Apply helper in both cards**
 
-工作卡历史模式不再拆日期字符串，直接使用服务层完整应用名，设置 `value.setToolTip(full_name)`。娱乐卡从 `favorite_app_name`／`favorite_app_seconds` 读取并使用相同 helper；其他两个指标不变。
+工作卡历史模式直接把完整应用名交给 `ElidedLabel`。娱乐卡从 `favorite_app_name`／`favorite_app_seconds` 读取并使用相同标签；标签在 resize 时按字体像素宽度重新计算，其他两个指标不变。
 
 - [ ] **Step 5: Run focused GUI tests**
 

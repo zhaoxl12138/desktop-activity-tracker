@@ -814,7 +814,7 @@ def test_entertainment_history_card_matches_work_rhythm_summary_order():
     app.processEvents()
 
 
-def test_entertainment_history_card_compacts_favorite_app_and_keeps_tooltip():
+def test_entertainment_history_card_uses_dynamic_favorite_app_width():
     app = _app()
     card = dashboard_widgets.EntertainmentHistoryCard()
     payload = _entertainment_history_payload()
@@ -826,10 +826,13 @@ def test_entertainment_history_card_compacts_favorite_app_and_keeps_tooltip():
     }
 
     card.set_data(payload)
+    card.resize(600, 300)
+    card.show()
+    app.processEvents()
 
     assert card._summary_cells[1].label.text() == "偏爱应用"
-    assert card._summary_cells[1].value.text() == "腾讯视频…"
-    assert card._summary_cells[1].value.toolTip() == "腾讯视频应用"
+    assert card._summary_cells[1].value.fullText() == "腾讯视频应用"
+    assert card._summary_cells[1].value.text() == "腾讯视频应用"
     assert card._summary_cells[1].detail.text() == "1小时"
 
     card.deleteLater()

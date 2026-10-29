@@ -11,6 +11,7 @@ from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import QApplication
 from daylens.services.dashboard_service import build_rhythm_snapshot, build_entertainment_history
 from daylens.gui.widgets.dashboard_widgets import RhythmComparisonCard, EntertainmentHistoryCard, _RhythmCanvas, _EntertainmentHistoryCanvas
+from daylens.gui.widgets.history_card_widgets import HistoryMetricCell
 from daylens.gui import style
 
 
@@ -108,9 +109,29 @@ def test_favorite_app_tie_break_is_stable_by_application_name():
     ) == {'name': 'Aardvark', 'seconds': 300}
 
 
+def test_history_metric_cell_elides_only_when_its_width_requires_it():
+    app = application()
+    cell = HistoryMetricCell('偏爱应用', elide_value=True)
+    cell.set_values(label='偏爱应用', value='VeryLongApplicationName', detail='2小时')
+    cell.resize(110, 80)
+    cell.show()
+    app.processEvents()
+
+    assert cell.value.fullText() == 'VeryLongApplicationName'
+    assert cell.value.text().endswith('…')
+    assert cell.value.toolTip() == 'VeryLongApplicationName'
+
+    cell.resize(520, 80)
+    app.processEvents()
+    assert cell.value.text() == 'VeryLongApplicationName'
+    assert cell.value.toolTip() == ''
+
+    cell.close()
+
+
 @pytest.mark.parametrize('mode', ['7d', '30d'])
-def test_work_card_compacts_favorite_app_and_keeps_full_tooltip(mode):
-    application()
+def test_work_card_uses_dynamic_favorite_app_width(mode):
+    app = application()
     card = RhythmComparisonCard()
     period = {
         'title': 'history',
@@ -126,9 +147,13 @@ def test_work_card_compacts_favorite_app_and_keeps_full_tooltip(mode):
     }
     card.set_data({'captured_at': '2026-10-29T18:00:00', '7d': period, '30d': period})
     card.set_mode(mode)
+    card.resize(600, 300)
+    card.show()
+    app.processEvents()
 
     assert card._metric_labels[1][0].text() == '偏爱应用'
-    assert card._metric_labels[1][1].text() == 'Very…'
+    assert card._metric_labels[1][1].fullText() == 'VeryLongApp'
+    assert len(card._metric_labels[1][1].text()) > 5
     assert card._metric_labels[1][1].toolTip() == 'VeryLongApp'
     assert card._metric_labels[1][2].text() == '2小时'
 
