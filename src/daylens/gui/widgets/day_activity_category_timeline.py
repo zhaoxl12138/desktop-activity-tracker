@@ -54,6 +54,8 @@ class DayActivityCategoryTimeline(QWidget):
         self._segments = []
         self._starts = []
         self._lane_indices = {}
+        self.full_day = False
+        self._fitted_range = (0, 86400)
         self.setMouseTracking(True)
         self.set_model({})
 
@@ -101,6 +103,9 @@ class DayActivityCategoryTimeline(QWidget):
             if self.range_end <= self.range_start:
                 self.range_start, self.range_end = 0, 86400
                 self.has_activity_range = False
+        self._fitted_range = (self.range_start, self.range_end)
+        if self.full_day:
+            self.range_start, self.range_end = 0, 86400
         self.selected_event_id = None
         self._update_metrics()
         self.update()
@@ -115,6 +120,40 @@ class DayActivityCategoryTimeline(QWidget):
         duration = int(event.get("duration_seconds") or 0)
         idle = int(event.get("idle_seconds") or 0)
         return duration <= 0 or idle * 10 > duration * 7
+
+    def set_full_day(self, enabled):
+        self.full_day = bool(enabled)
+        self.range_start, self.range_end = (
+            (0, 86400) if self.full_day else self._fitted_range
+        )
+        self.update()
+
+    def hidden_summary(self):
+        hidden = [
+            event for identity, event in self._events.items()
+            if self.is_event_hidden(identity)
+            and self._event_groups.get(identity) != "idle"
+        ]
+        intervals = sorted(
+            (max(0, int(event.get("start_second") or 0)),
+             min(86400, int(event.get("end_second") or 0)))
+            for event in hidden
+        )
+        merged = []
+        for start, end in intervals:
+            if end <= start:
+                continue
+            if merged and start <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+            else:
+                merged.append((start, end))
+        return {
+            "count": len(hidden),
+            "foreground_seconds": sum(end-start for start, end in merged),
+            "effective_seconds": sum(
+                int(event.get("effective_seconds") or 0) for event in hidden
+            ),
+        }
 
     @property
     def available_categories(self):
@@ -201,6 +240,8 @@ class DayActivityCategoryTimeline(QWidget):
         return (self.range_start, *inside, self.range_end)
 
     def range_title(self):
+        if self.full_day and self.has_activity_range:
+            return "完整 24 小时 · 00:00–24:00"
         return (f"活动时段 · {clock(self.range_start)}–{clock(self.range_end)}" if self.has_activity_range
                 else "全天分类分布 · 暂无可展示活动")
 

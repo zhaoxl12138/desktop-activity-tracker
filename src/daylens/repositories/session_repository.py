@@ -32,14 +32,17 @@ def insert_activity_log(conn, sample: dict) -> None:
 
 
 def insert_session(conn, session, maybe_checkpoint=lambda conn: None) -> int:
+    from ..services.classification_semantics import resolve_classification_semantics
+    semantics = resolve_classification_semantics(session.classification_version)
     sql = """
     INSERT OR REPLACE INTO activity_sessions
         (session_id, start_time, end_time, date, process_name, exe_path,
          window_title, normalized_title, category_key, category_name,
          active_rule, duration_seconds, effective_seconds, idle_seconds,
          switch_reason, engaged_seconds, passive_seconds, metric_version,
-         classification_version)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         classification_version, classification_policy_version,
+         classification_source)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
     cur = conn.execute(
         sql,
@@ -63,6 +66,8 @@ def insert_session(conn, session, maybe_checkpoint=lambda conn: None) -> int:
             session.passive_seconds,
             session.metric_version,
             session.classification_version,
+            semantics.policy_version,
+            semantics.source,
         ),
     )
     conn.commit()
@@ -71,6 +76,8 @@ def insert_session(conn, session, maybe_checkpoint=lambda conn: None) -> int:
 
 
 def update_session(conn, session, maybe_checkpoint=lambda conn: None) -> None:
+    from ..services.classification_semantics import resolve_classification_semantics
+    semantics = resolve_classification_semantics(session.classification_version)
     sql = """
     UPDATE activity_sessions SET
         end_time = ?,
@@ -81,7 +88,9 @@ def update_session(conn, session, maybe_checkpoint=lambda conn: None) -> None:
         engaged_seconds = ?,
         passive_seconds = ?,
         metric_version = ?,
-        classification_version = ?
+        classification_version = ?,
+        classification_policy_version = ?,
+        classification_source = ?
     WHERE session_id = ?
     """
     conn.execute(
@@ -96,6 +105,8 @@ def update_session(conn, session, maybe_checkpoint=lambda conn: None) -> None:
             session.passive_seconds,
             session.metric_version,
             session.classification_version,
+            semantics.policy_version,
+            semantics.source,
             session.session_id,
         ),
     )

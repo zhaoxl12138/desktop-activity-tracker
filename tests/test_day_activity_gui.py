@@ -238,6 +238,11 @@ def test_hidden_idle_event_stays_in_details_and_explains_missing_plot_block():
         assert dialog.events_model.rowCount() == 2
         assert "14分59秒" in dialog.summary_label.text()
         assert dialog.timeline.event_rect("hidden-idle").isEmpty()
+        assert "隐藏 1 段" in dialog.hidden_evidence_label.text()
+        assert "18分20秒" in dialog.hidden_evidence_label.text()
+        assert dialog.timeline.range_start != 0
+        dialog.full_day_toggle.setChecked(True)
+        assert (dialog.timeline.range_start, dialog.timeline.range_end) == (0, 86400)
         dialog.events_table.selectRow(dialog.events_model.row_for_id("hidden-idle"))
         assert "空闲占比超过70%" in dialog.help_label.text()
         assert dialog.model["totals"]["effective_seconds"] == 899

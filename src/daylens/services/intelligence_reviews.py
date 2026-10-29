@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import hashlib
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -103,14 +104,26 @@ class IntelligenceReviews:
                     facts.append(_compressed_summary(summary, 'daily', period))
         return facts
 
-    def generate(self, kind, day, facts, *, retry_failed=False):
+    def generate(self, kind, day, facts, *, retry_failed=False,
+                 replace_existing=False):
         destination = self.path(kind, day)
         existing = self.load(kind, day)
         if (existing is not None
+                and not replace_existing
                 and not (retry_failed and existing.get('status') == 'failed')):
             return existing
         if not isinstance(facts, list) or not facts:
             raise NoReviewData('没有可用于复盘的数据')
+        if existing is not None and replace_existing:
+            encoded = json.dumps(
+                existing, ensure_ascii=False, sort_keys=True
+            ).encode('utf-8')
+            digest = hashlib.sha256(encoded).hexdigest()[:12]
+            history = (
+                self.directory / 'history'
+                / f'{destination.stem}-{digest}.json'
+            )
+            atomic_json(history, existing)
         # The caller constructs IDs and numbers locally. AI only references them.
         ids = {f['id'] for f in facts}
         if len(ids) != len(facts) or any(not isinstance(x, str) for x in ids):
@@ -166,9 +179,15 @@ class IntelligenceReviews:
         except RequestDeferred:
             # Preflight failed before any network transmission. Unlike an
             # uncertain request, this period can safely remain in the backlog.
-            destination.unlink(missing_ok=True)
+            if existing is not None and replace_existing:
+                atomic_json(destination, existing)
+            else:
+                destination.unlink(missing_ok=True)
             raise
         except Exception:
-            atomic_json(destination, dict(marker, status='failed',
-                                           error='智能复盘未完成，原生报告保持可用'))
+            if existing is not None and replace_existing:
+                atomic_json(destination, existing)
+            else:
+                atomic_json(destination, dict(marker, status='failed',
+                                               error='智能复盘未完成，原生报告保持可用'))
             raise RuntimeError('智能复盘未完成，原生报告保持可用') from None

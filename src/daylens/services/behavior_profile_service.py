@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta
 from .dashboard_service import WORK_KEYS, ENTERTAINMENT_KEYS
 from .task_grouping_service import _trusted
 from .intelligence_state import load_settings
+from .classification_semantics import resolve_classification_semantics
 
 VERSION = "behavior-v2"
 
@@ -50,7 +51,12 @@ def summarize(rows: list[dict], days: list[str]) -> dict:
             del by_day[day][identity]
             continue
         by_day[day][identity] = row
-        version = (row.get("metric_version"), row.get("classification_version"))
+        version = (
+            row.get("metric_version"),
+            resolve_classification_semantics(
+                row.get("classification_version")
+            ).policy_version,
+        )
         if not all(isinstance(v, str) and v for v in version):
             reasons.add("缺少计量或分类版本")
         else:

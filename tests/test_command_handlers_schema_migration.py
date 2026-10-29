@@ -185,7 +185,7 @@ def test_cli_read_handlers_migrate_real_v3_database_before_querying(
 
     assert row_count == 1
     assert row == (0, 0, "legacy", "legacy")
-    assert schema_version == "4"
+    assert schema_version == "5"
 
 
 def test_cli_schema_migration_is_safe_when_readers_start_together(
@@ -313,5 +313,5 @@ def test_schema_upgrade_fails_within_deadline_under_persistent_real_lock(
     conn = sqlite3.connect(db_path)
     assert conn.execute(
         "SELECT value FROM schema_meta WHERE key='schema_version'"
-    ).fetchone()[0] == "4"
+    ).fetchone()[0] == "5"
     conn.close()

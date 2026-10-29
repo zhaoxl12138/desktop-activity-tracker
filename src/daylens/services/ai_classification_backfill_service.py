@@ -12,6 +12,8 @@ from ..classifier import _DEFAULT_BROWSER_PROCESSES
 from ..session_tracker import normalize_window_title
 from .classification_correction_service import move_process_rule
 from .intelligence_state import atomic_json
+from .rule_learning_policy import choose_learning_scope
+from .classification_semantics import CURRENT_CLASSIFICATION_POLICY
 
 
 _FALLBACK_CATEGORIES = ("other", "browser_general")
@@ -134,18 +136,24 @@ def apply_ai_classification_backfill(
                     f"""
                     UPDATE activity_sessions
                     SET category_key = ?, category_name = ?, active_rule = ?,
-                        classification_version = 'ai-high-backfill-v1'
+                        classification_version = 'ai-high-backfill-v1',
+                        classification_policy_version = ?,
+                        classification_source = 'ai'
                     WHERE id IN ({placeholders})
                     """,
                     (
                         definition.id,
                         definition.name,
                         definition.timing_policy,
+                        CURRENT_CLASSIFICATION_POLICY,
                         *(int(row["id"]) for row in changed_rows),
                     ),
                 )
             rule_changed = False
-            if not shared_browser:
+            learning_scope = choose_learning_scope(
+                process, definition.id, source="ai"
+            )
+            if learning_scope == "process":
                 rule_changed, _snapshot = move_process_rule(
                     conn,
                     process,
@@ -185,6 +193,7 @@ def apply_ai_classification_backfill(
                 "updated_effective_seconds": updated_effective,
                 "rule_changed": rule_changed,
                 "shared_browser": shared_browser,
+                "learning_scope": learning_scope,
                 "time_totals": before_totals,
                 "time_conserved": True,
             }

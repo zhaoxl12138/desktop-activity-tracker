@@ -53,6 +53,8 @@ CREATE TABLE IF NOT EXISTS activity_sessions (
     passive_seconds INTEGER DEFAULT 0,
     metric_version TEXT DEFAULT 'legacy',
     classification_version TEXT DEFAULT 'legacy',
+    classification_policy_version TEXT,
+    classification_source TEXT,
     idle_seconds INTEGER DEFAULT 0,
     switch_reason TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -312,6 +314,24 @@ def _run_migrations(conn) -> None:
             "INSERT INTO schema_meta(key, value) VALUES('schema_version', '4') "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
         )
+        version = 4
+    if version < 5:
+        columns = {
+            row[1]
+            for row in conn.execute(
+                "PRAGMA table_info(activity_sessions)"
+            ).fetchall()
+        }
+        for column in ("classification_policy_version", "classification_source"):
+            if column not in columns:
+                conn.execute(
+                    f"ALTER TABLE activity_sessions ADD COLUMN {column} TEXT"
+                )
+        conn.execute(
+            "INSERT INTO schema_meta(key, value) VALUES('schema_version', '5') "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        )
+        version = 5
     conn.commit()
 
 

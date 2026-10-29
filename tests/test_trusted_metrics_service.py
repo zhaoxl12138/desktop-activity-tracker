@@ -78,20 +78,21 @@ def test_complete_single_version_range_is_high_trust():
         "anomaly_ratio": 0.005,
         "metric_versions": ["attention-v1"],
         "classification_versions": ["rules-a"],
+        "classification_policy_versions": ["ai-title-evidence-v3-registry"],
         "category_comparable": True,
     }
 
 
-def test_multiple_classification_versions_are_medium_and_category_incomparable():
+def test_multiple_rule_fingerprints_share_one_classification_policy():
     result = assess_range(
         _summary(classification_versions=["rules-b", "rules-a", "rules-b"]),
         ["2026-07-01", "2026-07-02"],
     )
 
-    assert result["level"] == "medium"
-    assert result["reasons"] == ["范围内存在多个分类版本"]
+    assert result["level"] == "high"
+    assert result["reasons"] == []
     assert result["classification_versions"] == ["rules-a", "rules-b"]
-    assert result["category_comparable"] is False
+    assert result["category_comparable"] is True
 
 
 def test_small_legacy_share_is_medium_with_stable_reason():
@@ -416,7 +417,7 @@ def test_cross_field_source_contradictions_are_format_errors(
     }
 
 
-def test_multiple_classification_versions_are_valid_with_enough_sessions():
+def test_multiple_rule_fingerprints_are_valid_with_enough_sessions():
     result = assess_range(
         _summary(
             session_count=2,
@@ -425,11 +426,11 @@ def test_multiple_classification_versions_are_valid_with_enough_sessions():
         ["2026-07-01", "2026-07-02"],
     )
 
-    assert result["level"] == "medium"
-    assert result["reasons"] == ["范围内存在多个分类版本"]
+    assert result["level"] == "high"
+    assert result["reasons"] == []
 
 
-def test_compare_ranges_allows_total_time_but_not_categories_after_rule_change():
+def test_compare_ranges_keeps_categories_comparable_after_rule_fingerprint_change():
     left = assess_range(
         _summary(classification_versions=["rules-a"]),
         ["2026-07-01", "2026-07-02"],
@@ -443,9 +444,41 @@ def test_compare_ranges_allows_total_time_but_not_categories_after_rule_change()
 
     assert result == {
         "comparable": True,
-        "category_comparable": False,
-        "reason": "分类规则不一致，仅总参与时间可比",
+        "category_comparable": True,
+        "reason": "",
     }
+
+
+def test_compare_ranges_uses_policy_not_manual_or_ai_decision_source():
+    manual = assess_range(
+        _summary(classification_versions=["manual-correction-v1"]),
+        ["2026-07-01", "2026-07-02"],
+    )
+    ai = assess_range(
+        _summary(classification_versions=["ai-high-backfill-v1"]),
+        ["2026-07-01", "2026-07-02"],
+    )
+
+    assert manual["classification_policy_versions"] == ["ai-title-evidence-v3-registry"]
+    assert ai["classification_policy_versions"] == ["ai-title-evidence-v3-registry"]
+    assert compare_ranges(manual, ai) == {
+        "comparable": True,
+        "category_comparable": True,
+        "reason": "",
+    }
+
+
+def test_explicit_future_policy_remains_a_category_comparison_boundary():
+    current = assess_range(
+        _summary(classification_policy_versions=["ai-title-evidence-v3-registry"]),
+        ["2026-07-01", "2026-07-02"],
+    )
+    future = assess_range(
+        _summary(classification_policy_versions=["taxonomy-v2"]),
+        ["2026-07-01", "2026-07-02"],
+    )
+
+    assert compare_ranges(current, future)["category_comparable"] is False
 
 
 def test_compare_ranges_rejects_low_quality_or_different_metric_versions():

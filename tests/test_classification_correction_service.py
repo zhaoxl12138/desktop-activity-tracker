@@ -136,6 +136,8 @@ def test_ordinary_app_correction_updates_only_exact_today_and_moves_process_rule
             rows[identity]["active_rule"],
             rows[identity]["classification_version"],
         ) == ("gaming", "游戏娱乐", "interactive_required", "manual-correction-v1")
+        assert rows[identity]["classification_source"] == "manual"
+        assert rows[identity]["classification_policy_version"] == "ai-title-evidence-v3-registry"
     for identity in ("different-title", "previous-day", "different-app"):
         assert rows[identity]["category_key"] == "other"
     assert {

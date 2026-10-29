@@ -11,6 +11,7 @@ from decimal import Decimal, InvalidOperation
 from functools import lru_cache
 
 from ..utils import IDLE_CATEGORY_KEYS, WORK_CATEGORY_KEYS
+from ..services.classification_semantics import resolve_classification_semantics
 
 # The aggregate ``work`` bucket is valid for presentation and imported data,
 # but the partial index only contains concrete attention-v1 work categories.
@@ -68,6 +69,7 @@ def _empty_trusted_summary() -> dict:
         "dates_with_data": [],
         "metric_versions": [],
         "classification_versions": [],
+        "classification_policy_versions": [],
     }
 
 
@@ -199,6 +201,15 @@ def _summarize_session_rows(rows) -> tuple[dict, dict[str, dict]]:
         anomalous = duplicate or session_row_is_anomalous(row)
         metric_version = str(row["metric_version"] or "legacy")
         classification_version = str(row["classification_version"] or "legacy")
+        row_keys = set(row.keys()) if hasattr(row, "keys") else set()
+        explicit_policy = (
+            str(row["classification_policy_version"] or "")
+            if "classification_policy_version" in row_keys else ""
+        )
+        classification_policy = (
+            explicit_policy
+            or resolve_classification_semantics(classification_version).policy_version
+        )
         engaged = _integer(row["engaged_seconds"])
         passive = _integer(row["passive_seconds"])
         work_engaged = (
@@ -216,6 +227,7 @@ def _summarize_session_rows(rows) -> tuple[dict, dict[str, dict]]:
             summary["dates_with_data"].append(date_str)
             summary["metric_versions"].append(metric_version)
             summary["classification_versions"].append(classification_version)
+            summary["classification_policy_versions"].append(classification_policy)
 
     for summary in [totals, *by_date.values()]:
         summary["dates_with_data"] = sorted(
@@ -224,6 +236,9 @@ def _summarize_session_rows(rows) -> tuple[dict, dict[str, dict]]:
         summary["metric_versions"] = sorted(set(summary["metric_versions"]))
         summary["classification_versions"] = sorted(
             set(summary["classification_versions"])
+        )
+        summary["classification_policy_versions"] = sorted(
+            set(summary["classification_policy_versions"])
         )
     return totals, by_date
 
@@ -252,6 +267,7 @@ def _summarize_legacy_log_rows(rows) -> tuple[dict, dict[str, dict]]:
             summary["dates_with_data"].append(date_str)
             summary["metric_versions"].append("legacy")
             summary["classification_versions"].append("legacy")
+            summary["classification_policy_versions"].append("legacy")
 
     for summary in [totals, *by_date.values()]:
         summary["dates_with_data"] = sorted(
@@ -260,6 +276,9 @@ def _summarize_legacy_log_rows(rows) -> tuple[dict, dict[str, dict]]:
         summary["metric_versions"] = sorted(set(summary["metric_versions"]))
         summary["classification_versions"] = sorted(
             set(summary["classification_versions"])
+        )
+        summary["classification_policy_versions"] = sorted(
+            set(summary["classification_policy_versions"])
         )
     return totals, by_date
 
@@ -288,10 +307,20 @@ def _merge_trusted_summaries(summaries: list[dict]) -> dict:
         totals["classification_versions"].extend(
             row.get("classification_versions", [])
         )
+        row_policies = list(row.get("classification_policy_versions", []) or [])
+        if not row_policies:
+            row_policies = [
+                resolve_classification_semantics(version).policy_version
+                for version in (row.get("classification_versions", []) or [])
+            ]
+        totals["classification_policy_versions"].extend(row_policies)
     totals["dates_with_data"] = sorted(set(totals["dates_with_data"]))
     totals["metric_versions"] = sorted(set(totals["metric_versions"]))
     totals["classification_versions"] = sorted(
         set(totals["classification_versions"])
+    )
+    totals["classification_policy_versions"] = sorted(
+        set(totals["classification_policy_versions"])
     )
     return totals
 
@@ -401,7 +430,7 @@ def _load_mixed_history_rows(
                    normalized_title, category_key, category_name,
                    duration_seconds, effective_seconds, engaged_seconds,
                    passive_seconds, idle_seconds, metric_version,
-                   classification_version
+                   classification_version, classification_policy_version
             FROM activity_sessions
             WHERE date IN ({placeholders})
             ORDER BY date, id
@@ -845,7 +874,8 @@ def query_sessions_for_dates(
                    normalized_title, category_key, category_name,
                    duration_seconds, effective_seconds, engaged_seconds,
                    passive_seconds, idle_seconds, metric_version,
-                   classification_version, switch_reason
+                   classification_version, classification_policy_version,
+                   classification_source, switch_reason
             FROM activity_sessions
             WHERE date IN ({placeholders})
             ORDER BY start_time, id
@@ -905,13 +935,14 @@ def query_completed_history_revision(
                   (SELECT COALESCE(SUM(duration_seconds), 0) FROM activity_sessions WHERE date BETWEEN ? AND ?),
                   (SELECT COALESCE(GROUP_CONCAT(DISTINCT metric_version), '') FROM activity_sessions WHERE date BETWEEN ? AND ?),
                   (SELECT COALESCE(GROUP_CONCAT(DISTINCT classification_version), '') FROM activity_sessions WHERE date BETWEEN ? AND ?),
+                  (SELECT COALESCE(GROUP_CONCAT(DISTINCT classification_policy_version), '') FROM activity_sessions WHERE date BETWEEN ? AND ?),
                   (SELECT COUNT(*) FROM activity_logs WHERE date BETWEEN ? AND ?),
                   (SELECT COALESCE(MAX(id), 0) FROM activity_logs WHERE date BETWEEN ? AND ?),
                   (SELECT COALESCE(MAX(timestamp), '') FROM activity_logs WHERE date BETWEEN ? AND ?)
                 """,
                 tuple(
                     value
-                    for _ in range(9)
+                    for _ in range(10)
                     for value in (start_date, end_date)
                 ),
             ).fetchone()

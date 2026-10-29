@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
+import sqlite3
 
 from .. import database, get_data_dir
 from ..utils import WORK_CATEGORY_KEYS, fmt_seconds
@@ -55,6 +56,7 @@ def generate_budget_review(
     *,
     directory=None,
     retry_failed=False,
+    regenerate_stale=False,
 ):
     from ..app_paths import AppPaths
     directory = Path(directory or AppPaths.from_database(db_path).intelligence_dir)
@@ -77,9 +79,26 @@ def generate_budget_review(
     provider.privacy_filter = outbound_boundary
     reviews = IntelligenceReviews(directory, provider, privacy_settings=settings)
     existing = reviews.load(kind, day)
+    from .report_evidence_service import evidence_fingerprint, report_dates
+    dates = report_dates(kind, day)
+    try:
+        current_fingerprint = evidence_fingerprint(db_path, kind, dates)
+    except (OSError, ValueError, sqlite3.Error):
+        # Existing mocked/legacy generation paths may not expose a readable
+        # database. They remain usable but are explicitly fingerprint-less.
+        current_fingerprint = ""
     if (existing is not None
             and not (retry_failed and existing.get('status') == 'failed')):
-        return existing
+        stored_fingerprint = str(existing.get('evidence_fingerprint') or '')
+        stale = bool(existing.get('status') == 'ready' and stored_fingerprint
+                     and stored_fingerprint != current_fingerprint)
+        if not stale or not regenerate_stale:
+            return dict(
+                existing,
+                evidence_status=("stale" if stale else
+                                 "legacy" if existing.get('status') == 'ready' and not stored_fingerprint
+                                 else "current"),
+            )
     facts = daily_facts(db_path, day, settings) if kind == 'daily' else reviews.compressed_facts(kind, day)
     # Session references remain local. Opaque fact IDs are sufficient in prompts.
     payload_facts = [{k: v for k, v in f.items() if k != 'session_refs'} for f in facts]
@@ -89,6 +108,7 @@ def generate_budget_review(
             day,
             payload_facts,
             retry_failed=retry_failed,
+            replace_existing=bool(regenerate_stale),
         )
     except RuntimeError:
         # A transmitted request writes a durable failed marker before this
@@ -98,10 +118,13 @@ def generate_budget_review(
         if failed and failed.get('status') == 'failed':
             return failed
         raise
-    # Preserve the locally obtained references separately from model output.
-    if kind == 'daily' and result.get('status') == 'ready':
+    # Bind every ready summary to the exact local evidence used at generation.
+    if result.get('status') == 'ready':
         from .intelligence_state import atomic_json
-        result['local_evidence'] = {f['id']: f['session_refs'] for f in facts}
+        result['evidence_fingerprint'] = current_fingerprint
+        result['evidence_status'] = 'current'
+        if kind == 'daily':
+            result['local_evidence'] = {f['id']: f['session_refs'] for f in facts}
         atomic_json(reviews.path(kind, day), result)
     return result
 
@@ -113,6 +136,11 @@ def render_review(result):
     lines = [f"智能复盘 · {result['period']}",
              f"生成于 {result.get('captured_at', '未知')}（按当时已记录数据汇总）", '',
              '仅覆盖已纳入的记录/摘要，不代表全部时间；解释由AI生成。', TIME_DEFINITION, '']
+    if result.get('evidence_status') == 'stale':
+        lines[2:2] = ['⚠ 该汇总基于旧数据；历史分类或记录已变化。',
+                      '如需更新，请主动重新分析；不会自动产生API费用。', '']
+    elif result.get('evidence_status') == 'legacy':
+        lines[2:2] = ['该旧汇总没有证据指纹，无法验证是否仍为最新。', '']
     facts = {f['id']: f for f in result.get('facts', [])}
     for topic in result.get('topics', []):
         refs = topic['evidence_ids']

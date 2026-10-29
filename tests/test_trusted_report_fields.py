@@ -189,8 +189,8 @@ def test_daily_markdown_merges_work_rows_and_uses_process_for_top_software(
     [
         (
             "mixed-classification",
-            "中",
-            "范围内存在多个分类版本",
+            "高",
+            None,
         ),
         (
             "legacy-session",
@@ -277,7 +277,11 @@ def test_daily_markdown_reports_real_attention_trust_scenarios(
 
     report = _export_markdown(db_path, tmp_path)
 
-    assert f"- 数据可信度：{expected_level}（{expected_reason}）" in report
+    if expected_reason is None:
+        assert f"- 数据可信度：{expected_level}" in report
+        assert f"- 数据可信度：{expected_level}（" not in report
+    else:
+        assert f"- 数据可信度：{expected_level}（{expected_reason}）" in report
     if arrange in {"legacy-session", "legacy-log", "empty"}:
         assert "- 参与时间：0秒" in report
         assert "- 被动媒体：0秒" in report

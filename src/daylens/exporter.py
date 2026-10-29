@@ -69,6 +69,22 @@ def _intelligence_report_status(db_path: str, kind: str, period_end: str) -> str
         status = str(payload.get("status", ""))
         captured = str(payload.get("captured_at", "") or "")
         if status == "ready":
+            stored = str(payload.get("evidence_fingerprint", "") or "")
+            if stored:
+                from .services.report_evidence_service import evidence_fingerprint
+                if kind == "daily":
+                    dates = [period_end]
+                elif kind == "weekly":
+                    end = date.fromisoformat(period_end)
+                    start = end - timedelta(days=end.weekday())
+                    dates = [(start + timedelta(days=i)).isoformat() for i in range(7)]
+                else:
+                    end = date.fromisoformat(period_end)
+                    start = end.replace(day=1)
+                    dates = [(start + timedelta(days=i)).isoformat()
+                             for i in range((end - start).days + 1)]
+                if stored != evidence_fingerprint(db_path, kind, dates):
+                    return "基于旧数据生成，可手动重新分析"
             return f"已生成于 {captured}" if captured else "已生成"
         if status == "pending":
             return f"处理中（请求于 {captured}）" if captured else "处理中"
@@ -653,6 +669,15 @@ def _delta_text(curr, prev):
     return f"{direction}{abs(diff_pct)}%"
 
 
+def _activity_ratio_delta_text(current: int, previous: int | None) -> str:
+    if previous is None:
+        return "无可比数据"
+    delta = int(current) - int(previous)
+    if delta == 0:
+        return "持平"
+    return f"{delta:+d} 个百分点"
+
+
 def _query_prev_period(read_conn, db_path, dates, period_type):
     """Query previous period (week or month) stats for comparison.
 
@@ -678,6 +703,7 @@ def _query_prev_period(read_conn, db_path, dates, period_type):
         row = conn.execute(
             f"""
             SELECT SUM(effective_seconds) as eff,
+                   SUM(idle_seconds) as idle,
                    SUM(CASE WHEN category_key IN ('ai_tools','coding','office','reading','creative')
                        THEN effective_seconds ELSE 0 END) as work,
                    SUM(CASE WHEN category_key IN ('video','gaming')
@@ -690,6 +716,7 @@ def _query_prev_period(read_conn, db_path, dates, period_type):
         ).fetchone()
     return {
         "effective_seconds": row["eff"] or 0,
+        "idle_seconds": row["idle"] or 0,
         "work_seconds": row["work"] or 0,
         "video_seconds": row["entertain"] or 0,
         "active_days": row["days"] or 0,
@@ -1093,6 +1120,11 @@ def export_weekly_report(db_path, year, week_number, output_dir):
     video = totals["video_seconds"]
     work_pct = round(work / eff * 100) if eff > 0 else 0
     activity_pct = round(eff / (eff + totals["idle_seconds"]) * 100) if eff > 0 else 0
+    prev_total = prev["effective_seconds"] + prev["idle_seconds"]
+    prev_activity_pct = (
+        round(prev["effective_seconds"] / prev_total * 100)
+        if prev_total > 0 else None
+    )
 
     if days_with_data == 0:
         lines = [
@@ -1126,7 +1158,10 @@ def export_weekly_report(db_path, year, week_number, output_dir):
     lines.append(f"| 总活跃 | {fmt_seconds(eff)} | {_delta_text(eff, prev['effective_seconds'])} |")
     lines.append(f"| 工作学习 | {fmt_seconds(work)} | {_delta_text(work, prev['work_seconds'])} |")
     lines.append(f"| 娱乐休闲 | {fmt_seconds(video)} | {_delta_text(video, prev['video_seconds'])} |")
-    lines.append(f"| 活跃占比 | {activity_pct}% | {_delta_text(eff, prev['effective_seconds'])} |")
+    lines.append(
+        f"| 活跃占比 | {activity_pct}% | "
+        f"{_activity_ratio_delta_text(activity_pct, prev_activity_pct)} |"
+    )
     lines.append("")
 
     # ── 2. Daily trend ──

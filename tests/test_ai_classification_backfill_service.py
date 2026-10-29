@@ -134,6 +134,8 @@ def test_high_confidence_ai_backfills_only_exact_today_fallback_and_moves_rule(t
             "gaming", "游戏娱乐", "interactive_required",
             "ai-high-backfill-v1",
         )
+        assert rows[identity]["classification_source"] == "ai"
+        assert rows[identity]["classification_policy_version"] == "ai-title-evidence-v3-registry"
     for identity in (
         "different-title", "previous-day", "different-app",
         "already-classified", "manual-other",
@@ -179,6 +181,27 @@ def test_high_confidence_browser_backfills_title_without_process_rule(tmp_path):
     assert _rows(db)["browser"]["category_key"] == "reading"
     assert all(
         "chrome.exe" not in row["process_names"].casefold()
+        for row in _rules(db).values()
+    )
+
+
+def test_high_confidence_multipurpose_app_does_not_promote_whole_process(tmp_path):
+    db = _database(tmp_path)
+    _insert_session(
+        db, "wps", process="wps.exe", raw_title="Course notes",
+        normalized_title="Course notes", category="other",
+    )
+
+    result = apply_ai_classification_backfill(
+        db_path=str(db), process_name="wps.exe", window_title="Course notes",
+        normalized_title="Course notes", category_key="reading", categories={},
+        day="2026-10-28",
+    )
+
+    assert result.updated_sessions == 1
+    assert result.rule_changed is False
+    assert all(
+        "wps.exe" not in row["process_names"].casefold()
         for row in _rules(db).values()
     )
 

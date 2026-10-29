@@ -15,7 +15,8 @@ def test_init_db_records_schema_version(tmp_path):
         row[1]: (row[2], row[4])
         for row in conn.execute("PRAGMA table_info(activity_sessions)").fetchall()
     }
-    assert version == "4"
+    assert {"classification_policy_version", "classification_source"} <= set(columns)
+    assert version == "5"
     assert columns["engaged_seconds"] == ("INTEGER", "0")
     assert columns["passive_seconds"] == ("INTEGER", "0")
     assert columns["metric_version"] == ("TEXT", "'legacy'")
@@ -84,7 +85,7 @@ def test_v3_activity_sessions_migration_preserves_rows_and_is_idempotent(tmp_pat
     )
     assert migrated.execute(
         "SELECT value FROM schema_meta WHERE key='schema_version'"
-    ).fetchone()[0] == "4"
+    ).fetchone()[0] == "5"
     indexes = {
         row[1]
         for row in migrated.execute("PRAGMA index_list(activity_sessions)")
@@ -98,7 +99,7 @@ def test_v3_activity_sessions_migration_preserves_rows_and_is_idempotent(tmp_pat
     ).fetchone()[0] == 1
     assert reopened.execute(
         "SELECT value FROM schema_meta WHERE key='schema_version'"
-    ).fetchone()[0] == "4"
+    ).fetchone()[0] == "5"
     reopened.close()
 
 
@@ -108,7 +109,7 @@ def test_existing_v4_database_receives_strict_engaged_work_index(tmp_path):
     conn.execute("DROP INDEX idx_sessions_valid_engaged_work_date_v2")
     assert conn.execute(
         "SELECT value FROM schema_meta WHERE key='schema_version'"
-    ).fetchone()[0] == "4"
+    ).fetchone()[0] == "5"
     conn.commit()
     conn.close()
 
@@ -191,7 +192,7 @@ def test_v1_custom_rules_migration_adds_title_patterns_without_losing_rows(tmp_p
     ).fetchone()[0]
     assert "title_patterns" in columns
     assert row == ("阅读学习", "zotero.exe", "用户关键词", "")
-    assert version == "4"
+    assert version == "5"
     migrated.close()
 
 
@@ -228,7 +229,7 @@ def test_v2_empty_legacy_title_rules_migrate_to_inherit_mode(tmp_path):
     assert row == ("replace", "inherit")
     assert migrated.execute(
         "SELECT value FROM schema_meta WHERE key='schema_version'"
-    ).fetchone()[0] == "4"
+    ).fetchone()[0] == "5"
     migrated.close()
 
     config = {

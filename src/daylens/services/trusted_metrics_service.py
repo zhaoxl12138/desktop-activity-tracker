@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import date
 
+from .classification_semantics import policy_versions
+
 
 _STRING_COLLECTION_TYPES = (list, tuple, set, frozenset)
 
@@ -93,6 +95,14 @@ def assess_range(summary: dict, expected_dates: list[str]) -> dict[str, object]:
     classification_versions, classification_versions_valid = (
         _string_collection(payload.get("classification_versions", []))
     )
+    supplied_policies = payload.get("classification_policy_versions")
+    if supplied_policies is None:
+        classification_policy_versions = policy_versions(classification_versions)
+        classification_policy_versions_valid = True
+    else:
+        classification_policy_versions, classification_policy_versions_valid = (
+            _string_collection(supplied_policies)
+        )
     recorded_dates, recorded_dates_valid = _date_collection(
         payload.get("dates_with_data", [])
     )
@@ -101,6 +111,7 @@ def assess_range(summary: dict, expected_dates: list[str]) -> dict[str, object]:
         format_valid
         and metric_versions_valid
         and classification_versions_valid
+        and classification_policy_versions_valid
         and recorded_dates_valid
         and expected_dates_valid
     )
@@ -184,6 +195,7 @@ def assess_range(summary: dict, expected_dates: list[str]) -> dict[str, object]:
             "anomaly_ratio": anomaly_ratio,
             "metric_versions": metric_versions,
             "classification_versions": classification_versions,
+            "classification_policy_versions": classification_policy_versions,
             "category_comparable": False,
         }
 
@@ -214,7 +226,7 @@ def assess_range(summary: dict, expected_dates: list[str]) -> dict[str, object]:
             medium_reasons.append("记录日期未完全覆盖预期范围")
         if legacy_ratio > 0 or legacy_metric_present:
             medium_reasons.append("范围内包含少量旧计量口径")
-        if len(classification_versions) > 1:
+        if len(classification_policy_versions) > 1:
             medium_reasons.append("范围内存在多个分类版本")
         elif not classification_versions:
             medium_reasons.append("范围内缺少分类版本")
@@ -231,10 +243,12 @@ def assess_range(summary: dict, expected_dates: list[str]) -> dict[str, object]:
         "anomaly_ratio": anomaly_ratio,
         "metric_versions": metric_versions,
         "classification_versions": classification_versions,
+        "classification_policy_versions": classification_policy_versions,
         "category_comparable": (
             level != "low"
-            and len(classification_versions) == 1
-            and classification_versions != ["legacy"]
+            and len(classification_policy_versions) == 1
+            and classification_policy_versions != ["legacy"]
+            and not classification_policy_versions[0].startswith("unknown:")
         ),
     }
 
@@ -263,8 +277,8 @@ def compare_ranges(left: dict, right: dict) -> dict[str, object]:
         comparable
         and bool(left.get("category_comparable"))
         and bool(right.get("category_comparable"))
-        and left.get("classification_versions")
-        == right.get("classification_versions")
+        and left.get("classification_policy_versions")
+        == right.get("classification_policy_versions")
     )
 
     if not both_healthy:

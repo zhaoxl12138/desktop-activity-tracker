@@ -102,6 +102,7 @@ def test_empty_range_uses_the_public_range_shape():
             "dates_with_data": [],
             "metric_versions": [],
             "classification_versions": [],
+                "classification_policy_versions": [],
         },
     }
 

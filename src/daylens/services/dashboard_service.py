@@ -23,6 +23,7 @@ from ..utils import (
 )
 from .insights_service import select_primary_insight
 from .dashboard_history_cache import DashboardHistoryCache
+from .classification_semantics import resolve_classification_semantics
 from .trusted_metrics_service import (
     REASON_FORMAT_INVALID,
     REASON_TIMING_ANOMALY_ABOVE_LIMIT,
@@ -87,15 +88,22 @@ def _daily_row_from_stats(date_str: str, stats: dict) -> dict:
             if str(item.get("category_key", "") or "") in ENTERTAINMENT_KEYS
         ),
     }
-    list_fields = {"dates_with_data", "metric_versions", "classification_versions"}
+    list_fields = {"dates_with_data", "metric_versions", "classification_versions",
+                   "classification_policy_versions"}
     for field in (
         "engaged_seconds", "passive_seconds", "work_engaged_seconds",
         "session_count", "legacy_session_count", "legacy_log_sample_count",
         "legacy_granularity_unknown", "session_anomaly_count",
         "legacy_log_anomaly_count", "anomaly_count", "dates_with_data",
         "metric_versions", "classification_versions",
+        "classification_policy_versions",
     ):
         row[field] = totals.get(field, [] if field in list_fields else 0)
+    if not row["classification_policy_versions"]:
+        row["classification_policy_versions"] = sorted({
+            resolve_classification_semantics(version).policy_version
+            for version in row["classification_versions"]
+        })
     return row
 
 
@@ -334,11 +342,15 @@ def _rhythm_display_value(
 
 def _classification_versions(daily_rows: list[dict]) -> set[str]:
     return {
-        str(version or "")
+        str(policy or "")
         for row in daily_rows
         if _day_has_metric_data(row)
-        for version in (row.get("classification_versions") or [])
-        if str(version or "")
+        for policy in (
+            row.get("classification_policy_versions")
+            or [resolve_classification_semantics(version).policy_version
+                for version in (row.get("classification_versions") or [])]
+        )
+        if str(policy or "")
     }
 
 
@@ -925,6 +937,9 @@ def build_rhythm_snapshot(
     current_classification_version = str(
         latest_session.get("classification_version", "") or ""
     )
+    current_classification_policy = resolve_classification_semantics(
+        current_classification_version
+    ).policy_version
     has_session_metric_break = any(
         str(session.get("metric_version", "") or "") != current_metric_version
         for session in sessions
@@ -932,8 +947,9 @@ def build_rhythm_snapshot(
     has_session_classification_break = bool(
         current_classification_version
         and any(
-            str(session.get("classification_version", "") or "")
-            != current_classification_version
+            resolve_classification_semantics(
+                session.get("classification_version", "")
+            ).policy_version != current_classification_policy
             for session in sessions
         )
     )
@@ -955,7 +971,7 @@ def build_rhythm_snapshot(
             default={},
         )
         current_versions = {
-            str(version or "")
+            resolve_classification_semantics(version).policy_version
             for version in (latest_row.get("classification_versions") or [])
             if str(version or "")
         }
@@ -964,7 +980,7 @@ def build_rhythm_snapshot(
             for row in daily_rows
             if not _day_has_metric_data(row)
             or {
-                str(version or "")
+                resolve_classification_semantics(version).policy_version
                 for version in (row.get("classification_versions") or [])
                 if str(version or "")
             } == current_versions
@@ -2238,7 +2254,7 @@ def _build_thirty_day_trend(
 
 def _has_thirty_day_classification_break(daily_rows: list[dict]) -> bool:
     versions = {
-        str(version or "")
+        resolve_classification_semantics(version).policy_version
         for item in daily_rows
         if _day_has_metric_data(item)
         for version in (item.get("classification_versions") or [])

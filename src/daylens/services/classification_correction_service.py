@@ -11,6 +11,8 @@ from ..category_registry import category_definition
 from ..classifier import _DEFAULT_BROWSER_PROCESSES
 from ..session_tracker import normalize_window_title
 from .intelligence_state import atomic_json, save_override
+from .rule_learning_policy import choose_learning_scope
+from .classification_semantics import CURRENT_CLASSIFICATION_POLICY
 
 
 _TIME_FIELDS = (
@@ -162,7 +164,9 @@ def _restore_database(
                 """
                 UPDATE activity_sessions
                 SET category_key = ?, category_name = ?, active_rule = ?,
-                    classification_version = ?
+                    classification_version = ?,
+                    classification_policy_version = ?,
+                    classification_source = ?
                 WHERE id = ?
                 """,
                 (*values, identity),
@@ -232,6 +236,8 @@ def apply_classification_correction(
                 int(row["id"]): (
                     row["category_key"], row["category_name"],
                     row["active_rule"], row["classification_version"],
+                    row["classification_policy_version"],
+                    row["classification_source"],
                 )
                 for row in changed_rows
             }
@@ -241,15 +247,22 @@ def apply_classification_correction(
                     f"""
                     UPDATE activity_sessions
                     SET category_key = ?, category_name = ?, active_rule = ?,
-                        classification_version = 'manual-correction-v1'
+                        classification_version = 'manual-correction-v1',
+                        classification_policy_version = ?,
+                        classification_source = 'manual'
                     WHERE id IN ({placeholders})
                     """,
                     (
                         definition.id, definition.name, definition.timing_policy,
+                        CURRENT_CLASSIFICATION_POLICY,
                         *(int(row["id"]) for row in changed_rows),
                     ),
                 )
-            if not shared_browser:
+            learning_scope = choose_learning_scope(
+                process, definition.id, source="manual",
+                requested_scope=scope,
+            )
+            if learning_scope == "process":
                 rule_changed, rule_snapshot = move_process_rule(
                     conn, process, definition.id, definition.name,
                     definition.timing_policy,
@@ -282,6 +295,7 @@ def apply_classification_correction(
         "updated_sessions": len(changed_rows),
         "rule_changed": rule_changed,
         "shared_browser": shared_browser,
+        "learning_scope": learning_scope,
         "time_totals": before_totals,
         "time_conserved": True,
     }

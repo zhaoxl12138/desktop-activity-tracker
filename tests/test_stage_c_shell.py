@@ -131,7 +131,7 @@ def test_task_analysis_entry_is_removed_even_with_legacy_switches():
     try:
         stats = window.pages["stats"]
         assert [stats.tabs.tabText(i) for i in range(stats.tabs.count())] == [
-            "实时监控", "导出数据", "数据统计", "设置目标",
+            "实时监控", "软件统计", "分类统计", "目标与成果",
         ]
         assert "tasks" not in window.pages
         window.navigate_to("stats", tab="goals")

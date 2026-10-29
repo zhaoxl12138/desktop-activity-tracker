@@ -68,6 +68,17 @@ def test_uncomparable_data_suppresses_trends(problem):
     assert "insertion_rate" not in result
 
 
+def test_manual_and_ai_classification_sources_do_not_break_behavior_trend():
+    days = dates_before(date(2026, 10, 1), 7)
+    rows = [row(day, version="manual-correction-v1") for day in days[:3]]
+    rows.extend(row(day, version="ai-high-backfill-v1") for day in days[3:])
+
+    result = summarize(rows, days)
+
+    assert result["ready"]
+    assert result["trend"] is not None
+
+
 def test_partial_profile_reports_verified_lower_bound_and_precise_gaps():
     days = dates_before(date(2026, 10, 1), 7)
     rows = [row(day) for day in days]

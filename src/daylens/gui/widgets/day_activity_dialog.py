@@ -131,6 +131,12 @@ class DayActivityDialog(QDialog):
         self.body.setContentsMargins(0, 0, 8, 0)
         self.body.setSpacing(10)
         self.scroll.setWidget(content)
+        timeline_controls = QHBoxLayout()
+        timeline_controls.addStretch()
+        self.full_day_toggle = QCheckBox("显示完整 24 小时")
+        self.full_day_toggle.setToolTip("只改变横轴范围，不重新查询或修改记录")
+        timeline_controls.addWidget(self.full_day_toggle)
+        self.body.addLayout(timeline_controls)
         self.timeline = DayActivityCategoryTimeline()
         self.body.addWidget(self.timeline)
         self._timeline_help = "空闲／高空闲：留白　未来：点纹　异常：斜纹　无记录：底色（不等于空闲）"
@@ -138,6 +144,13 @@ class DayActivityDialog(QDialog):
         self.help_label.setWordWrap(True)
         self.help_label.setStyleSheet(f"color: {style.COLORS['text_secondary']};")
         self.body.addWidget(self.help_label)
+        self.hidden_evidence_label = QLabel()
+        self.hidden_evidence_label.setWordWrap(True)
+        self.hidden_evidence_label.setStyleSheet(
+            f"color: {style.COLORS['text_secondary']};"
+        )
+        self.hidden_evidence_label.hide()
+        self.body.addWidget(self.hidden_evidence_label)
 
         event_panel = self._panel()
         event_layout = QVBoxLayout(event_panel)
@@ -195,6 +208,7 @@ class DayActivityDialog(QDialog):
 
         self.events_table.selectionModel().selectionChanged.connect(lambda *_args: self._select_event())
         self.show_all.toggled.connect(self._render_events)
+        self.full_day_toggle.toggled.connect(self.timeline.set_full_day)
         self.timeline.event_activated.connect(self._activate_event)
         self.timeline.category_activated.connect(self._set_category)
         self.day_picker.currentIndexChanged.connect(self.refresh)
@@ -296,6 +310,7 @@ class DayActivityDialog(QDialog):
         self.events_model.set_events([])
         self.filter_hint.hide()
         self.help_label.setText(self._timeline_help)
+        self.hidden_evidence_label.hide()
         self.status_label.setText("正在读取所选日期的本地记录…")
         self.summary_label.setText("有效活动 — · 独立事件 —")
         self.previous_button.setEnabled(self.day_picker.currentIndex() > 0)
@@ -335,6 +350,7 @@ class DayActivityDialog(QDialog):
             self.model = result
             self._selected_event_id = None
             self.timeline.set_model(result)
+            self.timeline.set_full_day(self.full_day_toggle.isChecked())
             self.selected_category = None
             self._populate_category_buttons()
             self._display_status(result, day)
@@ -344,6 +360,17 @@ class DayActivityDialog(QDialog):
             failed = result.get("status") == "unavailable"
             self.summary_label.setText("全天有效活动 — · 数据读取失败" if failed else
                                        f"全天有效活动 {total}　·　≥5分钟事件 {count} 个　·　{coverage_label(result)}")
+            hidden = self.timeline.hidden_summary()
+            if hidden["count"]:
+                self.hidden_evidence_label.setText(
+                    f"时间轴隐藏 {hidden['count']} 段高空闲前台记录，"
+                    f"覆盖 {fmt_seconds(hidden['foreground_seconds'])}，"
+                    f"其中有效活动 {fmt_seconds(hidden['effective_seconds'])}；"
+                    "事件明细仍完整保留。"
+                )
+                self.hidden_evidence_label.show()
+            else:
+                self.hidden_evidence_label.hide()
             self._render_events()
         if self._pending is not None:
             request, self._pending = self._pending, None

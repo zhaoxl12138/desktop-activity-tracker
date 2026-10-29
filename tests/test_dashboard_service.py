@@ -505,7 +505,7 @@ def test_rhythm_rejects_daily_rows_with_anomalies_from_baseline():
     assert rhythm["today"]["comparison"]["sample_count"] == 5
 
 
-def test_rhythm_classification_break_only_keeps_latest_version_points():
+def test_rhythm_rule_fingerprint_change_keeps_policy_compatible_points():
     today = date(2026, 8, 12)
     daily = []
     for offset in reversed(range(31)):
@@ -526,12 +526,9 @@ def test_rhythm_classification_break_only_keeps_latest_version_points():
     assert rhythm["7d"]["chart"]["labels"] == [
         "8/6", "8/7", "8/8", "8/9", "8/10", "8/11", "8/12"
     ]
-    assert rhythm["7d"]["chart"]["values"] == [
-        None, 3_600, 3_600, 3_600, 3_600, 3_600, 3_600
-    ]
-    assert "仅展示当前规则记录" in rhythm["7d"]["conclusion"]
-    assert "日均" not in rhythm["7d"]["conclusion"]
-    assert "仅展示当前规则记录" in rhythm["30d"]["conclusion"]
+    assert rhythm["7d"]["chart"]["values"] == [3_600] * 7
+    assert "仅展示当前规则记录" not in rhythm["7d"]["conclusion"]
+    assert "仅展示当前规则记录" not in rhythm["30d"]["conclusion"]
 
 
 def test_rhythm_keeps_all_recorded_values_visible_from_august_thirteenth():
@@ -715,7 +712,7 @@ def test_rhythm_metric_break_filters_sessions_to_latest_metric_version():
     assert rhythm["today"]["metrics"][0]["value"] == "10:00"
 
 
-def test_rhythm_classification_break_keeps_same_metric_today_sessions():
+def test_rhythm_rule_fingerprint_change_keeps_same_policy_today_sessions():
     today = date(2026, 8, 12)
     daily = [_trusted_rhythm_day(today.isoformat(), 4_200)]
     daily[0]["classification_versions"] = ["rules-old", "rules-new"]
@@ -756,7 +753,36 @@ def test_rhythm_classification_break_keeps_same_metric_today_sessions():
     ]
     assert current[-1] == 4_200
     assert rhythm["today"]["metrics"][0]["value"] == "09:00"
-    assert rhythm["today"]["status"]["label"] == "口径已变化"
+    assert rhythm["today"]["status"]["label"] != "口径已变化"
+
+
+def test_rhythm_does_not_treat_manual_and_ai_sources_as_policy_break():
+    today = date(2026, 8, 12)
+    daily = [_trusted_rhythm_day(today.isoformat(), 4_200)]
+    daily[0]["classification_versions"] = [
+        "manual-correction-v1",
+        "ai-high-backfill-v1",
+    ]
+    sessions = [
+        {
+            **_rhythm_session(today.isoformat(), "09:00:00", "10:00:00", 3_600),
+            "classification_version": "manual-correction-v1",
+        },
+        {
+            **_rhythm_session(today.isoformat(), "10:00:00", "10:10:00", 600),
+            "classification_version": "ai-high-backfill-v1",
+        },
+    ]
+
+    rhythm = dashboard_service.build_rhythm_snapshot(
+        captured_now=datetime(2026, 8, 12, 14, 0),
+        sessions=sessions,
+        daily_rows=daily,
+        query_failed=False,
+    )
+
+    assert rhythm["today"]["status"]["label"] != "口径已变化"
+
 
 
 def test_rhythm_interruption_metric_formats_count_delta():

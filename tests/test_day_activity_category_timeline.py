@@ -107,6 +107,38 @@ def test_high_idle_event_does_not_stretch_axis_or_accept_plot_click(application)
         widget.close()
 
 
+def test_full_day_toggle_reuses_model_and_restores_fitted_activity_range(application):
+    source = model([event("visible", 9*3600+40*60, 10*3600+10*60)])
+    widget = canvas(application, source)
+    try:
+        fitted = (widget.range_start, widget.range_end)
+        widget.set_full_day(True)
+        assert (widget.range_start, widget.range_end) == (0, 86400)
+        assert "00:00–24:00" in widget.range_title()
+        assert widget.model is source
+        widget.set_full_day(False)
+        assert (widget.range_start, widget.range_end) == fitted
+    finally:
+        widget.close()
+
+
+def test_hidden_summary_reports_count_foreground_span_and_effective_seconds(application):
+    source = model([
+        event("visible", 9*3600, 10*3600, duration_seconds=100, idle_seconds=0),
+        event("hidden", 14*3600, 21*3600, "tools", duration_seconds=25174,
+              idle_seconds=25173, effective_seconds=1),
+    ])
+    widget = canvas(application, source)
+    try:
+        assert widget.hidden_summary() == {
+            "count": 1,
+            "foreground_seconds": 7 * 3600,
+            "effective_seconds": 1,
+        }
+    finally:
+        widget.close()
+
+
 def test_hidden_event_inside_visible_range_has_no_hit_target(application):
     from PySide6.QtCore import QPoint
 
