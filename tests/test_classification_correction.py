@@ -7,6 +7,21 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox
 
 
+def test_live_monitor_hides_redundant_correction_shortcut_row():
+    from daylens.gui.pages.live_monitor import LiveMonitorPage
+
+    app = QApplication.instance() or QApplication([])
+    page = LiveMonitorPage()
+    page.show()
+    app.processEvents()
+
+    assert not page.correct_button.isVisible()
+    assert not page.manage_patterns_button.isVisible()
+    assert not page.correction_status.isVisible()
+
+    page.close()
+
+
 def test_dialog_real_save_and_cancel():
     from daylens.gui.widgets.classification_dialog import ClassificationDialog, CATEGORY_CHOICES
     from daylens.services.intelligence_client import LEGAL_CATEGORIES

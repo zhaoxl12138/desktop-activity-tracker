@@ -236,6 +236,45 @@ def test_category_page_defaults_to_seven_days_and_switches_presets(tmp_path):
     app.processEvents()
 
 
+def test_range_toolbar_shows_full_preset_summary_and_hides_custom_editors(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    page = CategoryStatsPage(str(tmp_path / "usage.db"))
+    page.show()
+    app.processEvents()
+
+    expected = (
+        f"{page.start_edit.date().toString('yyyy-MM-dd')} 至 "
+        f"{page.end_edit.date().toString('yyyy-MM-dd')} · 共 7 天"
+    )
+    assert page.period_combo.minimumWidth() >= 140
+    assert page.range_summary.text() == expected
+    assert not page.custom_range_widget.isVisible()
+
+    page.close()
+    page.shutdown()
+    page.deleteLater()
+    app.processEvents()
+
+
+def test_custom_range_uses_wide_editors_and_calendar(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    page = CategoryStatsPage(str(tmp_path / "usage.db"))
+    page.show()
+    page.period_combo.setCurrentIndex(page.period_combo.findData("custom"))
+    app.processEvents()
+
+    assert page.custom_range_widget.isVisible()
+    assert page.start_edit.minimumWidth() >= 150
+    assert page.end_edit.minimumWidth() >= 150
+    assert page.start_edit.calendarWidget().minimumWidth() >= 340
+    assert page.start_edit.calendarWidget().minimumHeight() >= 260
+
+    page.close()
+    page.shutdown()
+    page.deleteLater()
+    app.processEvents()
+
+
 def test_custom_range_is_inclusive_validated_and_invalidates_pending_results(tmp_path):
     app = QApplication.instance() or QApplication([])
     page = CategoryStatsPage(str(tmp_path / "usage.db"))

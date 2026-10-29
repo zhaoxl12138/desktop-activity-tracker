@@ -233,26 +233,61 @@ class CategoryStatsPage(QWidget):
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(14)
 
+        self.range_card = QFrame()
+        self.range_card.setObjectName("categoryRangeCard")
+        self.range_card.setStyleSheet(
+            f"QFrame#categoryRangeCard {{ background: {COLORS['card_bg']}; "
+            f"border: 1px solid {COLORS['border']}; border-radius: 12px; }}"
+        )
+        range_layout = QVBoxLayout(self.range_card)
+        range_layout.setContentsMargins(18, 14, 18, 14)
+        range_layout.setSpacing(10)
+
         period_row = QHBoxLayout()
-        period_row.setSpacing(8)
-        period_row.addWidget(QLabel("统计范围"))
+        period_row.setSpacing(12)
+        range_title = QLabel("统计范围")
+        range_title.setStyleSheet(
+            f"font-size: 14px; font-weight: 600; color: {COLORS['text']};"
+        )
+        period_row.addWidget(range_title)
         self.period_combo = QComboBox()
         for label, value in (("今天", "today"), ("近 7 天", "7d"),
                              ("近 30 天", "30d"), ("自定义", "custom")):
             self.period_combo.addItem(label, value)
         self.period_combo.setCurrentIndex(self.period_combo.findData("7d"))
+        self.period_combo.setMinimumWidth(140)
+        self.period_combo.setMinimumHeight(36)
         period_row.addWidget(self.period_combo)
+        self.range_summary = QLabel()
+        self.range_summary.setStyleSheet(
+            f"font-size: 13px; color: {COLORS['text_secondary']}; padding-left: 6px;"
+        )
+        period_row.addWidget(self.range_summary, 1)
+        range_layout.addLayout(period_row)
+
         self.start_edit = QDateEdit(QDate.currentDate().addDays(-6))
         self.end_edit = QDateEdit(QDate.currentDate())
         for edit in (self.start_edit, self.end_edit):
             edit.setCalendarPopup(True)
             edit.setDisplayFormat("yyyy-MM-dd")
-            edit.setEnabled(False)
-        period_row.addWidget(self.start_edit)
-        period_row.addWidget(QLabel("至"))
-        period_row.addWidget(self.end_edit)
-        period_row.addStretch(1)
-        layout.addLayout(period_row)
+            edit.setMinimumWidth(150)
+            edit.setMinimumHeight(36)
+            calendar = edit.calendarWidget()
+            calendar.setMinimumSize(340, 260)
+            calendar.setGridVisible(True)
+
+        self.custom_range_widget = QWidget()
+        custom_range_row = QHBoxLayout(self.custom_range_widget)
+        custom_range_row.setContentsMargins(0, 0, 0, 0)
+        custom_range_row.setSpacing(10)
+        custom_range_row.addWidget(QLabel("开始日期"))
+        custom_range_row.addWidget(self.start_edit)
+        custom_range_row.addSpacing(10)
+        custom_range_row.addWidget(QLabel("结束日期"))
+        custom_range_row.addWidget(self.end_edit)
+        custom_range_row.addStretch(1)
+        range_layout.addWidget(self.custom_range_widget)
+        layout.addWidget(self.range_card)
         self._selection = ("7d", self.start_edit.date().toString("yyyy-MM-dd"),
                            self.end_edit.date().toString("yyyy-MM-dd"))
 
@@ -295,6 +330,7 @@ class CategoryStatsPage(QWidget):
         self.period_combo.currentIndexChanged.connect(self._on_period_changed)
         self.start_edit.dateChanged.connect(self._on_period_changed)
         self.end_edit.dateChanged.connect(self._on_period_changed)
+        self._update_range_controls()
 
     def _selected_range(self) -> tuple[str, str]:
         today = QDate.currentDate()
@@ -348,8 +384,7 @@ class CategoryStatsPage(QWidget):
             self.start_edit.date().toString("yyyy-MM-dd"),
             self.end_edit.date().toString("yyyy-MM-dd"),
         )
-        self.start_edit.setEnabled(custom)
-        self.end_edit.setEnabled(custom)
+        self._update_range_controls()
         self._last_signature = None
         self._clear_all_cards()
         self.total_label.setText("加载中…")
@@ -360,6 +395,19 @@ class CategoryStatsPage(QWidget):
         else:
             self.error_lbl.hide()
         self._refresh_controller.invalidate_context()
+
+    def _update_range_controls(self) -> None:
+        custom = self.period_combo.currentData() == "custom"
+        self.custom_range_widget.setVisible(custom)
+        self.start_edit.setEnabled(custom)
+        self.end_edit.setEnabled(custom)
+        start = self.start_edit.date()
+        end = self.end_edit.date()
+        day_count = start.daysTo(end) + 1
+        suffix = f" · 共 {day_count} 天" if day_count > 0 else ""
+        self.range_summary.setText(
+            f"{start.toString('yyyy-MM-dd')} 至 {end.toString('yyyy-MM-dd')}{suffix}"
+        )
 
     def activate(self, force: bool = False) -> None:
         self._is_active = True
