@@ -17,6 +17,14 @@ class HistoryMetricCell(MetricCell):
         )
 
 
+def compact_app_name(value: object, limit: int = 5) -> str:
+    """Keep app names inside compact metric cells without losing the source."""
+    text = str(value or "").strip()
+    if not text:
+        return "--"
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 def history_range_text(value) -> str:
     if not isinstance(value, (list, tuple)) or len(value) != 2:
         return ""

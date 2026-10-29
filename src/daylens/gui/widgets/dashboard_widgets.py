@@ -28,7 +28,12 @@ from ...utils import fmt_seconds, parse_nonnegative_int
 from .. import style as ui_style
 from .elided_label import ElidedLabel
 from .ui_primitives import MetricCell
-from .history_card_widgets import HistoryMetricCell, history_range_text, history_captured_text
+from .history_card_widgets import (
+    HistoryMetricCell,
+    compact_app_name,
+    history_captured_text,
+    history_range_text,
+)
 from ..style import COLORS, get_category_color
 
 
@@ -1175,11 +1180,15 @@ class RhythmComparisonCard(QFrame):
                 if historical else f"font-size: 12px; color: {COLORS['text_muted']};"
             )
             item = dict(values[index]) if index < len(values) else {}
-            text = ("日均时长", "最高一天", "总时长")[index] if self._mode in {"7d", "30d"} and item else str(item.get("label", ""))
+            text = ("日均时长", "偏爱应用", "总时长")[index] if self._mode in {"7d", "30d"} and item else str(item.get("label", ""))
             label.setText(text)
             value_text = str(item.get("value", "--"))
             if index == 1 and self._mode in {"7d", "30d"}:
-                value_text = value_text.split()[0] if value_text.split() else "--"
+                full_name = value_text if value_text != "--" else ""
+                value_text = compact_app_name(full_name)
+                value.setToolTip(full_name)
+            else:
+                value.setToolTip("")
             value.setText(value_text)
             delta_text = str(item.get("delta", ""))
             delta.setText(delta_text)
@@ -2830,17 +2839,22 @@ class EntertainmentHistoryCard(QFrame):
     def _set_summary(self, summary: dict) -> None:
         total = parse_nonnegative_int(summary.get("total_seconds"))
         average = parse_nonnegative_int(summary.get("average_seconds"))
-        maximum = parse_nonnegative_int(summary.get("max_seconds"))
-        max_date = summary.get("max_date")
+        favorite_name = str(summary.get("favorite_app_name") or "").strip()
+        favorite_seconds = parse_nonnegative_int(summary.get("favorite_app_seconds"))
         self._summary_cells[0].set_values(
             label="日均时长",
             value=_goal_duration(average) if average is not None else "--",
         )
         self._summary_cells[1].set_values(
-            label="最高一天",
-            value=self._short_date(str(max_date)) if max_date and maximum is not None else "--",
-            detail=_goal_duration(maximum) if max_date and maximum is not None else "",
+            label="偏爱应用",
+            value=compact_app_name(favorite_name),
+            detail=(
+                _goal_duration(favorite_seconds)
+                if favorite_name and favorite_seconds is not None
+                else ""
+            ),
         )
+        self._summary_cells[1].value.setToolTip(favorite_name)
         self._summary_cells[2].set_values(
             label="总时长",
             value=_goal_duration(total) if total is not None else "--",

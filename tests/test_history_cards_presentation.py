@@ -2,7 +2,7 @@
 import copy
 import os
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 import pytest
@@ -26,12 +26,113 @@ def fixture(captured=datetime(2026, 10, 26, 17, 42)):
                      'classification_versions': ['rules-v1'], 'work_engaged_seconds': 600+offset*60,
                      'engaged_seconds': 600+offset*60, 'video_seconds': 300+offset*60})
     original = copy.deepcopy(rows)
-    work = build_rhythm_snapshot(captured_now=captured, sessions=[], daily_rows=rows, query_failed=False)
+    sessions = [
+        _favorite_session(captured.date().isoformat(), 'Code.exe', 'coding', engaged=600, effective=600),
+        _favorite_session(captured.date().isoformat(), '腾讯视频.exe', 'video', engaged=60, effective=300),
+    ]
+    work = build_rhythm_snapshot(captured_now=captured, sessions=sessions, daily_rows=rows, query_failed=False)
     entertainment = build_entertainment_history(captured_now=captured, daily_rows=rows,
         current_entertainment_seconds=300, today_has_data=True, weekday_entertainment_limit_minutes=60,
-        weekend_entertainment_limit_minutes=120, query_failed=False)
+        weekend_entertainment_limit_minutes=120, query_failed=False, sessions=sessions)
     assert rows == original
     return work, {'entertainment_history': entertainment}
+
+
+def _favorite_session(day, app, category, *, engaged=0, effective=0):
+    return {
+        'date': day,
+        'process_name': app,
+        'category_key': category,
+        'engaged_seconds': engaged,
+        'effective_seconds': effective,
+        'metric_version': 'attention-v1',
+        'classification_version': 'rules-v1',
+    }
+
+
+def test_history_models_rank_favorite_apps_with_separate_metrics_and_ranges():
+    captured = datetime(2026, 10, 29, 18, 0)
+    sessions = [
+        _favorite_session('2026-10-28', 'ChatGPT.exe', 'coding', engaged=600, effective=700),
+        _favorite_session('2026-10-27', 'Code.exe', 'coding', engaged=900, effective=900),
+        _favorite_session('2026-10-01', 'ChatGPT.exe', 'coding', engaged=1_000, effective=1_100),
+        _favorite_session('2026-10-28', '腾讯视频.exe', 'video', engaged=100, effective=700),
+        _favorite_session('2026-10-26', 'Hades2.exe', 'gaming', engaged=900, effective=900),
+        _favorite_session('2026-10-01', '腾讯视频.exe', 'video', engaged=100, effective=500),
+    ]
+
+    work = build_rhythm_snapshot(
+        captured_now=captured, sessions=sessions, daily_rows=[], query_failed=False,
+    )
+    entertainment = build_entertainment_history(
+        captured_now=captured,
+        daily_rows=[],
+        current_entertainment_seconds=0,
+        today_has_data=False,
+        weekday_entertainment_limit_minutes=60,
+        weekend_entertainment_limit_minutes=120,
+        query_failed=False,
+        sessions=sessions,
+    )
+
+    assert work['7d']['metrics'][1] == {
+        'label': '偏爱应用', 'value': 'Code', 'delta': '15分钟',
+    }
+    assert work['30d']['metrics'][1] == {
+        'label': '偏爱应用', 'value': 'ChatGPT', 'delta': '26分钟',
+    }
+    assert entertainment['week']['summary']['favorite_app_name'] == 'Hades2'
+    assert entertainment['week']['summary']['favorite_app_seconds'] == 900
+    assert entertainment['month']['summary']['favorite_app_name'] == '腾讯视频'
+    assert entertainment['month']['summary']['favorite_app_seconds'] == 1_200
+
+
+def test_favorite_app_tie_break_is_stable_by_application_name():
+    from daylens.services.dashboard_service import _favorite_app
+
+    captured_day = date(2026, 10, 29)
+    sessions = [
+        {
+            **_favorite_session('2026-10-29', 'Zulu.exe', 'coding', engaged=300),
+            'display_name': 'Aardvark',
+        },
+        _favorite_session('2026-10-29', 'Alpha.exe', 'coding', engaged=300),
+    ]
+
+    assert _favorite_app(
+        sessions,
+        start=captured_day,
+        end=captured_day,
+        category_keys={'coding'},
+        seconds_for=lambda row: row['engaged_seconds'],
+    ) == {'name': 'Aardvark', 'seconds': 300}
+
+
+@pytest.mark.parametrize('mode', ['7d', '30d'])
+def test_work_card_compacts_favorite_app_and_keeps_full_tooltip(mode):
+    application()
+    card = RhythmComparisonCard()
+    period = {
+        'title': 'history',
+        'date_range': ['2026-10-23', '2026-10-29'],
+        'status': {'label': '可用', 'kind': 'baseline'},
+        'conclusion': '',
+        'chart': {'kind': 'bars', 'dates': [], 'values': []},
+        'metrics': [
+            {'label': '日均参与', 'value': '1小时', 'delta': ''},
+            {'label': '偏爱应用', 'value': 'VeryLongApp', 'delta': '2小时'},
+            {'label': '总时间', 'value': '7小时', 'delta': ''},
+        ],
+    }
+    card.set_data({'captured_at': '2026-10-29T18:00:00', '7d': period, '30d': period})
+    card.set_mode(mode)
+
+    assert card._metric_labels[1][0].text() == '偏爱应用'
+    assert card._metric_labels[1][1].text() == 'Very…'
+    assert card._metric_labels[1][1].toolTip() == 'VeryLongApp'
+    assert card._metric_labels[1][2].text() == '2小时'
+
+    card.close()
 
 
 @pytest.mark.parametrize('captured', [datetime(2026, 10, 26, 17, 42), datetime(2026, 1, 1), datetime(2028, 3, 1)])
@@ -76,10 +177,11 @@ def test_cards_share_summary_labels_clear_peak_duration_and_range_caption(mode):
         card.show()
     app.processEvents()
     try:
-        assert [labels[0].text() for labels in a._metric_labels] == ['日均时长', '最高一天', '总时长']
-        assert [labels[0].text() for labels in b._summary_labels] == ['日均时长', '最高一天', '总时长']
+        assert [labels[0].text() for labels in a._metric_labels] == ['日均时长', '偏爱应用', '总时长']
+        assert [labels[0].text() for labels in b._summary_labels] == ['日均时长', '偏爱应用', '总时长']
         assert a._title_label.text() == ('工作节奏 · 近7天' if mode == '7d' else '工作节奏 · 近30天')
-        assert re.fullmatch(r'\d{1,2}/\d{1,2}', a._metric_labels[1][1].text())
+        assert a._metric_labels[1][1].text() == 'Code'
+        assert b._summary_cells[1].value.text() == '腾讯视频'
         assert a._conclusion_label.text() == b._range_label.text()+'  截至 17:42'
         assert a._metric_labels[1][2].text()
         for detail in (a._metric_labels[1][2], b._summary_cells[1].detail):

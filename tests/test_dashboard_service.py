@@ -411,7 +411,7 @@ def test_rhythm_complete_day_and_week_views_preserve_unknown_gaps():
     assert thirty["metrics"][2]["value"] == "34小时43分钟"
 
 
-def test_rhythm_seven_day_best_day_uses_chronological_date_value():
+def test_rhythm_seven_day_uses_favorite_work_application():
     captured = datetime(2026, 8, 14, 14, 0)
     daily = [
         _trusted_rhythm_day(
@@ -423,7 +423,12 @@ def test_rhythm_seven_day_best_day_uses_chronological_date_value():
 
     rhythm = dashboard_service.build_rhythm_snapshot(
         captured_now=captured,
-        sessions=[],
+        sessions=[
+            _rhythm_session(
+                "2026-08-13", "09:00:00", "09:02:00", 120,
+                session_id="favorite-work",
+            )
+        ],
         daily_rows=daily,
         query_failed=False,
     )
@@ -431,7 +436,8 @@ def test_rhythm_seven_day_best_day_uses_chronological_date_value():
     assert rhythm["7d"]["chart"]["labels"] == [
         "8/8", "8/9", "8/10", "8/11", "8/12", "8/13", "8/14"
     ]
-    assert rhythm["7d"]["metrics"][1]["value"] == "8/13 周四"
+    assert rhythm["7d"]["metrics"][1]["label"] == "偏爱应用"
+    assert rhythm["7d"]["metrics"][1]["value"] == "Code"
     assert rhythm["7d"]["metrics"][1]["delta"] == "2分钟"
 
 
@@ -1151,8 +1157,8 @@ def test_dashboard_snapshot_builds_entertainment_history_from_existing_range(
     assert history["week"]["summary"] == {
         "total_seconds": 900,
         "average_seconds": 300,
-        "max_date": "2026-08-28",
-        "max_seconds": 600,
+        "favorite_app_name": None,
+        "favorite_app_seconds": 0,
     }
     assert history["month"]["summary"] == history["week"]["summary"]
     assert snapshot["goals"]["version"] == 1
@@ -1187,8 +1193,8 @@ def test_entertainment_history_degrades_stably_when_range_query_fails(
     assert history["month"]["summary"] == {
         "total_seconds": 0,
         "average_seconds": 0,
-        "max_date": None,
-        "max_seconds": 0,
+        "favorite_app_name": None,
+        "favorite_app_seconds": 0,
     }
     assert snapshot["goals"]["version"] == 1
 

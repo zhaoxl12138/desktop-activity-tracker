@@ -533,8 +533,9 @@ def build_entertainment_history(
     today = captured_now.date()
     today_str = today.isoformat()
     row_map = _daily_row_map(daily_rows)
+    history_sessions = list(sessions or [])
     hover_contexts = _daily_top_hover_contexts(
-        list(sessions or []),
+        history_sessions,
         ENTERTAINMENT_KEYS,
         lambda session: parse_nonnegative_int(session.get("effective_seconds")) or 0,
     )
@@ -585,10 +586,14 @@ def build_entertainment_history(
             points.append(point)
 
         valid = [point for point in points if point["has_data"]]
-        max_point = max(
-            valid,
-            key=lambda point: int(point["seconds"]),
-            default=None,
+        favorite = _favorite_app(
+            history_sessions,
+            start=dates[0],
+            end=dates[-1],
+            category_keys=ENTERTAINMENT_KEYS,
+            seconds_for=lambda session: (
+                parse_nonnegative_int(session.get("effective_seconds")) or 0
+            ),
         )
         total = sum(int(point["seconds"]) for point in valid)
         return {
@@ -597,12 +602,8 @@ def build_entertainment_history(
             "summary": {
                 "total_seconds": total,
                 "average_seconds": round(total / len(valid)) if valid else 0,
-                "max_date": max_point["date"] if max_point is not None else None,
-                "max_seconds": (
-                    int(max_point["seconds"])
-                    if max_point is not None
-                    else 0
-                ),
+                "favorite_app_name": favorite["name"],
+                "favorite_app_seconds": favorite["seconds"],
             },
         }
 
@@ -783,10 +784,12 @@ def _build_seven_day_rhythm(
     comparable = comparison_allowed and len(trusted_valid) >= 3 and len(valid_prior) >= 3
     average = round(sum(valid) / len(valid)) if valid else 0
     prior_average = round(sum(valid_prior) / len(valid_prior)) if valid_prior else 0
-    best_index = max(
-        (index for index, value in enumerate(values) if value is not None),
-        key=lambda index: int(values[index] or 0),
-        default=None,
+    favorite = _favorite_app(
+        sessions,
+        start=dates[0],
+        end=dates[-1],
+        category_keys=WORK_KEYS,
+        seconds_for=_work_hover_seconds,
     )
     conclusion = (
         f"{dates[0].month}/{dates[0].day}–{dates[-1].month}/{dates[-1].day}"
@@ -814,25 +817,21 @@ def _build_seven_day_rhythm(
         "metrics": [
             {"label": "日均参与", "value": _duration_short(average), "delta": ""},
             {
-                "label": "最高一天",
-                "value": (
-                    f"{dates[best_index].month}/{dates[best_index].day} "
-                    f"{_weekday_label(dates[best_index])}"
-                    if best_index is not None
-                    else "--"
-                ),
-                "delta": (
-                    _duration_short(int(values[best_index] or 0))
-                    if best_index is not None
-                    else ""
-                ),
+                "label": "偏爱应用",
+                "value": favorite["name"] or "--",
+                "delta": _duration_short(favorite["seconds"]) if favorite["name"] else "",
             },
             {"label": "总时间", "value": _duration_short(sum(valid)), "delta": ""},
         ],
     }
 
 
-def _build_thirty_day_rhythm(captured_now: datetime, daily_rows: list[dict]) -> dict[str, object]:
+def _build_thirty_day_rhythm(
+    captured_now: datetime,
+    daily_rows: list[dict],
+    *,
+    sessions: list[dict] | None = None,
+) -> dict[str, object]:
     end = captured_now.date()
     rolling_start = end - timedelta(days=29)
     history_start = _actual_history_start(daily_rows, rolling_start)
@@ -860,10 +859,12 @@ def _build_thirty_day_rhythm(captured_now: datetime, daily_rows: list[dict]) -> 
         if len(trusted_valid) >= 7
         else None
     )
-    best_index = max(
-        (index for index, value in enumerate(values) if value is not None),
-        key=lambda index: int(values[index] or 0),
-        default=None,
+    favorite = _favorite_app(
+        list(sessions or []),
+        start=dates[0],
+        end=dates[-1],
+        category_keys=WORK_KEYS,
+        seconds_for=_work_hover_seconds,
     )
     recent_dates = dates[-7:]
     prior_dates = dates[-14:-7]
@@ -894,17 +895,9 @@ def _build_thirty_day_rhythm(captured_now: datetime, daily_rows: list[dict]) -> 
         "metrics": [
             {"label": "日均参与", "value": _duration_short(average), "delta": ""},
             {
-                "label": "最高一天",
-                "value": (
-                    f"{dates[best_index].month}/{dates[best_index].day}"
-                    if best_index is not None
-                    else "--"
-                ),
-                "delta": (
-                    _duration_short(int(values[best_index] or 0))
-                    if best_index is not None
-                    else ""
-                ),
+                "label": "偏爱应用",
+                "value": favorite["name"] or "--",
+                "delta": _duration_short(favorite["seconds"]) if favorite["name"] else "",
             },
             {"label": "总时间", "value": _duration_short(sum(valid)), "delta": ""},
         ],
@@ -993,7 +986,11 @@ def build_rhythm_snapshot(
             sessions=filtered_sessions,
             comparison_allowed=comparison_allowed,
         ),
-        "30d": _build_thirty_day_rhythm(captured_now, effective_daily_rows),
+        "30d": _build_thirty_day_rhythm(
+            captured_now,
+            effective_daily_rows,
+            sessions=filtered_sessions,
+        ),
     }
     unavailable_status: dict[str, str] | None = None
     if query_failed:
@@ -1245,6 +1242,42 @@ def _session_event_identity(session: dict) -> tuple[str, ...]:
 
 def _strip_executable_suffix(value: str) -> str:
     return value[:-4] if value.casefold().endswith(".exe") else value
+
+
+def _favorite_app(
+    sessions: list[dict],
+    *,
+    start: date,
+    end: date,
+    category_keys: set[str],
+    seconds_for,
+) -> dict[str, object]:
+    """Rank one application's in-range time from already loaded sessions."""
+    totals: dict[str, int] = {}
+    for session in sessions:
+        if str(session.get("category_key", "") or "") not in category_keys:
+            continue
+        try:
+            day = date.fromisoformat(str(session.get("date", "") or ""))
+        except (TypeError, ValueError):
+            continue
+        if not start <= day <= end:
+            continue
+        seconds = parse_nonnegative_int(seconds_for(session)) or 0
+        if seconds <= 0:
+            continue
+        display_name = str(session.get("display_name", "") or "").strip()
+        name = display_name or _strip_executable_suffix(
+            str(session.get("process_name", "") or "").strip()
+        ) or "未知应用"
+        totals[name] = totals.get(name, 0) + seconds
+    if not totals:
+        return {"name": None, "seconds": 0}
+    name, seconds = min(
+        totals.items(),
+        key=lambda item: (-item[1], item[0].casefold()),
+    )
+    return {"name": name, "seconds": seconds}
 
 
 def _safe_tool_text(source: str) -> str | None:
@@ -2354,6 +2387,20 @@ def load_today_snapshot(
         range_sessions, malformed_session_dates = _sanitize_sessions(
             raw_range_sessions
         )
+        range_sessions = [
+            {
+                **session,
+                "display_name": str(
+                    resolve_display(
+                        str(session.get("process_name", "") or ""),
+                        [],
+                    )
+                    or session.get("process_name", "")
+                    or ""
+                ).strip(),
+            }
+            for session in range_sessions
+        ]
         fourteen_day_set = set(fourteen_day_dates)
         fourteen_day_sessions = [
             session

@@ -775,7 +775,7 @@ def _entertainment_history_payload():
                     {"date": "2026-08-27", "has_data": False, "limit_seconds": 3600},
                     {"date": "2026-08-28", "seconds": 4200, "has_data": True, "limit_seconds": 3600, "over_limit": True},
                 ],
-                "summary": {"total_seconds": 6000, "average_seconds": 1500, "max_date": "2026-08-28", "max_seconds": 4200},
+                "summary": {"total_seconds": 6000, "average_seconds": 1500, "favorite_app_name": "腾讯视频", "favorite_app_seconds": 4200},
             },
             "month": {
                 "date_range": ["2026-08-02", "2026-08-31"],
@@ -784,7 +784,7 @@ def _entertainment_history_payload():
                     {"date": "2026-08-30", "seconds": 7200, "has_data": True, "over_limit": True},
                     {"date": "2026-08-31", "has_data": False},
                 ],
-                "summary": {"total_seconds": 7200, "average_seconds": 240, "max_date": "2026-08-30", "max_seconds": 7200},
+                "summary": {"total_seconds": 7200, "average_seconds": 240, "favorite_app_name": "腾讯视频", "favorite_app_seconds": 7200},
             },
         }
     }
@@ -797,19 +797,41 @@ def test_entertainment_history_card_matches_work_rhythm_summary_order():
     payload["entertainment_history"]["week"]["summary"] = {
         "total_seconds": 7_200,
         "average_seconds": 1_200,
-        "max_date": "2026-09-01",
-        "max_seconds": 3_600,
+        "favorite_app_name": "腾讯视频",
+        "favorite_app_seconds": 3_600,
     }
 
     card.set_data(payload)
 
     assert [label.text() for label, _value in card._summary_labels] == [
-        "日均时长", "最高一天", "总时长",
+        "日均时长", "偏爱应用", "总时长",
     ]
     assert [value.text() for _label, value in card._summary_labels] == [
-        "20分钟", "9/1", "2小时",
+        "20分钟", "腾讯视频", "2小时",
     ]
     assert card._summary_cells[1].detail.text() == "1小时"
+    card.deleteLater()
+    app.processEvents()
+
+
+def test_entertainment_history_card_compacts_favorite_app_and_keeps_tooltip():
+    app = _app()
+    card = dashboard_widgets.EntertainmentHistoryCard()
+    payload = _entertainment_history_payload()
+    payload["entertainment_history"]["week"]["summary"] = {
+        "total_seconds": 7_200,
+        "average_seconds": 1_200,
+        "favorite_app_name": "腾讯视频应用",
+        "favorite_app_seconds": 3_600,
+    }
+
+    card.set_data(payload)
+
+    assert card._summary_cells[1].label.text() == "偏爱应用"
+    assert card._summary_cells[1].value.text() == "腾讯视频…"
+    assert card._summary_cells[1].value.toolTip() == "腾讯视频应用"
+    assert card._summary_cells[1].detail.text() == "1小时"
+
     card.deleteLater()
     app.processEvents()
 
@@ -830,7 +852,7 @@ def test_entertainment_history_card_defaults_to_week_with_plain_text_summary():
     assert card._captured_label.text() == "截至 14:35"
     assert [value.text() for _label, value in card._summary_labels] == [
         "25分钟",
-        "8/28",
+        "腾讯视频",
         "1小时40分钟",
     ]
     assert card._summary_cells[1].detail.text() == "1小时10分钟"
