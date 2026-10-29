@@ -291,3 +291,45 @@ def test_settings_data_quality_check_is_queued(tmp_path, monkeypatch):
     ]
     assert page.btn_quality.isEnabled() is False
     page.deleteLater()
+
+
+def test_data_quality_repair_without_background_queue_uses_page_database(tmp_path, monkeypatch):
+    _app, page, _worker, old_db = _build_page(tmp_path, monkeypatch)
+    repaired_paths = []
+    inspected_paths = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.Yes,
+    )
+    monkeypatch.setattr(
+        settings_page_module,
+        "repair_legacy_session_data",
+        lambda path, **_kwargs: repaired_paths.append(path) or {"repaired": 1},
+    )
+    monkeypatch.setattr(
+        settings_page_module,
+        "inspect_data_quality",
+        lambda path, **_kwargs: inspected_paths.append(path) or {
+            "issue_count": 0,
+            "checked_sessions": 1,
+            "score": 100,
+        },
+    )
+    monkeypatch.setattr(page, "_show_quality_repair_result", lambda _payload: None)
+
+    page._show_quality_result(
+        {
+            "result": {"issue_count": 1},
+            "preview": {
+                "repairable_count": 1,
+                "dates": ["2026-10-29"],
+                "duplicate_idle_seconds": 60,
+            },
+        },
+        1,
+    )
+
+    assert repaired_paths == [str(old_db)]
+    assert inspected_paths == [str(old_db)]
+    page.deleteLater()

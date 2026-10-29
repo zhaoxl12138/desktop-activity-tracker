@@ -1283,8 +1283,9 @@ def _favorite_app(
         if seconds <= 0:
             continue
         display_name = str(session.get("display_name", "") or "").strip()
-        name = display_name or _strip_executable_suffix(
-            str(session.get("process_name", "") or "").strip()
+        name = _strip_executable_suffix(
+            display_name
+            or str(session.get("process_name", "") or "").strip()
         ) or "未知应用"
         totals[name] = totals.get(name, 0) + seconds
     if not totals:

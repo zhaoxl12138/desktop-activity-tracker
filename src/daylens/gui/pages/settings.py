@@ -446,13 +446,13 @@ class SettingsPage(QWidget):
 
             def repair_task() -> dict:
                 repaired = repair_legacy_session_data(
-                    db_path,
+                    self.db_path,
                     reason="manual",
                 )
                 return {
                     "repaired": repaired,
                     "after": inspect_data_quality(
-                        db_path,
+                        self.db_path,
                         sample_interval_seconds=sample_interval,
                     ),
                 }

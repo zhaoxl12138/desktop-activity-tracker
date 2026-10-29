@@ -15,7 +15,7 @@ class IntelligenceReviewBar(QWidget):
         super().__init__(parent)
         self.db_path = db_path
         self.results = queue.Queue()
-        self._stale_kind = None
+        self._stale_kinds = set()
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.period = QComboBox()
@@ -37,12 +37,12 @@ class IntelligenceReviewBar(QWidget):
         self.timer.timeout.connect(self._poll)
 
     def _sync_button(self, *_args):
-        stale = self._stale_kind == self.period.currentData()
+        stale = self.period.currentData() in self._stale_kinds
         self.button.setText('重新分析旧数据' if stale else '生成 / 查看智能复盘')
 
     def _generate(self):
         kind, db_path, results = self.period.currentData(), self.db_path, self.results
-        regenerate = self._stale_kind == kind
+        regenerate = kind in self._stale_kinds
         if regenerate and QMessageBox.question(
             self,
             '重新分析旧数据',
@@ -55,17 +55,17 @@ class IntelligenceReviewBar(QWidget):
         self.status.setText('正在整理并生成…')
         def run():
             try:
-                results.put((True, generate_budget_review(
+                results.put((True, kind, generate_budget_review(
                     db_path, kind, regenerate_stale=regenerate
                 )))
             except Exception as exc:
-                results.put((False, str(exc)))
+                results.put((False, kind, str(exc)))
         threading.Thread(target=run, name='DayLens-AI-review', daemon=True).start()
         self.timer.start()
 
     def _poll(self):
         try:
-            success, result = self.results.get_nowait()
+            success, kind, result = self.results.get_nowait()
         except queue.Empty:
             return
         self.timer.stop()
@@ -74,13 +74,12 @@ class IntelligenceReviewBar(QWidget):
             self.status.setText(result)
             return
         if result.get('evidence_status') == 'stale':
-            self._stale_kind = self.period.currentData()
-            self.button.setText('重新分析旧数据')
+            self._stale_kinds.add(kind)
             self.status.setText('当前汇总基于旧数据；查看不扣费，重新分析会产生新请求')
         else:
-            self._stale_kind = None
-            self.button.setText('生成 / 查看智能复盘')
+            self._stale_kinds.discard(kind)
             self.status.setText('已保存，可重复查看；原生报告保持独立')
+        self._sync_button()
         dialog = QDialog(self)
         dialog.setWindowTitle('智能复盘与依据')
         dialog.resize(700, 500)

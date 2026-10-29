@@ -129,7 +129,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("DayLens")
         self.setStyleSheet(ui_style.get_global_style() + ui_style.get_input_style())
         self.resize(self.FIXED_SIZE)
-        self.setMinimumSize(QSize(800, 650))
+        # Keep the shell usable on a 1280x720 display at 150% scaling
+        # (roughly 853x480 logical pixels). Pages already scroll vertically.
+        self.setMinimumSize(QSize(720, 440))
         self.setWindowFlags(
             Qt.Window
             | Qt.WindowMinimizeButtonHint

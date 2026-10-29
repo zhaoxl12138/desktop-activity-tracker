@@ -1695,8 +1695,9 @@ class TrendChartWidget(QFrame):
                 if self._thirty_day_metric == "engaged"
                 else "每日有效时间"
             )
+            legend_color = COLORS["coding_green"]
             self._cmp_legend.setText(
-                f"<span style='color:{COLORS["coding_green"]}'>{label}</span>"
+                f"<span style='color:{legend_color}'>{label}</span>"
             )
             self._cmp_legend.setVisible(True)
 

@@ -109,6 +109,27 @@ def test_favorite_app_tie_break_is_stable_by_application_name():
     ) == {'name': 'Aardvark', 'seconds': 300}
 
 
+def test_favorite_app_strips_exe_suffix_from_display_name_without_mutating_session():
+    from daylens.services.dashboard_service import _favorite_app
+
+    captured_day = date(2026, 10, 29)
+    session = {
+        **_favorite_session('2026-10-29', 'Hades2.exe', 'gaming', engaged=300),
+        'display_name': 'Hades II.exe',
+    }
+
+    result = _favorite_app(
+        [session],
+        start=captured_day,
+        end=captured_day,
+        category_keys={'gaming'},
+        seconds_for=lambda row: row['engaged_seconds'],
+    )
+
+    assert result == {'name': 'Hades II', 'seconds': 300}
+    assert session['display_name'] == 'Hades II.exe'
+
+
 def test_history_metric_cell_elides_only_when_its_width_requires_it():
     app = application()
     cell = HistoryMetricCell('偏爱应用', elide_value=True)

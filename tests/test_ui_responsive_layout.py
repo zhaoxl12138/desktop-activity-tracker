@@ -4,7 +4,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, QRect, Qt, Signal
 from PySide6.QtWidgets import QApplication, QBoxLayout, QLabel
 import yaml
 
@@ -118,6 +118,24 @@ def test_initial_window_is_bounded_by_available_screen(tmp_path):
     assert window.width() <= max_initial_width
     assert window.height() <= max_initial_height
 
+    window.dashboard_refresh.shutdown(timeout_ms=1_000)
+    window.deleteLater()
+
+
+def test_initial_window_fits_1280x720_screen_at_150_percent_scale(tmp_path, monkeypatch):
+    app, window = _window(tmp_path)
+
+    class SmallLogicalScreen:
+        @staticmethod
+        def availableGeometry():
+            return QRect(0, 0, 853, 480)
+
+    monkeypatch.setattr(window, "screen", lambda: SmallLogicalScreen())
+    window._apply_initial_geometry()
+    app.processEvents()
+
+    assert window.width() <= int(853 * 0.95)
+    assert window.height() <= int(480 * 0.95)
     window.dashboard_refresh.shutdown(timeout_ms=1_000)
     window.deleteLater()
 

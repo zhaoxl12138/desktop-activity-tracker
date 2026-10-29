@@ -191,8 +191,8 @@ def test_homepage_shell_matches_reference_structure():
         )
         assert window.size().width() == expected_width
         assert window.size().height() == expected_height
-        assert window.minimumSize().width() == 800
-        assert window.minimumSize().height() == 650
+        assert window.minimumSize().width() == 720
+        assert window.minimumSize().height() == 440
         assert window.maximumSize().width() > 1100
         assert set(window.capsule_values) == {"total"}
         assert window.capsule_labels["total"].text() == "有效活动"

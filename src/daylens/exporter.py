@@ -4,6 +4,7 @@ import os
 import csv
 import io
 import logging
+import sqlite3
 import shutil
 import tempfile
 import unicodedata
@@ -83,7 +84,13 @@ def _intelligence_report_status(db_path: str, kind: str, period_end: str) -> str
                     start = end.replace(day=1)
                     dates = [(start + timedelta(days=i)).isoformat()
                              for i in range((end - start).days + 1)]
-                if stored != evidence_fingerprint(db_path, kind, dates):
+                try:
+                    current_fingerprint = evidence_fingerprint(
+                        db_path, kind, dates
+                    )
+                except (OSError, sqlite3.Error):
+                    current_fingerprint = None
+                if current_fingerprint and stored != current_fingerprint:
                     return "基于旧数据生成，可手动重新分析"
             return f"已生成于 {captured}" if captured else "已生成"
         if status == "pending":

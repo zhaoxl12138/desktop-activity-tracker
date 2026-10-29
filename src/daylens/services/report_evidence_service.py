@@ -38,7 +38,8 @@ def evidence_fingerprint(db_path: str, kind: str, dates: list[str]) -> str:
             """
             SELECT id, session_id, date, category_key, active_rule,
                    effective_seconds, engaged_seconds, passive_seconds,
-                   idle_seconds, metric_version, classification_version
+                   idle_seconds, metric_version, classification_version,
+                   classification_policy_version, classification_source
             FROM activity_sessions
             WHERE date BETWEEN ? AND ?
             ORDER BY id
@@ -57,13 +58,17 @@ def evidence_fingerprint(db_path: str, kind: str, dates: list[str]) -> str:
     for row in rows:
         raw_version = str(row["classification_version"] or "legacy")
         semantics = resolve_classification_semantics(raw_version)
+        policy_version = str(row["classification_policy_version"] or "")
+        source = str(row["classification_source"] or "")
         facts.append([
             int(row["id"]), str(row["session_id"] or ""), str(row["date"] or ""),
             str(row["category_key"] or ""), str(row["active_rule"] or ""),
             int(row["effective_seconds"] or 0), int(row["engaged_seconds"] or 0),
             int(row["passive_seconds"] or 0), int(row["idle_seconds"] or 0),
-            str(row["metric_version"] or "legacy"), semantics.policy_version,
-            semantics.source, raw_version,
+            str(row["metric_version"] or "legacy"),
+            policy_version or semantics.policy_version,
+            source or semantics.source,
+            raw_version,
         ])
     payload = {
         "version": FINGERPRINT_VERSION,
