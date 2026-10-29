@@ -583,8 +583,6 @@ def export_markdown(db_path, date_str, output_dir):
     lines.append(review)
     lines.append("")
 
-    from .services.behavior_profile_service import report_lines
-    lines.extend(report_lines(db_path, date_str))
     _atomic_write_text(filepath, "\n".join(lines))
 
     return filepath
@@ -1144,8 +1142,6 @@ def export_weekly_report(db_path, year, week_number, output_dir):
             "数据不足，请保持记录以获取分析报告。",
         ]
         lines.extend(["", *_weekly_goal_lines(db_path, dates)])
-        from .services.behavior_profile_service import report_lines
-        lines.extend(report_lines(db_path, dates[-1]))
         _atomic_write_text(filepath, "\n".join(lines))
         return filepath
 
@@ -1249,8 +1245,6 @@ def export_weekly_report(db_path, year, week_number, output_dir):
     lines.append(_gen_weekly_summary(stats, prev, best_days, peak_hours, sink, days_with_data))
     lines.append("")
 
-    from .services.behavior_profile_service import report_lines
-    lines.extend(report_lines(db_path, dates[-1]))
     _atomic_write_text(filepath, "\n".join(lines))
 
     return filepath
@@ -1295,8 +1289,6 @@ def export_monthly_report(db_path, year, month, output_dir):
             "",
             "数据不足，请保持记录以获取分析报告。",
         ]
-        from .services.behavior_profile_service import report_lines
-        lines.extend(report_lines(db_path, dates[-1]))
         _atomic_write_text(filepath, "\n".join(lines))
         return filepath
 
@@ -1445,8 +1437,6 @@ def export_monthly_report(db_path, year, month, output_dir):
     lines.append(_gen_monthly_summary(stats, prev, best_day, top_work_apps, days_with_data, total_days))
     lines.append("")
 
-    from .services.behavior_profile_service import report_lines
-    lines.extend(report_lines(db_path, dates[-1]))
     _atomic_write_text(filepath, "\n".join(lines))
 
     return filepath

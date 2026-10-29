@@ -28,6 +28,7 @@ class IntelligenceSettings(QGroupBox):
         self.directory = Path(directory or (paths.intelligence_dir if paths else Path(get_data_dir()) / 'intelligence'))
         self.results = queue.Queue()
         settings = load_settings(self.directory)
+        self._legacy_behavior_analysis_enabled = settings['behavior_analysis_enabled']
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 20, 16, 16)
         root.setSpacing(10)
@@ -40,9 +41,6 @@ class IntelligenceSettings(QGroupBox):
         self.reports = QCheckBox('自动汇总：每天23:00日报 · 周日周报 · 月末月报')
         self.reports.setChecked(settings['reports_enabled'])
         root.addWidget(self.reports)
-        self.behavior = QCheckBox('本地行为画像（离线分析，不产生API费用）')
-        self.behavior.setChecked(settings['behavior_analysis_enabled'])
-        root.addWidget(self.behavior)
         hint = QLabel('Flash非思考模式 · 最多5个标题一批 · 本地缓存复用 · 月预算内停止新请求')
         hint.setWordWrap(True)
         root.addWidget(hint)
@@ -140,7 +138,9 @@ class IntelligenceSettings(QGroupBox):
                 # Keep legacy keys off for rollback compatibility; no UI entry.
                 'task_analysis_enabled': False,
                 'task_cloud_enabled': False,
-                'behavior_analysis_enabled': self.behavior.isChecked(),
+                # Retired foreground feature: preserve the legacy value so
+                # saving unrelated AI settings does not rewrite old config.
+                'behavior_analysis_enabled': self._legacy_behavior_analysis_enabled,
                 'monthly_budget_micros': round(self.budget.value() * 1_000_000),
             })
             self._reload_worker()
