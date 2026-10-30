@@ -196,6 +196,7 @@ class MainWindow(QMainWindow):
                 self.db_path, self.reports_dir,
                 self.config.get("obsidian_output_path", "").strip(),
                 paths=self.paths,
+                background_tasks=self.background_tasks,
             ),
             "rules": RuleConfigPage(
                 self.config_path,

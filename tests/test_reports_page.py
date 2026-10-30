@@ -180,6 +180,83 @@ def test_selecting_report_updates_detail_panel_and_actions(tmp_path: Path):
     assert page.btn_sync_selected.isEnabled()
 
 
+def test_selected_report_is_previewed_and_compact_layout_can_return_to_list(tmp_path):
+    import time
+    root=tmp_path/'reports'
+    _create_report(root,'daily','2026-10-20.md','# 标题\n## 关键发现\n本地预览内容')
+    app=_app()
+    page=ReportsPage(str(tmp_path/'usage.db'),str(root))
+    page.resize(750,560)
+    page.show()
+    app.processEvents()
+    assert hasattr(page,'preview')
+    page.tab_daily.selectRow(0)
+    deadline=time.monotonic()+3
+    while '本地预览内容' not in page.preview.browser.toPlainText() and time.monotonic()<deadline:
+        app.processEvents()
+        time.sleep(.01)
+    assert '本地预览内容' in page.preview.browser.toPlainText()
+    assert page.detail_panel.isVisible()
+    assert not page.list_panel.isVisible()
+    page.btn_show_list.click()
+    app.processEvents()
+    assert page.list_panel.isVisible()
+    page.close()
+
+
+def test_manual_report_generation_runs_off_gui_thread(tmp_path,monkeypatch):
+    import threading
+    import time
+    app=_app()
+    monkeypatch.setattr(QMessageBox,'information',lambda *_a,**_k:None)
+    page=ReportsPage(str(tmp_path/'usage.db'),str(tmp_path/'reports'))
+    original_thread=threading.get_ident()
+    calls=[]
+    release=threading.Event()
+    def generate(*_args):
+        calls.append(threading.get_ident())
+        release.wait(2)
+        result=tmp_path/'reports'/'daily'/'2026-10-20.md'
+        result.parent.mkdir(parents=True,exist_ok=True)
+        result.write_text('# 后台生成',encoding='utf-8')
+        return str(result)
+    page._generate(generate,'日报')
+    assert hasattr(page,'background_tasks')
+    release.set()
+    deadline=time.monotonic()+3
+    while page._generation_jobs and time.monotonic()<deadline:
+        app.processEvents()
+        time.sleep(.01)
+    assert calls and calls[0]!=original_thread
+    assert not page._generation_jobs
+    page.close()
+
+
+def test_reenter_reports_resumes_discarded_preview_request(tmp_path):
+    import threading
+    import time
+    root=tmp_path/'reports'
+    _create_report(root,'daily','2026-10-20.md','# 返回页面恢复读取')
+    app=_app()
+    page=ReportsPage(str(tmp_path/'usage.db'),str(root))
+    page.show(); app.processEvents()
+    release=threading.Event()
+    original=page.preview.cache.load
+    def slow(path):
+        release.wait(2)
+        return original(path)
+    page.preview.cache.load=slow
+    page.tab_daily.selectRow(0)
+    page.deactivate()
+    page.activate()
+    release.set()
+    deadline=time.monotonic()+3
+    while '返回页面恢复读取' not in page.preview.browser.toPlainText() and time.monotonic()<deadline:
+        app.processEvents(); time.sleep(.01)
+    assert '返回页面恢复读取' in page.preview.browser.toPlainText()
+    page.close()
+
+
 def test_switching_report_type_clears_previous_selection(tmp_path: Path):
     reports_dir = tmp_path / "reports"
     _create_report(reports_dir, "daily", "2026-06-24.md")
@@ -220,6 +297,25 @@ def test_periodic_refresh_preserves_selected_report_when_list_is_unchanged(
     assert page.selected_report is not None
     assert page.selected_report["file_path"] == str(report_path)
     assert page.tab_daily.selectionModel().selectedRows()
+
+
+def test_report_refresh_detects_same_size_same_minute_replacement(tmp_path):
+    import time
+    root=tmp_path/'reports'
+    path=_create_report(root,'daily','2026-10-20.md','# 初始内容')
+    app=_app()
+    page=ReportsPage(str(tmp_path/'usage.db'),str(root))
+    page.show(); app.processEvents(); page.tab_daily.selectRow(0)
+    deadline=time.monotonic()+2
+    while '初始内容' not in page.preview.browser.toPlainText() and time.monotonic()<deadline:
+        app.processEvents(); time.sleep(.01)
+    path.write_text('# 更新内容',encoding='utf-8')
+    page.refresh()
+    deadline=time.monotonic()+2
+    while '更新内容' not in page.preview.browser.toPlainText() and time.monotonic()<deadline:
+        app.processEvents(); time.sleep(.01)
+    assert '更新内容' in page.preview.browser.toPlainText()
+    page.close()
 
 
 def test_refresh_restores_selected_report_after_another_file_is_added(

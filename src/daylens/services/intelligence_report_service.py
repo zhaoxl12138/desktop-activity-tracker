@@ -5,6 +5,9 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 import sqlite3
+import hashlib
+import json
+import re
 
 from .. import database, get_data_dir
 from ..utils import WORK_CATEGORY_KEYS, fmt_seconds
@@ -15,6 +18,9 @@ from .intelligence_reviews import IntelligenceReviews
 from .intelligence_state import load_settings, title_context
 from .intelligence_privacy import report_facts, privacy_revision
 from .intelligence_client import RequestDeferred
+
+
+REVIEW_FACTS_VERSION = 'review-facts-v1'
 
 
 def daily_facts(db_path, day, settings):
@@ -47,6 +53,27 @@ def daily_facts(db_path, day, settings):
         if identity:
             fact['session_refs'].append(identity)
     return sorted(grouped.values(), key=lambda x: -x['engaged_seconds'])[:20]
+
+
+def capture_review_sources(directory, facts):
+    """Bind only a complete set of exact excerpts, never a later cache state."""
+    from .intelligence_reviews import _compressed_summary
+    sources = []
+    for fact in facts:
+        identity = str(fact.get('id', ''))
+        if not re.fullmatch(r'(daily|weekly):[0-9W-]+', identity):
+            return []
+        source_kind, period = identity.split(':', 1)
+        name = f'{source_kind}-{period}.json'
+        try:
+            source = json.loads((Path(directory) / name).read_text(encoding='utf-8'))
+            if _compressed_summary(source, source_kind, period) != fact:
+                return []
+            digest = hashlib.sha256(json.dumps(source,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
+            sources.append({'name':name, 'digest':digest})
+        except (OSError, ValueError, TypeError, KeyError):
+            return []
+    return sources
 
 
 def generate_budget_review(
@@ -102,6 +129,9 @@ def generate_budget_review(
     facts = daily_facts(db_path, day, settings) if kind == 'daily' else reviews.compressed_facts(kind, day)
     # Session references remain local. Opaque fact IDs are sufficient in prompts.
     payload_facts = [{k: v for k, v in f.items() if k != 'session_refs'} for f in facts]
+    # Capture local dependency identities before sending. These hashes are
+    # never added to the cloud payload and do not create additional requests.
+    sources = capture_review_sources(reviews.directory, facts) if kind != 'daily' else []
     try:
         result = reviews.generate(
             kind,
@@ -123,6 +153,11 @@ def generate_budget_review(
         from .intelligence_state import atomic_json
         result['evidence_fingerprint'] = current_fingerprint
         result['evidence_status'] = 'current'
+        from .intelligence_reviews import REVIEW_PROMPT
+        result['facts_version'] = REVIEW_FACTS_VERSION
+        result['prompt_hash'] = hashlib.sha256(REVIEW_PROMPT.encode()).hexdigest()
+        if kind != 'daily':
+            result['source_reviews'] = sources
         if kind == 'daily':
             result['local_evidence'] = {f['id']: f['session_refs'] for f in facts}
         atomic_json(reviews.path(kind, day), result)

@@ -110,6 +110,7 @@ def _report_row(file_path: str, subdir: str) -> dict:
     filename = os.path.basename(file_path)
     label = filename.replace(".md", "").replace("_weekly", "").replace("_monthly", "")
     size_bytes = os.path.getsize(file_path)
+    modified_ns = os.stat(file_path).st_mtime_ns
     size_kb = max(1, (size_bytes + 1023) // 1024)
     modified_text = datetime.fromtimestamp(os.path.getmtime(file_path)).strftime("%Y-%m-%d %H:%M")
     return {
@@ -118,6 +119,8 @@ def _report_row(file_path: str, subdir: str) -> dict:
         "size_text": f"{size_kb} KB",
         "file_path": os.path.abspath(file_path),
         "modified_text": modified_text,
+        "modified_ns": modified_ns,
+        "size_bytes": size_bytes,
         "report_type": _REPORT_TYPE_NAMES.get(subdir, "报告"),
     }
 

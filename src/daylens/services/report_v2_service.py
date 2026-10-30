@@ -60,10 +60,22 @@ def _goals(db_path: str, dates: list[str], rows: list[dict]) -> dict:
                 assignments = TaskDecisionStore(store.directory).load()["assignments"]
             result = build_period_review(dates, state, rows, assignments)
             if state["revision"] == store.load()["revision"]:
-                return dict(result, status="ready", revision=state["revision"])
+                return dict(
+                    result,
+                    status="ready",
+                    revision=state["revision"],
+                    plan_fingerprint=goal_plan_fingerprint(state, dates),
+                )
     except (OSError, RuntimeError, ValueError, KeyError):
         pass
     return {"status": "unavailable", "revision": None, "rows": [], "goal_count": 0}
+
+
+def goal_plan_fingerprint(state, dates):
+    selected = {day: state["days"].get(day, []) for day in dates}
+    return hashlib.sha256(
+        json.dumps(selected, ensure_ascii=True, sort_keys=True).encode()
+    ).hexdigest()
 
 
 def _half_hours(rows: list[dict]) -> list[dict]:

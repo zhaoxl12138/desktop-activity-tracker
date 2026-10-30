@@ -27,6 +27,19 @@ def duration(seconds) -> str:
     )
 
 
+def known_attention(summary, field):
+    if not summary.get("session_count") and not summary.get("legacy_log_sample_count"):
+        return "未知（无记录）"
+    value = fmt_seconds(summary.get(field, 0))
+    if (
+        summary.get("legacy_session_count")
+        or summary.get("legacy_log_sample_count")
+        or summary.get("anomaly_count")
+    ):
+        return "已核实 " + value + "（其余未知）"
+    return value
+
+
 def render_report(model: dict) -> str:
     from ..exporter import _aggregate_report_categories
 
@@ -40,6 +53,8 @@ def render_report(model: dict) -> str:
         "dates": dates,
         "native_fingerprint": model["native_fingerprint"],
         "goal_revision": model["goals"]["revision"],
+        "goal_dates": model["observed_dates"],
+        "goal_fingerprint": model["goals"].get("plan_fingerprint"),
     }
     lines = [
         f"# DayLens · {label}",
@@ -76,10 +91,10 @@ def render_report(model: dict) -> str:
         "## 总览",
         "",
         f"- 有效活动：{fmt_seconds(totals['effective_seconds'])}",
-        f"- 工作主动参与：{fmt_seconds(totals['work_engaged_seconds'])}",
+        f"- 工作主动参与：{known_attention(totals, 'work_engaged_seconds')}",
         f"- 娱乐有效活动：{fmt_seconds(model['entertainment_seconds'])}",
-        f"- 参与时间：{fmt_seconds(totals['engaged_seconds'])}",
-        f"- 被动媒体：{fmt_seconds(totals['passive_seconds'])}",
+        f"- 参与时间：{known_attention(totals, 'engaged_seconds')}",
+        f"- 被动媒体：{known_attention(totals, 'passive_seconds')}",
         f"- 挂机/空闲时间：{fmt_seconds(totals['idle_seconds'])}",
         f"- 数据可信度：{trust_level}" + (f"（{text(reason)}）" if reason else ""),
         f"- 有记录日期：{len(totals['dates_with_data'])}/{len(model['observed_dates'])} 天（不代表全天覆盖）",
@@ -204,7 +219,7 @@ def render_report(model: dict) -> str:
     for day in model["stats"]["daily"]:
         recorded = bool(day["total_samples"])
         lines.append(
-            f"| {day['date']} | {duration(day['effective_seconds']) if recorded else '无记录'} | {duration(day['work_engaged_seconds']) if recorded else '未知'} |"
+            f"| {day['date']} | {duration(day['effective_seconds']) if recorded else '无记录'} | {known_attention(day, 'work_engaged_seconds') if recorded else '未知'} |"
         )
     lines += [
         "",

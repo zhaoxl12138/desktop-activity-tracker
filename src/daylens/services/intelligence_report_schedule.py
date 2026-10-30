@@ -166,7 +166,7 @@ def _run(db_path, reports_dir, now, directory, generate):
                         status = '部分智能汇总未完成，将于次日低频补生成'
                 else:
                     path = ensure_native_report(db_path, reports_dir, kind, day)
-                    attach_summary(path, render_review(result))
+                    attach_summary(path, render_review(result), result)
                     generated.append(str(path))
                     state['done'][identity] = 'ready'
                     failures.pop(identity, None)

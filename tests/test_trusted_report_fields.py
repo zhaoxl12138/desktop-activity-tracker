@@ -282,9 +282,12 @@ def test_daily_markdown_reports_real_attention_trust_scenarios(
         assert f"- 数据可信度：{expected_level}（" not in report
     else:
         assert f"- 数据可信度：{expected_level}（{expected_reason}）" in report
-    if arrange in {"legacy-session", "legacy-log", "empty"}:
-        assert "- 参与时间：0秒" in report
-        assert "- 被动媒体：0秒" in report
+    if arrange in {"legacy-session", "legacy-log"}:
+        assert "- 参与时间：已核实 0秒（其余未知）" in report
+        assert "- 被动媒体：已核实 0秒（其余未知）" in report
+    elif arrange == 'empty':
+        assert "- 参与时间：未知（无记录）" in report
+        assert "- 被动媒体：未知（无记录）" in report
 
 
 def test_daily_csv_keeps_old_columns_and_appends_trusted_values(tmp_path: Path):
