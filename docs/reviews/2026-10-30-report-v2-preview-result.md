@@ -59,3 +59,14 @@
 ## 独立复核与补修
 
 独立只读复核发现并补齐四处边界：页面切回恢复读取、慢 AI 核验不占用新正文工作器、实际脱敏事实/构建版本/隐私及提示词身份核验、原生目标小节的只读过期检查。均先补失败测试再修复；复核者再次独立运行相关测试为 `54 passed`，确认原问题已消除。旧记录分项使用“已核实下限／其余未知”，无记录显示未知，不假装为真实零。
+
+## 主分支与正式程序发布
+
+- 本地主分支从 `03c666f` 快进至 `2ebcd24`，包含 `e845cff`（报告正文）、`bbc69b7`（预览与证据核验）及 `2ebcd24`（验收工具与记录）；本轮未 push。
+- 合并后在主目录再次运行全量测试：`1423 passed in 50.14s`；`compileall`、独立 GUI smoke、Ruff F821/E9 及 `git diff --check` 均通过。
+- `python tools/build_release.py` 退出码 0，隔离 Qt/凭据 smoke 通过；旧实例确认 `status=clean`、退出码 0 后才替换程序，没有强制结束进程。
+- 正式程序路径：`D:\OfficeSoftware\DayLens\release\DayLens.exe`；SHA256 为 `F40F1CD7A2137E3F0DBAA4398C576291D992E949BFB39C5385110525159EF858`，与 `dist` 一致。
+- 上版程序完整保留于 `release_previous`，SHA256 为 `610FDF02F09B2D42CD20C327BF98B0B5423F3401E80C757008E2A075F5712FE4`；更早回退版本移存 `release_previous_20261030_before_report_v2`，未删除。
+- 2026-10-30 09:16:01 启动正式版；单实例 PID 72176，窗口标题 `DayLens`、非零窗口句柄、`Responding=true`；09:17:01 运行心跳已更新为 `phase=running`。
+- 真实窗口点选抽查未完成：电脑工具首次捕获返回 `FrameArrived timed out: timed out waiting on channel`，刷新窗口绑定重试后返回 `window capture timed out: timed out waiting on channel`。按工具恢复规则停止点选，不将此项记为通过；上述隔离 GUI、布局和发布 smoke 结果仍有效。
+- 主目录未跟踪的原方案草稿经逐字比较，仅确认状态标题不同，移存 `data/backups/report-v2-proposal-before-implementation-20261030.md`；其他用户未跟踪文件原样保留。
