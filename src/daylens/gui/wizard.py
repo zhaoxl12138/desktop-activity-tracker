@@ -131,10 +131,7 @@ class SetupWizard(QDialog):
         title.setStyleSheet(f"font-size: 20px; font-weight: 800; color: {COLORS['text']};")
         root.addWidget(title)
 
-        hint = QLabel("自动扫描已安装软件并分类，点击可切换分类，确认后开始记录。")
-        hint.setWordWrap(True)
-        hint.setStyleSheet(f"font-size: 13px; color: {COLORS['text_secondary']};")
-        root.addWidget(hint)
+        title.setToolTip("自动扫描已安装软件并分类，点击可切换分类，确认后开始记录。")
 
         # Progress bar during scan
         self._progress = QProgressBar()

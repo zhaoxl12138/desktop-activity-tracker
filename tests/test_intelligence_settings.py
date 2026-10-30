@@ -19,7 +19,7 @@ def test_saved_key_is_visibly_masked_after_settings_restart(tmp_path, monkeypatc
     assert card.key.text() == ''
     assert '••••••••' in card.key.placeholderText()
     assert '已安全保存' in card.key_state.text()
-    assert '替换' in card.key_state.text()
+    assert '替换' in card.key.toolTip()
     assert 'not-exposed' not in card.key.placeholderText()
     assert 'not-exposed' not in card.key_state.text()
 

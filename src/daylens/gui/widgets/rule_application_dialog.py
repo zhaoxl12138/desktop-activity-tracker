@@ -13,11 +13,9 @@ class RuleApplicationDialog(QDialog):
         self.setStyleSheet(style.get_global_style()+style.get_input_style())
         root = QVBoxLayout(self)
         root.setSpacing(10)
-        hint = QLabel('选择已有应用，也可输入进程名或浏览可执行文件。')
-        hint.setWordWrap(True)
-        root.addWidget(hint)
         row = QHBoxLayout()
         self.application = QComboBox()
+        self.application.setToolTip('选择已有应用，也可输入进程名或浏览可执行文件。')
         self.application.setEditable(True)
         self.application.setInsertPolicy(QComboBox.NoInsert)
         unique = {str(p).strip().casefold():str(p).strip() for p in processes if str(p).strip()}
@@ -29,16 +27,19 @@ class RuleApplicationDialog(QDialog):
         browse.clicked.connect(self._browse)
         row.addWidget(browse)
         root.addLayout(row)
-        self.title_label = QLabel('窗口标题（可选，仅测试网页内容时填写）')
+        self.title_label = QLabel('窗口标题（可选）')
+        self.title_label.setToolTip('仅测试网页内容时填写；留空即可按应用测试。')
         self.title = QLineEdit()
         self.title.setPlaceholderText('留空即可按应用测试')
         self.title_label.setVisible(testing)
         self.title.setVisible(testing)
         root.addWidget(self.title_label)
         root.addWidget(self.title)
-        self.notice = QLabel('仅测试当前本地草稿，不包含人工纠错或AI，不会保存规则。' if testing else '只添加到当前草稿，保存后才生效。')
+        self.setToolTip('仅测试当前本地草稿，不包含人工纠错或AI，不会保存规则。' if testing else '只添加到当前草稿，保存后才生效。')
+        self.notice = QLabel()
         self.notice.setWordWrap(True)
         root.addWidget(self.notice)
+        self.notice.hide()
         buttons = QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setText('测试' if testing else '添加')
         buttons.button(QDialogButtonBox.Cancel).setText('取消')
@@ -55,6 +56,7 @@ class RuleApplicationDialog(QDialog):
     def accept(self):
         if not self.selected_process():
             self.notice.setText('请先选择应用或填写进程名。')
+            self.notice.show()
             return
         super().accept()
 

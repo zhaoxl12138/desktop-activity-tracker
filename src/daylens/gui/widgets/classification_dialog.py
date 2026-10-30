@@ -64,15 +64,16 @@ class ClassificationDialog(ChoiceDialog):
         self.scope_combo.addItem('仅当前完整标题', 'exact')
         self.root.addWidget(self.scope_combo)
         self.add_label('原分类：' + dict((key,name) for name,key in category_choices(categories)).get(current_category, current_category))
-        self.add_label('保存后对后续记录生效')
-        self.media_hint = self.add_label('影音分类可能影响后续被动播放计时')
+        self.scope_combo.setToolTip('保存后对后续记录生效；当天修正范围以保存反馈为准。')
+        self.media_hint = QLabel('影音分类可能影响后续被动播放计时', self)
+        self.media_hint.hide()
         self.category_combo.currentIndexChanged.connect(self._refresh_hint)
         self._refresh_hint()
         self.root.removeWidget(self.buttons)
         self.root.addWidget(self.buttons)
 
     def _refresh_hint(self):
-        self.media_hint.setVisible(self.selected_category() == 'video')
+        self.category_combo.setToolTip(self.media_hint.text() if self.selected_category() == 'video' else '')
 
     def selected_scope(self):
         return self.scope_combo.currentData()

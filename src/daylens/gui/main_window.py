@@ -658,7 +658,8 @@ class MainWindow(QMainWindow):
             if nav_key == key:
                 self.stack.setCurrentIndex(index)
                 self.lbl_page_title.setText(title)
-                self.lbl_today.setText(self._today_text() if key == "today" else hint)
+                self.lbl_today.setText(self._today_text() if key == "today" else "")
+                self.lbl_today.setVisible(key == "today")
                 self._summary_capsule.show()
                 for summary_item in self.summary_capsule_items:
                     summary_item.setVisible(key == "today")
@@ -683,14 +684,13 @@ class MainWindow(QMainWindow):
         stats = self.pages["stats"]
         if stats.tabs.currentWidget() is self.pages["goals"]:
             self.lbl_page_title.setText("设置目标")
-            self.lbl_today.setText("管理每天的投入与产出")
         elif stats.tabs.currentWidget() is self.pages["live"]:
             self.lbl_page_title.setText("实时监控")
-            self.lbl_today.setText("诊断当前窗口与记录状态")
             self._deliver_live_sample()
         else:
             self.lbl_page_title.setText("数据统计")
-            self.lbl_today.setText("按软件或分类查看时间统计")
+        self.lbl_today.clear()
+        self.lbl_today.hide()
 
     def navigate_to(self, key: str, *, tab: str | None = None) -> None:
         """Navigate by stable page key; optional tab keeps callers index-free."""

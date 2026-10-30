@@ -99,10 +99,6 @@ class SettingsPage(QWidget):
         g1l.setContentsMargins(16, 20, 16, 16)
         g1l.setSpacing(12)
 
-        basic_hint = QLabel("调整采样频率、空闲判定和数据输出路径。")
-        basic_hint.setStyleSheet(f"font-size: 12px; color: {ui_style.COLORS['text_muted']};")
-        g1l.addWidget(basic_hint)
-
         h1 = QHBoxLayout()
         h1.setSpacing(10)
         h1.addWidget(QLabel("采样间隔 (秒):"))
@@ -135,15 +131,10 @@ class SettingsPage(QWidget):
         goals_layout.setContentsMargins(16, 20, 16, 16)
         goals_layout.setSpacing(10)
 
-        goals_hint = QLabel("工作目标根据近期同类日自动生成；娱乐边界包含被动视频时长。设为 0 表示不设置。")
-        goals_hint.setWordWrap(True)
-        goals_hint.setTextFormat(Qt.PlainText)
-        goals_hint.setStyleSheet(f"font-size: 12px; color: {ui_style.COLORS['text_muted']};")
-        goals_layout.addWidget(goals_hint)
-
         weekday_row = QHBoxLayout()
         weekday_row.addWidget(QLabel("工作日娱乐边界:"))
         self.spin_weekday_entertainment = QSpinBox()
+        self.spin_weekday_entertainment.setToolTip("包含被动视频时长；设为 0 表示不设置。")
         self.spin_weekday_entertainment.setRange(0, 720)
         self.spin_weekday_entertainment.setSingleStep(15)
         self.spin_weekday_entertainment.setSuffix(" 分钟")
@@ -158,6 +149,7 @@ class SettingsPage(QWidget):
         weekend_row = QHBoxLayout()
         weekend_row.addWidget(QLabel("周末娱乐边界:"))
         self.spin_weekend_entertainment = QSpinBox()
+        self.spin_weekend_entertainment.setToolTip("包含被动视频时长；设为 0 表示不设置。")
         self.spin_weekend_entertainment.setRange(0, 720)
         self.spin_weekend_entertainment.setSingleStep(15)
         self.spin_weekend_entertainment.setSuffix(" 分钟")
@@ -177,11 +169,8 @@ class SettingsPage(QWidget):
         gsl.setContentsMargins(16, 20, 16, 16)
         gsl.setSpacing(8)
 
-        startup_hint = QLabel("启用后 DayLens 将随系统自动启动并最小化到托盘。")
-        startup_hint.setStyleSheet(f"font-size: 12px; color: {ui_style.COLORS['text_muted']};")
-        gsl.addWidget(startup_hint)
-
         self.chk_startup = QCheckBox("开机自启")
+        self.chk_startup.setToolTip("随系统自动启动并最小化到托盘。")
         self.chk_startup.setChecked(self.config.get("startup_enabled", False))
         self.chk_startup.setStyleSheet(
             f"font-size: 14px; font-weight: 700; color: {ui_style.COLORS['text']};"
@@ -238,11 +227,8 @@ class SettingsPage(QWidget):
         g3l.setContentsMargins(16, 20, 16, 16)
         g3l.setSpacing(10)
 
-        data_hint = QLabel("可按需清理 30 天前的采样记录，汇总统计不受影响。")
-        data_hint.setStyleSheet(f"font-size: 12px; color: {ui_style.COLORS['text_muted']};")
-        g3l.addWidget(data_hint)
-
         btn_clean = QPushButton("清理30天前记录")
+        btn_clean.setToolTip("清理 30 天前的采样记录，汇总统计不受影响；执行前仍需确认。")
         btn_clean.setStyleSheet(ui_style.get_button_secondary_style())
         btn_clean.setCursor(Qt.PointingHandCursor)
         btn_clean.clicked.connect(self._clean_old)

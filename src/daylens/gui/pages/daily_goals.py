@@ -83,9 +83,6 @@ class DailyGoalsPage(QWidget):
         title = QLabel("设置目标")
         title.setStyleSheet(f"font-size: 22px; font-weight: 700; color: {ui_style.COLORS['text']};")
         heading.addWidget(title)
-        subtitle = QLabel("管理每天的投入与产出")
-        subtitle.setStyleSheet(f"font-size: 13px; color: {ui_style.COLORS['text_secondary']};")
-        heading.addWidget(subtitle)
         header.addLayout(heading)
         header.addStretch()
         self.new_goal_button = QPushButton()
@@ -130,9 +127,6 @@ class DailyGoalsPage(QWidget):
         self.next_button.clicked.connect(lambda: self.day_picker.setDate(self.day_picker.date().addDays(1)))
         self.today_button.clicked.connect(lambda: self.day_picker.setDate(QDate.currentDate()))
         toolbar.addStretch()
-        self.limit_label = QLabel("每日上限 3 项")
-        self.limit_label.setStyleSheet(f"color: {ui_style.COLORS['text_secondary']};")
-        toolbar.addWidget(self.limit_label)
         self.refresh_button = QToolButton()
         self.refresh_button.setText("↻")
         self.refresh_button.setToolTip("刷新所选日期")
@@ -220,15 +214,14 @@ class DailyGoalsPage(QWidget):
         empty_actions_enabled = state not in ("loading", "unavailable") and not self._saving
         self.empty_time_button.setEnabled(empty_actions_enabled)
         self.empty_outcome_button.setEnabled(empty_actions_enabled)
-        self.new_goal_button.setToolTip("每天最多 3 项目标" if len(goals) >= 3 else "")
+        self.new_goal_button.setToolTip("每天最多 3 项目标；时间仅统计可信主动参与，成果由你手动确认。")
         self.status.setText(
             "正在加载所选日期目标…" if state == "loading"
             else "目标数据暂不可读；已停止写入。可尝试刷新。" if state == "unavailable"
             else "正在保存目标…" if self._saving
-            else "今天尚无目标，最多设置 3 项" if not goals and self.selected_day() == date.today().isoformat()
-            else "所选日期尚无目标" if not goals
-            else "时间只统计可信主动参与；成果仅由你手动确认"
+            else ""
         )
+        self.status.setVisible(bool(self.status.text()))
         self.empty_state.title.setText(
             "今天还没有设置目标" if self.selected_day() == date.today().isoformat()
             else f"{self.selected_day()} 没有目标记录"

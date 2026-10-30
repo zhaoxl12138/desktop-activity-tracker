@@ -40,7 +40,7 @@ def test_application_add_remove_changes_draft_only_and_preserves_keywords(tmp_pa
         assert page._dirty
         assert page.applications_list.count() == 3
         assert page.applications_list.currentItem().text() == 'example.exe'
-        assert '3 个应用' in page.match_hint.text()
+        assert '3 个应用' in page.application_heading.text()
         page._append_application('EXAMPLE.EXE')
         assert page.applications_list.count() == 3
         page.applications_list.setCurrentRow(2)

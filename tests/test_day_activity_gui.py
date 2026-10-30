@@ -260,7 +260,8 @@ def test_only_short_events_explain_filter_instead_of_looking_like_no_records():
     try:
         wait_for(application, lambda: dialog.model.get("status") == "ready")
         assert dialog.events_model.rowCount() == 0
-        assert "显示全部事件" in dialog.filter_hint.text()
+        assert "暂无符合筛选" in dialog.filter_hint.text()
+        assert "5分钟" in dialog.show_all.toolTip()
         assert not dialog.filter_hint.isHidden()
         dialog.show_all.setChecked(True)
         assert dialog.events_model.rowCount() == 1
@@ -350,8 +351,8 @@ def test_dialog_failure_is_retryable_and_empty_does_not_claim_idle():
         assert dialog.refresh_button.isEnabled()
         dialog.refresh_button.click()
         wait_for(application, lambda: dialog.model.get("status") == "empty")
-        assert "暂无可展开" in dialog.status_label.text()
-        assert "不代表全天空闲" in dialog.status_label.text()
+        assert "暂无会话记录" in dialog.status_label.text()
+        assert "不代表全天空闲" in dialog.status_label.toolTip()
     finally:
         dialog.close()
 

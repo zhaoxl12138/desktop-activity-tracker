@@ -139,11 +139,11 @@ class DayActivityDialog(QDialog):
         self.body.addLayout(timeline_controls)
         self.timeline = DayActivityCategoryTimeline()
         self.body.addWidget(self.timeline)
-        self._timeline_help = "空闲／高空闲：留白　未来：点纹　异常：斜纹　无记录：底色（不等于空闲）"
-        self.help_label = QLabel(self._timeline_help)
-        self.help_label.setWordWrap(True)
-        self.help_label.setStyleSheet(f"color: {style.COLORS['text_secondary']};")
-        self.body.addWidget(self.help_label)
+        self._timeline_help = "色块为前台范围，非全程有效。空闲／高空闲：留白；未来：点纹；异常：斜纹；无记录：底色（不等于空闲）。"
+        # Keep the legacy help handle for selection integrations, outside layout.
+        self.help_label = QLabel(self._timeline_help, self)
+        self.help_label.hide()
+        self.timeline.setToolTip(self._timeline_help)
         self.hidden_evidence_label = QLabel()
         self.hidden_evidence_label.setWordWrap(True)
         self.hidden_evidence_label.setStyleSheet(
@@ -363,11 +363,10 @@ class DayActivityDialog(QDialog):
             hidden = self.timeline.hidden_summary()
             if hidden["count"]:
                 self.hidden_evidence_label.setText(
-                    f"时间轴隐藏 {hidden['count']} 段高空闲前台记录，"
-                    f"覆盖 {fmt_seconds(hidden['foreground_seconds'])}，"
-                    f"其中有效活动 {fmt_seconds(hidden['effective_seconds'])}；"
-                    "事件明细仍完整保留。"
+                    f"隐藏 {hidden['count']} 段高空闲记录 · 覆盖 {fmt_seconds(hidden['foreground_seconds'])}"
+                    f" · 有效 {fmt_seconds(hidden['effective_seconds'])}"
                 )
+                self.hidden_evidence_label.setToolTip("仅在时间轴隐藏，事件明细和原始统计仍完整保留。")
                 self.hidden_evidence_label.show()
             else:
                 self.hidden_evidence_label.hide()
@@ -379,8 +378,8 @@ class DayActivityDialog(QDialog):
     def _display_status(self, result, day):
         parsed = date.fromisoformat(day)
         prefix = f"{parsed.year}年{parsed.month}月{parsed.day}日 · 星期{'一二三四五六日'[parsed.weekday()]}"
-        message = {"unavailable": "读取失败，请点击刷新重试；正常记录不受影响。",
-                   "empty": "暂无可展开的会话记录，不代表全天空闲。"}.get(result.get("status"), "")
+        message = {"unavailable": "读取失败，请刷新重试。",
+                   "empty": "暂无会话记录"}.get(result.get("status"), "")
         captured = str(result.get("captured_at") or "").replace("T", " ")
         last = str(result.get("last_recorded_at") or "").replace("T", " ")
         if not message:
@@ -390,6 +389,8 @@ class DayActivityDialog(QDialog):
             message += f"\n{warnings[0]}" + (f"（共{len(warnings)}项，悬停查看）" if len(warnings) > 1 else "")
         self.status_label.setText(prefix + "　" + message)
         details = f"{prefix}\n读取于 {captured or '—'}\n最后记录 {last or '—'}\n" + "\n".join(warnings)
+        if result.get('status') == 'empty':
+            details += '\n暂无会话记录，不代表全天空闲。'
         self.status_label.setToolTip("<qt>" + html.escape(details).replace("\n", "<br>") + "</qt>")
 
     def _render_events(self, *_args):
@@ -404,7 +405,8 @@ class DayActivityDialog(QDialog):
         category = self.category_buttons.get(self.selected_category)
         category_name = category.text() if category is not None else "全部分类"
         self.events_heading.setText(f"全天事件 · {category_name} · {suffix}（{len(self._visible_events)}）")
-        self.filter_hint.setText("今天没有有效活动达到5分钟的事件，可勾选“显示全部事件”查看短片段。")
+        self.filter_hint.setText("暂无符合筛选的事件")
+        self.show_all.setToolTip("默认只显示有效活动达到5分钟的事件；勾选后查看全部短片段。")
         self.filter_hint.setVisible(bool(self.model.get("events") and not self._visible_events))
         with QSignalBlocker(self.events_table.selectionModel()):
             self.events_model.set_events(self._visible_events)
@@ -422,6 +424,7 @@ class DayActivityDialog(QDialog):
                 self.help_label.setText("此记录空闲占比超过70%，未在时间轴绘制；仍保留在事件明细和统计中。")
         else:
             self.help_label.setText(self._timeline_help)
+        self.timeline.setToolTip(self.help_label.text())
 
     def _select_event(self):
         row = self.events_table.currentIndex().row()

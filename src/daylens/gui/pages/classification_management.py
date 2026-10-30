@@ -55,14 +55,12 @@ class ClassificationManagementPage(QWidget):
         self.tabs.addTab(pending, '待确认')
         manual = QWidget()
         layout = QVBoxLayout(manual)
-        self.manual_hint = QLabel(
+        self._manual_scope_help = (
             '纠正会同步修正当天同应用、同标题记录；普通应用自动加入本地规则，'
             '通用浏览器仅保存标题规则。'
         )
-        self.manual_hint.setWordWrap(True)
-        self.manual_hint.setTextFormat(Qt.PlainText)
-        layout.addWidget(self.manual_hint)
         self.table = QTableWidget(0, 7)
+        self.table.setToolTip(self._manual_scope_help)
         self.table.setHorizontalHeaderLabels(['应用','标题 / 示例','分类','范围 / 关联','状态','命中','最近命中'])
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.SingleSelection)
@@ -83,9 +81,10 @@ class ClassificationManagementPage(QWidget):
             actions.addWidget(button)
         layout.addLayout(actions)
         layout.addStretch(1)
-        self.status = QLabel('等待操作')
+        self.status = QLabel()
         self.status.setTextFormat(Qt.PlainText)
         self.status.setWordWrap(True)
+        self.status.hide()
         self.tabs.addTab(manual, '人工纠错')
         rules_scroll = QScrollArea()
         rules_scroll.setWidgetResizable(True)
@@ -109,11 +108,13 @@ class ClassificationManagementPage(QWidget):
 
     def _saved_status(self):
         self.status.setText(self.live.correction_status.text())
+        self.status.setVisible(bool(self.status.text()))
         self.retry.show()
         self.refresh()
 
     def on_classification_applied(self, revision):
         self.status.setText(self.live.correction_status.text())
+        self.status.setVisible(bool(self.status.text()))
         self.retry.setVisible(not self.live.apply_retry_button.isHidden())
 
     def showEvent(self, event):
@@ -130,6 +131,7 @@ class ClassificationManagementPage(QWidget):
             self.refresh()
         except Exception as exc:
             self.status.setText('读取分类状态失败：'+str(exc))
+            self.status.show()
 
     def refresh(self):
         if hasattr(self.rules_editor,'categories'):
@@ -179,6 +181,7 @@ class ClassificationManagementPage(QWidget):
             result = command(self.live._review_directory(), *args)
             if result is False:
                 self.status.setText('没有可更新的决定或可撤销的操作')
+                self.status.show()
                 return
             self.live._decision_saved('分类决定已更新')
             self.refresh()

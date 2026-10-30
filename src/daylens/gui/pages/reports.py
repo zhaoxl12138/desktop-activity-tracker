@@ -47,6 +47,7 @@ class ReportsPage(QWidget):
         self._owns_tasks = background_tasks is None
         self.background_tasks = background_tasks or BackgroundTaskQueue(self)
         self._generation_jobs = {}
+        self._generation_errors = {}
         self.background_tasks.task_completed.connect(self._generation_completed)
         self.background_tasks.task_failed.connect(self._generation_failed)
 
@@ -61,12 +62,6 @@ class ReportsPage(QWidget):
         from ...time_model import TIME_DEFINITION
         title.setToolTip(TIME_DEFINITION)
 
-        subtitle = QLabel("生成、查看和导出你的时间报告。")
-        self.subtitle = subtitle
-        subtitle.setStyleSheet(
-            f"font-size: 12px; color: {ui_style.COLORS['text_muted']};"
-        )
-        layout.addWidget(subtitle)
         self.generation_bar = self._build_generation_bar()
         layout.addWidget(self.generation_bar)
         self.automation_status = QLabel()
@@ -75,6 +70,10 @@ class ReportsPage(QWidget):
         self.automation_status.setStyleSheet(
             f"color: {ui_style.COLORS['text_secondary']}; font-size: 12px;")
         layout.addWidget(self.automation_status)
+        self.automation_status.hide()
+        self._status_timer = QTimer(self)
+        self._status_timer.setSingleShot(True)
+        self._status_timer.timeout.connect(self.automation_status.hide)
 
         content = QHBoxLayout()
         content.setSpacing(14)
@@ -222,16 +221,12 @@ class ReportsPage(QWidget):
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(14,12,14,12)
         layout.setSpacing(8)
-        self.detail_eyebrow = QLabel("当前选中")
-        self.detail_eyebrow.setStyleSheet(
-            f"font-size:12px;color:{ui_style.COLORS['text_muted']};")
-        layout.addWidget(self.detail_eyebrow)
         self.detail_title = QLabel("选择一份报告")
         self.detail_title.setTextFormat(Qt.PlainText)
         self.detail_title.setWordWrap(True)
         self.detail_title.setStyleSheet(f"font-size:18px;font-weight:800;color:{ui_style.COLORS['text']};")
         layout.addWidget(self.detail_title)
-        self.detail_meta = QLabel("从左侧列表选择报告后，可以下载、打开或同步。")
+        self.detail_meta = QLabel()
         self.detail_meta.setTextFormat(Qt.PlainText)
         self.detail_meta.setWordWrap(True)
         self.detail_meta.setStyleSheet(f"font-size:12px;color:{ui_style.COLORS['text_secondary']};")
@@ -247,10 +242,8 @@ class ReportsPage(QWidget):
 
     def _apply_responsive(self):
         compact = self.width() < 1000
-        self.subtitle.setVisible(not compact)
         self.detail_panel.setFixedWidth(210 if compact else 280)
-        self.detail_meta.setVisible(not compact)
-        self.detail_eyebrow.setVisible(not compact)
+        self.detail_meta.setVisible(not compact and bool(self.selected_reports))
         self.tab_daily.setColumnHidden(1,compact)
         self.tab_weekly.setColumnHidden(1,compact)
         self.tab_monthly.setColumnHidden(1,compact)
@@ -319,7 +312,9 @@ class ReportsPage(QWidget):
 
     def refresh(self, force_subdir: str | None = None):
         from ...services.intelligence_report_schedule import schedule_status
-        self.automation_status.setText(schedule_status(self.paths.intelligence_dir))
+        schedule_hint = schedule_status(self.paths.intelligence_dir)
+        for button in (self.btn_daily, self.btn_weekly, self.btn_monthly):
+            button.setToolTip(schedule_hint)
         table_specs = [
             (self.tab_daily, "daily", "日报"),
             (self.tab_weekly, "weekly", "周报"),
@@ -467,6 +462,7 @@ class ReportsPage(QWidget):
             self.detail_meta.setToolTip(report['filename'])
             self.btn_download.setText("下载 Markdown")
             self._set_action_enabled(True, allow_single_actions=True)
+            self._apply_responsive()
             return
 
         self.selected_report = None
@@ -489,12 +485,14 @@ class ReportsPage(QWidget):
         )
         self.btn_download.setText(f"批量下载（{len(reports)}）")
         self._set_action_enabled(True, allow_single_actions=False)
+        self._apply_responsive()
 
     def _clear_selection(self, *_args) -> None:
         self.selected_report = None
         self.selected_reports = []
         self.detail_title.setText("选择一份报告")
-        self.detail_meta.setText("从左侧列表选择报告后，可以下载、打开或同步。")
+        self.detail_meta.clear()
+        self.detail_meta.hide()
         self.btn_download.setText("下载 Markdown")
         self._set_action_enabled(False, allow_single_actions=False)
 
@@ -606,7 +604,25 @@ class ReportsPage(QWidget):
         if not self.background_tasks.submit(key,generate):
             self._generation_jobs.pop(key,None)
             return
-        self.automation_status.setText(f'{report_name}正在后台生成…')
+        self._generation_errors.pop(report_name, None)
+        self._refresh_generation_status()
+
+    def _set_operation_status(self, message: str, *, temporary: bool = False) -> None:
+        self._status_timer.stop()
+        self.automation_status.setText(message)
+        self.automation_status.setVisible(bool(message))
+        if temporary:
+            self._status_timer.start(5000)
+
+    def _refresh_generation_status(self, completed_name: str = '') -> None:
+        messages = [f'{name}生成失败：{error}' for name, error in self._generation_errors.items()]
+        pending = list(dict.fromkeys(self._generation_jobs.values()))
+        if pending:
+            messages.append('正在生成：' + '、'.join(pending))
+        elif not messages and completed_name:
+            messages.append(f'{completed_name}已生成')
+        self._set_operation_status('；'.join(messages), temporary=bool(
+            completed_name and not pending and not self._generation_errors))
 
     def _generation_completed(self,key,result):
         name = self._generation_jobs.pop(key,None)
@@ -622,11 +638,13 @@ class ReportsPage(QWidget):
             if os.path.normcase(report['file_path']) == os.path.normcase(str(result)):
                 table.selectRow(row)
                 break
-        self.automation_status.setText(f'{name}已生成，可打开、下载或同步；未增加 AI 请求')
+        self._refresh_generation_status(name)
 
     def _generation_failed(self,key,error):
-        if self._generation_jobs.pop(key,None) is not None:
-            self.automation_status.setText('生成失败，可重试：'+error)
+        name = self._generation_jobs.pop(key,None)
+        if name is not None:
+            self._generation_errors[name] = str(error)
+            self._refresh_generation_status()
 
     def _sync_selected(self) -> None:
         file_path = self._selected_path()

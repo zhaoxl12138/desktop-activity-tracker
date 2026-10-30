@@ -106,12 +106,7 @@ def _section_card(title: str, desc: str = "") -> tuple[QFrame, QVBoxLayout]:
     layout.addWidget(header)
 
     if desc:
-        hint = QLabel(desc)
-        hint.setWordWrap(True)
-        hint.setStyleSheet(
-            f"font-size: 12px; color: {ui_style.COLORS['text_muted']};"
-        )
-        layout.addWidget(hint)
+        frame.setToolTip(desc)
 
     return frame, layout
 
@@ -145,11 +140,6 @@ class RuleConfigPage(QWidget):
         title = QLabel("规则管理")
         title.setStyleSheet(ui_style.get_section_title())
         layout.addWidget(title)
-
-        hint = QLabel("选择分类、添加应用并保存。标题识别与计时策略可在高级设置中调整。")
-        hint.setWordWrap(True)
-        hint.setStyleSheet(f"font-size: 12px; color: {ui_style.COLORS['text_muted']};")
-        layout.addWidget(hint)
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.setChildrenCollapsible(False)
@@ -197,13 +187,6 @@ class RuleConfigPage(QWidget):
             "padding: 2px 4px;"
         )
         left_layout.addWidget(self.cat_header)
-
-        self.cat_summary = QLabel("选择分类后可编辑规则。")
-        self.cat_summary.setWordWrap(True)
-        self.cat_summary.setStyleSheet(
-            f"font-size: 12px; color: {ui_style.COLORS['text_muted']}; padding: 0 4px 6px 4px;"
-        )
-        left_layout.addWidget(self.cat_summary)
 
         self.cat_meta = QLabel("")
         self.cat_meta.setWordWrap(True)
@@ -307,34 +290,6 @@ class RuleConfigPage(QWidget):
         )
         self.application_heading = match_layout.itemAt(0).widget()
         self.match_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
-        self.match_hint_frame = QFrame()
-        self.match_hint_frame.setObjectName("ruleMatchHint")
-        self.match_hint_frame.setMinimumHeight(48)
-        self.match_hint_frame.setStyleSheet(
-            _frame_style("ruleMatchHint", "card_bg_alt", 10)
-        )
-        match_hint_layout = QHBoxLayout(self.match_hint_frame)
-        match_hint_layout.setContentsMargins(12, 7, 12, 7)
-        match_hint_layout.setSpacing(8)
-
-        hint_icon = QLabel("i")
-        hint_icon.setAlignment(Qt.AlignCenter)
-        hint_icon.setFixedSize(24, 24)
-        hint_icon.setStyleSheet(
-            f"font-size: 13px; font-weight: 700; color: {ui_style.COLORS['primary']};"
-            f"background: {ui_style.COLORS['panel_bg_alt']}; border-radius: 12px;"
-        )
-        match_hint_layout.addWidget(hint_icon, 0, Qt.AlignTop)
-
-        self.match_hint = QLabel("")
-        self.match_hint.setWordWrap(True)
-        self.match_hint.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-        self.match_hint.setStyleSheet(
-            f"font-size: 12px; color: {ui_style.COLORS['text_muted']};"
-        )
-        match_hint_layout.addWidget(self.match_hint, 1)
-        match_layout.addWidget(self.match_hint_frame)
 
         editors_row = QHBoxLayout()
         editors_row.setSpacing(12)
@@ -617,7 +572,9 @@ class RuleConfigPage(QWidget):
         if hidden_count:
             text += f"另有 {hidden_count} 条未使用内置候选，仅在高级设置中保留。"
         text += "已有标题识别规则保持不变。"
-        self.match_hint.setText(text)
+        self.applications_list.setToolTip(text)
+        name = self.categories.get(self._current_key or '', {}).get('display_name', '')
+        self.application_heading.setText(f"应用归属 · {name} · {visible_count} 个应用")
 
     def _toggle_advanced(self, expanded: bool) -> None:
         self.advanced_panel.setVisible(expanded)

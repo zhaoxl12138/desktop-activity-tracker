@@ -97,7 +97,8 @@ def test_rule_config_page_uses_rule_management_language():
         texts = " ".join(label.text() for label in page.findChildren(QLabel) if label.text())
         assert "规则管理" in texts
         assert "计时策略" in texts
-        assert "选择分类、添加应用并保存" in texts
+        assert "选择分类、添加应用并保存" not in texts
+        assert "添加应用" in page.match_card.toolTip()
 
 
 def test_category_list_uses_stable_business_group_headers(tmp_path):
@@ -258,7 +259,7 @@ def test_rule_config_page_removes_legacy_strategy_summary_panels():
         assert page.edit_rule.currentText() == "主动交互型"
 
 
-def test_rule_config_page_match_hint_has_stable_info_bar_layout():
+def test_rule_config_page_match_help_uses_tooltip_without_extra_info_bar():
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         config_path = tmp_path / "config.yaml"
@@ -274,10 +275,9 @@ def test_rule_config_page_match_hint_has_stable_info_bar_layout():
         _select_category(page, "coding")
         app.processEvents()
 
-        assert page.match_hint_frame.minimumHeight() >= 36
-        assert page.match_hint.text().startswith("当前配置")
-        assert page.match_hint.wordWrap()
-        assert page.match_hint.height() >= page.match_hint.minimumSizeHint().height()
+        assert not hasattr(page, 'match_hint_frame')
+        assert page.applications_list.toolTip().startswith("当前配置")
+        assert "2 个应用" in page.application_heading.text()
 
 
 def test_rule_config_page_container_styles_are_scoped_to_frames():
@@ -300,7 +300,6 @@ def test_rule_config_page_container_styles_are_scoped_to_frames():
             page.basic_card,
             page.strategy_card,
             page.match_card,
-            page.match_hint_frame,
         )
         for frame in containers:
             assert frame.objectName()

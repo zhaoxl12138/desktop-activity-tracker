@@ -182,7 +182,7 @@ class DayActivityCategoryTimeline(QWidget):
         label_metrics = QFontMetricsF(bold)
         self._label_width = max(100, max(label_metrics.horizontalAdvance(lane["name"])
                                          for lane in self.lanes) + 28)
-        height = self._top + len(self.lanes)*self._row_pitch + 44
+        height = self._top + len(self.lanes)*self._row_pitch + max(26, metrics.height()+6)
         self.setMinimumHeight(height)
         self.setMaximumHeight(height)
         self.updateGeometry()
@@ -435,7 +435,3 @@ class DayActivityCategoryTimeline(QWidget):
         painter.setPen(QColor(style.COLORS["text_secondary"]))
         for _hour, rect, label in self.hour_labels():
             painter.drawText(rect, Qt.AlignCenter, label)
-        painter.setPen(QColor(style.COLORS["text_muted"]))
-        footer = QRectF(14, self.height()-21, self.width()-28, 18)
-        painter.drawText(footer, Qt.AlignVCenter | Qt.AlignLeft,
-                         "色块为前台范围，非全程有效；空闲占比超过70%的记录已隐藏。")

@@ -345,9 +345,7 @@ class LiveMonitorPage(QWidget):
         title.setStyleSheet(f"font-size: 18px; font-weight: 800; color: {COLORS['text']};")
         header.addWidget(title)
         header.addStretch()
-        hint = QLabel('只影响确认后的记录')
-        hint.setStyleSheet(f"font-size: 12px; color: {COLORS['text_secondary']};")
-        header.addWidget(hint)
+        title.setToolTip('人工确认后的分类决定会应用到后续记录；当天修正范围以保存反馈为准。')
         root.addLayout(header)
 
         self.review_table = QTableWidget()

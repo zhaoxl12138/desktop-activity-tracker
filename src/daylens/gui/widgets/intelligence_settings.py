@@ -32,21 +32,22 @@ class IntelligenceSettings(QGroupBox):
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 20, 16, 16)
         root.setSpacing(10)
-        self.enabled = QCheckBox('启用智能增强（发送脱敏标题、应用名称及汇总事实）')
+        self.enabled = QCheckBox('启用智能增强')
+        self.enabled.setToolTip('向 DeepSeek 发送脱敏标题、应用名称及汇总事实。')
         self.enabled.setChecked(settings['enabled'])
         root.addWidget(self.enabled)
-        self.classification = QCheckBox('智能分类：主动使用30秒后判断，每天最多30个新标题')
+        self.classification = QCheckBox('智能分类')
+        self.classification.setToolTip('主动使用30秒后判断，每天最多30个新标题。')
         self.classification.setChecked(settings['classification_enabled'])
         root.addWidget(self.classification)
-        self.reports = QCheckBox('自动汇总：每天23:00日报 · 周日周报 · 月末月报')
+        self.reports = QCheckBox('自动汇总')
+        self.reports.setToolTip('每天23:00日报 · 周日周报 · 月末月报。')
         self.reports.setChecked(settings['reports_enabled'])
         root.addWidget(self.reports)
-        hint = QLabel('Flash非思考模式 · 最多5个标题一批 · 本地缓存复用 · 月预算内停止新请求')
-        hint.setWordWrap(True)
-        root.addWidget(hint)
         row = QHBoxLayout()
         row.addWidget(QLabel('每月预算（元）'))
         self.budget = QDoubleSpinBox()
+        self.budget.setToolTip('Flash非思考模式；最多5个标题一批；缓存复用；达到月预算后停止新请求。')
         self.budget.setRange(0, 5)
         self.budget.setDecimals(2)
         self.budget.setMinimumWidth(110)
@@ -79,12 +80,13 @@ class IntelligenceSettings(QGroupBox):
         self.status.setTextFormat(Qt.PlainText)
         self.status.setWordWrap(True)
         root.addWidget(self.status)
+        self.status.hide()
         for button in (self.save_key_button, self.delete_key_button, self.test_button):
             button.setStyleSheet(ui_style.get_button_secondary_style())
         self.save_button.setStyleSheet(ui_style.get_button_primary_style())
         for edit in (self.key, self.budget):
             edit.setStyleSheet(ui_style.get_input_style())
-        for label in (self.key_state, self.usage, self.status, hint):
+        for label in (self.key_state, self.usage, self.status):
             label.setStyleSheet(f"color: {ui_style.COLORS['text_secondary']}; font-size: 12px;")
         self.save_key_button.clicked.connect(self._save_key)
         self.delete_key_button.clicked.connect(self._delete_key)
@@ -103,14 +105,20 @@ class IntelligenceSettings(QGroupBox):
         if callable(reload):
             reload()
 
+    def _set_status(self, message):
+        self.status.setText(message)
+        self.status.setVisible(bool(message))
+
     def _refresh_key_display(self, saved: bool) -> None:
         self.key.clear()
         if saved:
             self.key.setPlaceholderText('••••••••••••••••（已保存）')
-            self.key_state.setText('密钥已安全保存，输入新密钥可替换')
+            self.key_state.setText('密钥已安全保存')
+            self.key.setToolTip('输入新密钥可替换；仅保存于 Windows 凭据管理器。')
         else:
             self.key.setPlaceholderText('输入API密钥，仅存Windows凭据管理器')
             self.key_state.setText('尚未配置密钥')
+            self.key.setToolTip('仅保存于 Windows 凭据管理器。')
 
     def _save_key(self):
         try:
@@ -144,7 +152,7 @@ class IntelligenceSettings(QGroupBox):
                 'monthly_budget_micros': round(self.budget.value() * 1_000_000),
             })
             self._reload_worker()
-            self.status.setText('智能设置已保存；只影响后续记录')
+            self._set_status('智能设置已保存')
             self._refresh_usage()
         except Exception as exc:
             QMessageBox.warning(self, '保存失败', str(exc))
@@ -155,11 +163,11 @@ class IntelligenceSettings(QGroupBox):
             snapshot = IntelligenceBudget(self.directory / 'budget.json', settings['monthly_budget_micros']).snapshot()
             self.monthly_usage_text = (
                 f"本月 AI 费用保守估算 ¥{snapshot['cost_micros']/1_000_000:.3f}"
-                f" / 月预算 ¥{snapshot['budget_micros']/1_000_000:.2f} · 以服务商账单为准"
+                f" / 月预算 ¥{snapshot['budget_micros']/1_000_000:.2f}"
             )
             self.usage.setText(
-                f"今日 {snapshot['today_titles']}/30 个标题 · {snapshot['today_requests']} 次请求"
-                f"\n未确认请求保留预算")
+                f"今日 {snapshot['today_titles']}/30 个标题 · {snapshot['today_requests']} 次请求")
+            self.usage.setToolTip('未确认请求保留预算；费用为保守估算，以服务商账单为准。')
         except Exception:
             self.monthly_usage_text = '本月 AI 费用暂不可读，自动请求将保守暂停'
             self.usage.setText('AI用量暂不可读，自动请求将保守暂停')
@@ -167,10 +175,11 @@ class IntelligenceSettings(QGroupBox):
 
     def _test(self):
         if not credentials.read_key():
-            self.status.setText('请先保存API密钥')
+            self._set_status('请先保存API密钥')
             return
         self.test_button.setEnabled(False)
-        self.status.setText('正在发送固定测试文本，不发送浏览记录…')
+        self._set_status('正在测试连接…')
+        self.test_button.setToolTip('仅发送固定测试文本，不发送浏览记录。')
         directory, results = self.directory, self.results
         def run():
             try:
@@ -192,5 +201,5 @@ class IntelligenceSettings(QGroupBox):
         except queue.Empty:
             return
         self.test_button.setEnabled(True)
-        self.status.setText(message)
+        self._set_status(message)
         self._refresh_usage()

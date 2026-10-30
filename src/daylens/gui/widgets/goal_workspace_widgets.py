@@ -37,10 +37,6 @@ class GoalEmptyState(QFrame):
         self.title.setAlignment(Qt.AlignCenter)
         self.title.setStyleSheet(f"font-size: 18px; font-weight: 700; color: {ui_style.COLORS['text']};")
         layout.addWidget(self.title)
-        hint = QLabel("最多 3 项，先从一项开始")
-        hint.setAlignment(Qt.AlignCenter)
-        hint.setStyleSheet(f"color: {ui_style.COLORS['text_secondary']};")
-        layout.addWidget(hint)
         actions = QHBoxLayout()
         actions.setAlignment(Qt.AlignCenter)
         self.time_button = QPushButton("＋ 时间目标")
@@ -52,10 +48,8 @@ class GoalEmptyState(QFrame):
         actions.addWidget(self.time_button)
         actions.addWidget(self.outcome_button)
         layout.addLayout(actions)
-        example = QLabel("例如：学习 90 分钟 · 完成一篇笔记")
-        example.setAlignment(Qt.AlignCenter)
-        example.setStyleSheet(f"font-size: 12px; color: {ui_style.COLORS['text_muted']};")
-        layout.addWidget(example)
+        self.time_button.setToolTip("例如：学习 90 分钟；每天最多 3 项目标。")
+        self.outcome_button.setToolTip("例如：完成一篇笔记；成果由你手动确认。")
 
 
 class GoalTile(QFrame):
@@ -149,6 +143,8 @@ class GoalTile(QFrame):
             confirmed = bool(goal.get("confirmed"))
             self.state.setText("已确认" if confirmed else "待用户确认")
             self.evidence.setText("由你确认成果；投入时长不代表完成")
+            self.evidence.hide()
+            self.confirm_button.setToolTip(self.evidence.text())
             self.confirm_button.setText("撤销确认" if confirmed else "确认成果")
         else:
             target_seconds = max(1, int(goal.get("target_minutes") or 0) * 60)
@@ -157,6 +153,8 @@ class GoalTile(QFrame):
                 self.state.setText(f"计划 {fmt_seconds(target_seconds)} · 暂无可靠进度")
                 self.progress.setValue(0)
                 self.evidence.setText("统计依据不足，不能按 0% 计算")
+                self.evidence.hide()
+                self.progress.setToolTip(self.evidence.text())
             else:
                 actual = max(0, int(actual))
                 self.progress.setValue(min(100, round(actual * 100 / target_seconds)))
@@ -170,3 +168,5 @@ class GoalTile(QFrame):
                     "已达计划时长" if actual >= target_seconds else
                     f"还差 {fmt_seconds(target_seconds - actual)}"
                 )
+                self.evidence.show()
+                self.progress.setToolTip("")
