@@ -42,3 +42,12 @@
 GUI：`main_window.py`、`wizard.py`；pages 下 `reports.py`、`settings.py`、`rule_config.py`、`classification_management.py`、`live_monitor.py`、`daily_goals.py`；widgets 下 `intelligence_settings.py`、`goal_workspace_widgets.py`、`classification_dialog.py`、`rule_application_dialog.py`、`day_activity_dialog.py`、`day_activity_category_timeline.py`。
 
 测试：新增 `tests/test_ui_copy_cleanup.py`，更新原目标/分类/设置/报告/时间轴相关 UI 显示约定；新增用例共 11 项。工具更新 `tools/check_navigation_layout.py`，README 与实施计划同步。
+
+## 本地发布
+
+- 实现提交 `1d18d82`，已快进合入本地 `main`，合入后的相关 UI／报告页回归 28 passed in 2.83s；本轮未自动 push。
+- `python tools/build_release.py` 退出码 0，隔离 Qt／凭据 smoke 通过；旧 PID 72564 在 19:14:17 确认 `status=clean`、退出码 0 后才替换程序，未强制结束进程。
+- 正式程序 `D:\OfficeSoftware\DayLens\release\DayLens.exe` SHA256：`1D522F9F868774B885A844B4568409A433CB6D28FC0BA66B17C806A22C9CBA98`，与 `dist` 一致。
+- 上版完整保留于 `release_previous`，SHA256：`EBD7B9EC91F80E6B81375FCC6F5818D09C51FD7084278672F62B068A7B92796E`。更早回退版本移存 `release_previous_20261030_before_ui_copy_cleanup`，未删除。
+- 2026-10-30 19:14:43 启动正式版；单实例 PID 56448、窗口标题 `DayLens`、非零窗口句柄，`Responding=true`。
+- 正式重启后主目录全量回归：1435 passed in 50.92s；19:15:43 运行心跳为 `phase=running`，19:15:54 同一进程仍响应。
