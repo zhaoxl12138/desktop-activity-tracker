@@ -20,3 +20,17 @@
 - `tools/check_day_activity_layout.py`：1280×720、1920×1080，100%/125%/150%，明暗主题全部通过；覆盖早间/全天、事件明细及分类筛选。人工查看 150% 暗色全天截图，无异常马赛克覆盖。
 
 所有测试与截图使用合成模型或隔离目录，不读取/改写用户原始会话，不调用 AI。
+
+## 独立复核
+
+只读检查确认活动矩形、隐藏判定、真实时间间隔、模型统计、状态悬停和异常提示未改变，无实质问题。独立运行相关 47 项测试通过，差异检查通过，同意合入。
+
+实现提交 `e15718d` 已快进合入本地 `main`；合入后的像素/时间轴测试 47 passed in 1.61s。本轮不自动 push。
+
+## 正式程序发布
+
+- `python tools/build_release.py` 退出码 0，打包 Qt／凭据 smoke 通过。旧实例 PID 56448 在 22:00:18 确认 `status=clean`、退出码 0，未强制结束。
+- 正式程序 `D:\OfficeSoftware\DayLens\release\DayLens.exe` SHA256 为 `C8398A15B9C65ED2FC91CB6965F8DE9649DD460367BEB996799D4C64D8B57006`，与 `dist` 一致。
+- 上版完整保留在 `release_previous`（SHA256 `1D522F9F868774B885A844B4568409A433CB6D28FC0BA66B17C806A22C9CBA98`）；更早回退版本移存 `release_previous_20261030_before_blank_timeline`，未删除。
+- 2026-10-30 22:00:52 启动正式版，单实例 PID 70796，窗口标题 `DayLens`、非零窗口句柄、`Responding=true`。真实窗口未额外点选，视觉复查依据为隔离时间轴截图和实际绘制像素测试。
+- 主目录全量回归：1445 passed in 43.62s；22:01:52 运行心跳更新为 `phase=running`，22:02:01 同一实例仍响应。

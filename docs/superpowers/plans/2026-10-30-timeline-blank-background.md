@@ -19,4 +19,4 @@ assert '异常' in timeline.tooltip_for_second(anomaly_second)
 - [x] B：在 `gui/widgets/day_activity_category_timeline.py` 删除纹理绘制，正常事件仍按原前台矩形绘制；删除未使用的画刷导入。`day_activity_dialog.py` 的静态悬停说明同步，不改变判断和计量代码。
 - [x] C：验证原模型深拷贝前后相等、各状态悬停仍不同、事件范围与总量保持。更新 README 显示说明。
 - [x] D：定向/全量 pytest、compileall、GUI smoke、Ruff、diff --check；两种分辨率、三档 DPI、明暗主题时间轴隔离截图复查。
-- [ ] E：只读独立复核，记录实际结果；提交合入本地，安全发布重启并保留上一版程序，不自动 push。
+- [x] E：只读独立复核，记录实际结果；提交合入本地，安全发布重启并保留上一版程序，不自动 push。
