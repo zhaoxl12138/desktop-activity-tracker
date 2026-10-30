@@ -3,7 +3,6 @@
 import os
 import sys
 import tempfile
-import time
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -26,7 +25,7 @@ def main():
     QFontDatabase.addApplicationFont("C:/Windows/Fonts/msyh.ttc")
     app.setFont(QFont("Microsoft YaHei", 10))
     scale = float(os.environ.get("QT_SCALE_FACTOR", "1"))
-    output = ROOT / "tmp" / "report-v2-layout" / str(scale)
+    output = ROOT / "tmp" / "report-center-restored-layout" / str(scale)
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as directory:
         temp = Path(directory)
@@ -87,34 +86,34 @@ def main():
                 page.show()
                 app.processEvents()
                 page.tab_daily.selectRow(0)
-                deadline = time.monotonic() + 4
-                while (
-                    "关键发现" not in page.preview.browser.toPlainText()
-                    and time.monotonic() < deadline
-                ):
-                    app.processEvents()
-                    time.sleep(0.01)
-                assert "关键发现" in page.preview.browser.toPlainText()
-                assert "daylens-report" not in page.preview.browser.toPlainText()
+                app.processEvents()
+                assert not hasattr(page,"preview")
+                assert page.list_panel.isVisible() and page.detail_panel.isVisible()
+                assert page.detail_panel.width() < page.list_panel.width()
+                assert page.btn_open.isEnabled()
                 assert page.width() <= target_width, (page.size(), target_width)
                 assert page.height() <= target_height, (page.size(), target_height)
                 for widget in (
                     page.btn_daily,
                     page.btn_monthly,
-                    page.preview.browser,
+                    page.tab_daily,
+                    page.btn_open,
+                    page.btn_previous_page,
+                    page.btn_next_page,
                     page.btn_sync_selected,
                 ):
+                    assert widget.isVisible()
                     point = widget.mapTo(page, QPoint(widget.width(), widget.height()))
                     assert point.x() <= page.width() and point.y() <= page.height(), (
-                        widget.text() if hasattr(widget, "text") else "browser",
+                        widget.text() if hasattr(widget, "text") else "table",
                         point,
                         page.size(),
                     )
-                assert page.preview.browser.height() >= 70
+                assert page.tab_daily.height() >= 70
                 assert page.grab().save(str(output / f"{theme}-{width}x{height}.png"))
                 page.close()
                 app.processEvents()
-    print(f"Report V2 layout passed: {output}")
+    print(f"Restored report-center layout passed: {output}")
 
 
 if __name__ == "__main__":

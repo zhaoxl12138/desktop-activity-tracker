@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
-    QSplitter,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -50,7 +49,6 @@ class ReportsPage(QWidget):
         self._generation_jobs = {}
         self.background_tasks.task_completed.connect(self._generation_completed)
         self.background_tasks.task_failed.connect(self._generation_failed)
-        self._compact_preview = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 12, 14, 12)
@@ -78,48 +76,29 @@ class ReportsPage(QWidget):
             f"color: {ui_style.COLORS['text_secondary']}; font-size: 12px;")
         layout.addWidget(self.automation_status)
 
-        self.compact_bar = QWidget()
-        compact = QHBoxLayout(self.compact_bar)
-        compact.setContentsMargins(0,0,0,0)
-        self.btn_show_list = self._button('报告列表',lambda:self._show_compact(False))
-        self.btn_show_preview = self._button('正文预览',lambda:self._show_compact(True))
-        compact.addWidget(self.btn_show_list)
-        compact.addWidget(self.btn_show_preview)
-        compact.addStretch()
-        layout.addWidget(self.compact_bar)
-        self.splitter = QSplitter(Qt.Horizontal)
+        content = QHBoxLayout()
+        content.setSpacing(14)
         self.list_panel = self._build_report_list()
         self.detail_panel = self._build_detail_panel()
-        self.splitter.addWidget(self.list_panel)
-        self.splitter.addWidget(self.detail_panel)
-        self.splitter.setChildrenCollapsible(False)
-        self.splitter.setStretchFactor(0,3)
-        self.splitter.setStretchFactor(1,7)
-        self.splitter.setSizes([320,740])
-        layout.addWidget(self.splitter,1)
+        content.addWidget(self.list_panel,1)
+        content.addWidget(self.detail_panel)
+        layout.addLayout(content,1)
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
         self.timer.setInterval(60000)
-        # Hide the unused compact pane before the first layout negotiation;
-        # otherwise both minimum-size hints can expand a narrow top-level UI.
         self._apply_responsive()
 
     def activate(self, force: bool = False) -> None:
-        was_active=self._is_active
         self._is_active = True
         if not self.timer.isActive():
             self.timer.start()
         if force or self._last_signature is None:
             self.refresh()
-        elif not was_active and self.selected_report:
-            self.preview.load_report(self.selected_report['file_path'])
 
     def deactivate(self) -> None:
         self._is_active = False
         self.timer.stop()
-        if hasattr(self, 'preview'):
-            self.preview.suspend()
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -180,8 +159,8 @@ class ReportsPage(QWidget):
                 background: transparent;
             }}
             QTabBar::tab {{
-                min-width: 86px;
-                padding: 9px 18px;
+                min-width: 58px;
+                padding: 9px 10px;
                 margin-right: 6px;
                 color: {ui_style.COLORS['text_secondary']};
                 background: {ui_style.COLORS['panel_bg']};
@@ -229,14 +208,24 @@ class ReportsPage(QWidget):
         return frame
 
     def _build_detail_panel(self) -> QFrame:
-        from ..widgets.report_preview import ReportPreview
         frame = QFrame()
         frame.setObjectName("reportDetailCard")
-        frame.setMinimumWidth(0)
-        frame.setStyleSheet(ui_style.get_dashboard_card_style())
+        frame.setStyleSheet(
+            f"""
+            QFrame#reportDetailCard {{
+                background: {ui_style.COLORS['card_bg_alt']};
+                border: 1px solid {ui_style.COLORS['border_light']};
+                border-radius: 14px;
+            }}
+            """
+        )
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(10,8,10,8)
-        layout.setSpacing(6)
+        layout.setContentsMargins(14,12,14,12)
+        layout.setSpacing(8)
+        self.detail_eyebrow = QLabel("当前选中")
+        self.detail_eyebrow.setStyleSheet(
+            f"font-size:12px;color:{ui_style.COLORS['text_muted']};")
+        layout.addWidget(self.detail_eyebrow)
         self.detail_title = QLabel("选择一份报告")
         self.detail_title.setTextFormat(Qt.PlainText)
         self.detail_title.setWordWrap(True)
@@ -247,31 +236,21 @@ class ReportsPage(QWidget):
         self.detail_meta.setWordWrap(True)
         self.detail_meta.setStyleSheet(f"font-size:12px;color:{ui_style.COLORS['text_secondary']};")
         layout.addWidget(self.detail_meta)
-        self.preview = ReportPreview(self.reports_dir,self.db_path)
-        layout.addWidget(self.preview,1)
-        actions = QHBoxLayout()
+        layout.addStretch()
         self.btn_download = self._button("下载 Markdown",self._download_selected,primary=True)
         self.btn_open = self._button("打开报告",self._open_selected)
         self.btn_sync_selected = self._button("同步到 Obsidian",self._sync_selected)
         for button in (self.btn_download,self.btn_open,self.btn_sync_selected):
-            actions.addWidget(button)
-        layout.addLayout(actions)
+            layout.addWidget(button)
         self._set_action_enabled(False)
         return frame
 
-    def _show_compact(self, preview):
-        self._compact_preview = bool(preview)
-        self._apply_responsive()
-
     def _apply_responsive(self):
         compact = self.width() < 1000
-        self.page_title.setVisible(not compact or not self._compact_preview)
         self.subtitle.setVisible(not compact)
-        self.generation_bar.setVisible(not compact or not self._compact_preview)
-        self.automation_status.setVisible(not compact or not self._compact_preview)
-        self.compact_bar.setVisible(compact)
-        self.list_panel.setVisible(not compact or not self._compact_preview)
-        self.detail_panel.setVisible(not compact or self._compact_preview)
+        self.detail_panel.setFixedWidth(210 if compact else 280)
+        self.detail_meta.setVisible(not compact)
+        self.detail_eyebrow.setVisible(not compact)
         self.tab_daily.setColumnHidden(1,compact)
         self.tab_weekly.setColumnHidden(1,compact)
         self.tab_monthly.setColumnHidden(1,compact)
@@ -282,7 +261,6 @@ class ReportsPage(QWidget):
 
     def closeEvent(self,event):
         self.deactivate()
-        self.preview.close()
         if self._owns_tasks:
             self.background_tasks.shutdown()
         super().closeEvent(event)
@@ -476,24 +454,22 @@ class ReportsPage(QWidget):
             self.selected_report = report
             self.detail_title.setText(report["label"])
             self.detail_meta.setText(
-                " · ".join(
+                "\n".join(
                     [
-                        report['report_type'],
-                        report['size_text'],
-                        f"更新 {report['modified_text']}",
+                        f"类型：{report['report_type']}",
+                        f"文件：{report['filename']}",
+                        f"大小：{report['size_text']}",
+                        f"更新：{report['modified_text']}",
+                        "格式：Markdown",
                     ]
                 )
             )
             self.detail_meta.setToolTip(report['filename'])
             self.btn_download.setText("下载 Markdown")
             self._set_action_enabled(True, allow_single_actions=True)
-            self.preview.load_report(report['file_path'])
-            self._compact_preview = True
-            self._apply_responsive()
             return
 
         self.selected_report = None
-        self.preview.clear('已选择多份报告，可使用批量下载')
         total_bytes = sum(
             os.path.getsize(report["file_path"])
             for report in reports
@@ -517,7 +493,6 @@ class ReportsPage(QWidget):
     def _clear_selection(self, *_args) -> None:
         self.selected_report = None
         self.selected_reports = []
-        self.preview.clear()
         self.detail_title.setText("选择一份报告")
         self.detail_meta.setText("从左侧列表选择报告后，可以下载、打开或同步。")
         self.btn_download.setText("下载 Markdown")
@@ -647,7 +622,7 @@ class ReportsPage(QWidget):
             if os.path.normcase(report['file_path']) == os.path.normcase(str(result)):
                 table.selectRow(row)
                 break
-        self.automation_status.setText(f'{name}已生成，可在右侧预览；未增加 AI 请求')
+        self.automation_status.setText(f'{name}已生成，可打开、下载或同步；未增加 AI 请求')
 
     def _generation_failed(self,key,error):
         if self._generation_jobs.pop(key,None) is not None:

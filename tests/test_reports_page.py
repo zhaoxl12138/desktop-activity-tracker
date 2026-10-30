@@ -180,27 +180,22 @@ def test_selecting_report_updates_detail_panel_and_actions(tmp_path: Path):
     assert page.btn_sync_selected.isEnabled()
 
 
-def test_selected_report_is_previewed_and_compact_layout_can_return_to_list(tmp_path):
-    import time
+def test_report_center_restores_list_and_small_detail_sidebar(tmp_path):
     root=tmp_path/'reports'
     _create_report(root,'daily','2026-10-20.md','# 标题\n## 关键发现\n本地预览内容')
     app=_app()
     page=ReportsPage(str(tmp_path/'usage.db'),str(root))
-    page.resize(750,560)
+    page.resize(1400,680)
     page.show()
     app.processEvents()
-    assert hasattr(page,'preview')
     page.tab_daily.selectRow(0)
-    deadline=time.monotonic()+3
-    while '本地预览内容' not in page.preview.browser.toPlainText() and time.monotonic()<deadline:
-        app.processEvents()
-        time.sleep(.01)
-    assert '本地预览内容' in page.preview.browser.toPlainText()
-    assert page.detail_panel.isVisible()
-    assert not page.list_panel.isVisible()
-    page.btn_show_list.click()
     app.processEvents()
+    assert not hasattr(page,'preview')
+    assert not hasattr(page,'btn_show_preview')
+    assert page.detail_panel.isVisible()
     assert page.list_panel.isVisible()
+    assert page.detail_panel.width() < page.list_panel.width()
+    assert page.btn_download.y() < page.btn_open.y() < page.btn_sync_selected.y()
     page.close()
 
 
@@ -229,31 +224,45 @@ def test_manual_report_generation_runs_off_gui_thread(tmp_path,monkeypatch):
         time.sleep(.01)
     assert calls and calls[0]!=original_thread
     assert not page._generation_jobs
+    assert '已生成' in page.automation_status.text()
+    assert '预览' not in page.automation_status.text()
     page.close()
 
 
-def test_reenter_reports_resumes_discarded_preview_request(tmp_path):
-    import threading
-    import time
+def test_narrow_report_center_keeps_list_and_actions_visible_after_selection(tmp_path):
+    root=tmp_path/'reports'
+    _create_report(root,'daily','2026-10-20.md')
+    app=_app()
+    page=ReportsPage(str(tmp_path/'usage.db'),str(root))
+    page.resize(644,360)
+    page.show()
+    app.processEvents()
+    page.tab_daily.selectRow(0)
+    app.processEvents()
+    assert page.width() <= 644 and page.height() <= 360
+    assert page.list_panel.isVisible() and page.detail_panel.isVisible()
+    for button in (page.btn_download,page.btn_open,page.btn_sync_selected):
+        assert button.isVisible() and button.isEnabled()
+    page.close()
+
+
+def test_reenter_reports_keeps_selection_without_loading_preview(tmp_path, monkeypatch):
+    from daylens.gui.widgets import report_preview
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError('Report center must not construct a preview')
+    monkeypatch.setattr(report_preview, 'ReportPreview', forbidden)
     root=tmp_path/'reports'
     _create_report(root,'daily','2026-10-20.md','# 返回页面恢复读取')
     app=_app()
     page=ReportsPage(str(tmp_path/'usage.db'),str(root))
     page.show(); app.processEvents()
-    release=threading.Event()
-    original=page.preview.cache.load
-    def slow(path):
-        release.wait(2)
-        return original(path)
-    page.preview.cache.load=slow
     page.tab_daily.selectRow(0)
     page.deactivate()
     page.activate()
-    release.set()
-    deadline=time.monotonic()+3
-    while '返回页面恢复读取' not in page.preview.browser.toPlainText() and time.monotonic()<deadline:
-        app.processEvents(); time.sleep(.01)
-    assert '返回页面恢复读取' in page.preview.browser.toPlainText()
+    app.processEvents()
+    assert page.selected_report['filename'] == '2026-10-20.md'
+    assert page.list_panel.isVisible()
+    assert page.btn_open.isEnabled()
     page.close()
 
 
@@ -300,21 +309,17 @@ def test_periodic_refresh_preserves_selected_report_when_list_is_unchanged(
 
 
 def test_report_refresh_detects_same_size_same_minute_replacement(tmp_path):
-    import time
     root=tmp_path/'reports'
     path=_create_report(root,'daily','2026-10-20.md','# 初始内容')
     app=_app()
     page=ReportsPage(str(tmp_path/'usage.db'),str(root))
     page.show(); app.processEvents(); page.tab_daily.selectRow(0)
-    deadline=time.monotonic()+2
-    while '初始内容' not in page.preview.browser.toPlainText() and time.monotonic()<deadline:
-        app.processEvents(); time.sleep(.01)
+    previous_stamp=page.selected_report['modified_ns']
     path.write_text('# 更新内容',encoding='utf-8')
+    os.utime(path,ns=(previous_stamp+1_000_000,previous_stamp+1_000_000))
     page.refresh()
-    deadline=time.monotonic()+2
-    while '更新内容' not in page.preview.browser.toPlainText() and time.monotonic()<deadline:
-        app.processEvents(); time.sleep(.01)
-    assert '更新内容' in page.preview.browser.toPlainText()
+    app.processEvents()
+    assert page.selected_report['modified_ns'] > previous_stamp
     page.close()
 
 
