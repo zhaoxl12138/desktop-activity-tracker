@@ -321,6 +321,15 @@ def build_weekly_review(dates: list[str], state: dict, rows: list[dict],
     """Keep goal rows separate so overlapping targets are never summed twice."""
     if len(dates) != 7 or not all(_valid_day(day) for day in dates) or not _valid_state(state):
         raise ValueError("周目标范围或状态无效")
+    return build_period_review(dates, state, rows, assignments)
+
+
+def build_period_review(dates: list[str], state: dict, rows: list[dict],
+                        assignments: dict[str, str]) -> dict:
+    """Use the same daily evaluation for daily/weekly/monthly presentation."""
+    if (not all(_valid_day(day) for day in dates) or not _valid_state(state)
+            or len(set(dates)) != len(dates)):
+        raise ValueError("目标范围或状态无效")
     by_day = {day: [] for day in dates}
     for row in rows:
         day = str(row.get("date") or "")

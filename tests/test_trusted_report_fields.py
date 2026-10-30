@@ -132,7 +132,7 @@ def test_daily_markdown_appends_high_trust_attention_fields_once(tmp_path: Path)
 
     report = _export_markdown(db_path, tmp_path)
 
-    for old_section in ("## 总览", "- 活跃时间：", "## 分类统计", "## 软件排行"):
+    for old_section in ("## 总览", "- 有效活动：", "### 分类统计", "### 软件排行"):
         assert old_section in report
     assert report.count("- 参与时间：1分0秒") == 1
     assert report.count("- 被动媒体：30秒") == 1

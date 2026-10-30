@@ -54,14 +54,14 @@ def test_runtime_and_cli_prompts_are_human_readable_chinese():
 
 
 def test_report_and_timeline_labels_are_human_readable_chinese():
-    exporter_text = (ROOT / "src" / "daylens" / "exporter.py").read_text(encoding="utf-8")
+    exporter_text = (ROOT / "src" / "daylens" / "services" / "report_v2_renderer.py").read_text(encoding="utf-8")
     for snippet in (
-        "个人数字行为日报",
+        "今日复盘",
         "总览",
-        "活跃时间：",
+        "有效活动：",
         "挂机/空闲时间：",
-        "娱乐休闲时间：",
-        "效率评分",
+        "娱乐有效活动：",
+        "目标与成果",
         "分类统计",
         "软件排行",
         "会话时间线",
