@@ -10,7 +10,7 @@ import math
 from bisect import bisect_right
 
 from PySide6.QtCore import QEvent, QRectF, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QFontMetricsF, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen
 from PySide6.QtWidgets import QToolTip, QWidget
 
 from ...category_registry import category_definition
@@ -206,13 +206,6 @@ class DayActivityCategoryTimeline(QWidget):
         return max(self.range_start, min(self.range_end,
                    self.range_start+(x-band.left())/band.width()*(self.range_end-self.range_start)))
 
-    def _column(self, start, end):
-        if end <= self.range_start or start >= self.range_end:
-            return QRectF()
-        first, last = self._band(), self._band(len(self.lanes)-1)
-        return QRectF(self._x(start), first.top(), max(0, self._x(end)-self._x(start)),
-                      last.bottom()-first.top())
-
     def event_rect(self, identity):
         """Return the original foreground geometry only for plotted events."""
         event = self._events.get(identity)
@@ -383,23 +376,8 @@ class DayActivityCategoryTimeline(QWidget):
                              Qt.AlignVCenter | Qt.AlignLeft, fmt_seconds(lane["effective_seconds"]))
             painter.setFont(bold)
         painter.setRenderHint(QPainter.Antialiasing, False)
-        states = {
-            "future": (style.COLORS["text_muted"], Qt.Dense7Pattern),
-            "unreliable": (style.COLORS["video_orange"], Qt.BDiagPattern),
-        }
-        for segment in self._segments:
-            kind = segment.get("kind")
-            if self.is_event_hidden(segment.get("event_id")):
-                continue
-            if kind not in states:
-                continue
-            color, pattern = states[kind]
-            rect = self._column(segment["start_second"], segment["end_second"])
-            tint = QColor(color)
-            tint.setAlpha(30)
-            painter.fillRect(rect, tint)
-            tint.setAlpha(115)
-            painter.fillRect(rect, QBrush(tint, pattern))
+        # Non-activity evidence remains available to hover hit-testing, but
+        # has no visual fill. Real elapsed gaps must not resemble activity.
         painter.setPen(QPen(QColor(style.COLORS["border"]), 1))
         first, last = self._band(), self._band(len(self.lanes)-1)
         for second in self.axis_ticks():
@@ -416,8 +394,6 @@ class DayActivityCategoryTimeline(QWidget):
                 continue
             color = QColor(self.lanes[self._lane_indices[group]]["color"])
             painter.fillRect(rect, color)
-            if source.get("contains_idle"):
-                painter.fillRect(rect, QBrush(QColor(0, 0, 0, 70), Qt.BDiagPattern))
             label = self._event_label(source, rect, metrics)
             if label:
                 painter.save()

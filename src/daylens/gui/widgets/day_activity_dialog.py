@@ -139,7 +139,7 @@ class DayActivityDialog(QDialog):
         self.body.addLayout(timeline_controls)
         self.timeline = DayActivityCategoryTimeline()
         self.body.addWidget(self.timeline)
-        self._timeline_help = "色块为前台范围，非全程有效。空闲／高空闲：留白；未来：点纹；异常：斜纹；无记录：底色（不等于空闲）。"
+        self._timeline_help = "色块为前台记录范围，非全程有效。空闲、无记录、未来和异常区间统一留白；悬停可查看具体状态，留白不等于空闲。"
         # Keep the legacy help handle for selection integrations, outside layout.
         self.help_label = QLabel(self._timeline_help, self)
         self.help_label.hide()

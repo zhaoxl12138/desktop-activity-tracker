@@ -204,7 +204,9 @@ def test_idle_category_aliases_keep_neutral_idle_background(application, alias):
     canonical = canvas(application, model([event("idle", 10000, 20000, "idle")]))
     legacy_alias = canvas(application, model([event("idle", 10000, 20000, alias)]))
     try:
-        area = canonical._column(11000, 19000).toRect()
+        # Neutral backgrounds are now identical across the complete lane area;
+        # no separate state-overlay rectangle is needed by the painter.
+        area = canonical._band().united(canonical._band(len(canonical.lanes)-1)).toRect()
         assert canonical.grab(area).toImage() == legacy_alias.grab(area).toImage()
     finally:
         canonical.close()
