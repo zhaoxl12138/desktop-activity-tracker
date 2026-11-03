@@ -208,6 +208,9 @@ def apply_classification_correction(
     session_snapshot: dict[int, tuple[object, ...]] = {}
     rule_snapshot: dict[str, dict | None] = {}
     rule_changed = False
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    audit_path = Path(db_path).resolve().parent / "logs" / f"classification-correction-{stamp}.json"
+    audit_written = False
 
     with sqlite3.connect(db_path, timeout=5) as conn:
         conn.row_factory = sqlite3.Row
@@ -278,28 +281,30 @@ def apply_classification_correction(
             after_matches = [row for row in refreshed if _row_title_key(row) == _title_key(wanted_title)]
             if before_totals != _time_totals(after_matches):
                 raise RuntimeError("分类纠错改变了记录时长")
+            # Audit persistence is a prerequisite, not a fallible follow-up to
+            # committed history. Match the AI-backfill transaction boundary.
+            atomic_json(audit_path, {
+                "operation": "manual_classification_correction",
+                "timestamp": stamp,
+                "date": selected_day,
+                "process_name": process,
+                "category_key": definition.id,
+                "category_name": definition.name,
+                "updated_sessions": len(changed_rows),
+                "rule_changed": rule_changed,
+                "shared_browser": shared_browser,
+                "learning_scope": learning_scope,
+                "time_totals": before_totals,
+                "time_conserved": True,
+            })
+            audit_written = True
             conn.commit()
         except Exception:
             conn.rollback()
+            if audit_written:
+                audit_path.unlink(missing_ok=True)
             raise
 
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-    audit_path = Path(db_path).resolve().parent / "logs" / f"classification-correction-{stamp}.json"
-    audit = {
-        "operation": "manual_classification_correction",
-        "timestamp": stamp,
-        "date": selected_day,
-        "process_name": process,
-        "category_key": definition.id,
-        "category_name": definition.name,
-        "updated_sessions": len(changed_rows),
-        "rule_changed": rule_changed,
-        "shared_browser": shared_browser,
-        "learning_scope": learning_scope,
-        "time_totals": before_totals,
-        "time_conserved": True,
-    }
-    atomic_json(audit_path, audit)
     try:
         save_override(
             intelligence_dir, process, raw_title, definition.id,

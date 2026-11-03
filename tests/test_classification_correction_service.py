@@ -239,3 +239,27 @@ def test_state_save_failure_restores_sessions_and_custom_rules(tmp_path, monkeyp
     assert _session_rows(db) == before_rows
     assert _custom_rules(db) == before_rules
 
+
+def test_audit_failure_does_not_commit_sessions_or_process_rules(tmp_path, monkeypatch):
+    from daylens.services import classification_correction_service as service
+
+    db = _database(tmp_path)
+    _insert_session(db, "audit-failure")
+    before_rows, before_rules = _session_rows(db), _custom_rules(db)
+
+    def fail(*_args, **_kwargs):
+        raise OSError("audit unavailable")
+
+    monkeypatch.setattr(service, "atomic_json", fail)
+    with pytest.raises(OSError, match="audit unavailable"):
+        apply_classification_correction(
+            db_path=str(db), intelligence_dir=tmp_path / "intelligence",
+            process_name="Probably Stolen.exe", window_title="Probably Stolen",
+            normalized_title="Probably Stolen", category_key="gaming",
+            categories={}, day="2026-10-28", scope="similar",
+        )
+
+    assert _session_rows(db) == before_rows
+    assert _custom_rules(db) == before_rules
+    assert load_overrides(tmp_path / "intelligence") == {}
+
