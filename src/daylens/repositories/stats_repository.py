@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+
 import re
 from pathlib import Path
 from bisect import bisect_right
@@ -922,30 +925,32 @@ def query_completed_history_revision(
     start_date: str,
     end_date: str,
 ) -> tuple | None:
-    """Return a cheap invalidation fingerprint for immutable completed days."""
+    """Fingerprint completed evidence, including in-place classification edits.
+
+    Stream each indexed date range once rather than relying on counts/version
+    sets, which cannot detect repeated corrections or changed counters/titles.
+    The digest is local and bounded in memory; no titles leave this process.
+    """
 
     try:
         with read_conn(db_path) as conn:
-            row = conn.execute(
-                """
-                SELECT
-                  (SELECT COUNT(*) FROM activity_sessions WHERE date BETWEEN ? AND ?),
-                  (SELECT COALESCE(MAX(id), 0) FROM activity_sessions WHERE date BETWEEN ? AND ?),
-                  (SELECT COALESCE(MAX(end_time), '') FROM activity_sessions WHERE date BETWEEN ? AND ?),
-                  (SELECT COALESCE(SUM(duration_seconds), 0) FROM activity_sessions WHERE date BETWEEN ? AND ?),
-                  (SELECT COALESCE(GROUP_CONCAT(DISTINCT metric_version), '') FROM activity_sessions WHERE date BETWEEN ? AND ?),
-                  (SELECT COALESCE(GROUP_CONCAT(DISTINCT classification_version), '') FROM activity_sessions WHERE date BETWEEN ? AND ?),
-                  (SELECT COALESCE(GROUP_CONCAT(DISTINCT classification_policy_version), '') FROM activity_sessions WHERE date BETWEEN ? AND ?),
-                  (SELECT COUNT(*) FROM activity_logs WHERE date BETWEEN ? AND ?),
-                  (SELECT COALESCE(MAX(id), 0) FROM activity_logs WHERE date BETWEEN ? AND ?),
-                  (SELECT COALESCE(MAX(timestamp), '') FROM activity_logs WHERE date BETWEEN ? AND ?)
-                """,
-                tuple(
-                    value
-                    for _ in range(10)
-                    for value in (start_date, end_date)
-                ),
-            ).fetchone()
+            digest = hashlib.sha256()
+            conn.execute("SAVEPOINT completed_history_revision")
+            try:
+                for table in ("activity_sessions", "activity_logs"):
+                    digest.update(table.encode("ascii"))
+                    cursor = conn.execute(
+                        f"SELECT * FROM {table} WHERE date BETWEEN ? AND ? ORDER BY date, id",
+                        (start_date, end_date),
+                    )
+                    for row in cursor:
+                        digest.update(json.dumps(
+                            tuple(row), ensure_ascii=True, separators=(",", ":"),
+                            default=str,
+                        ).encode("utf-8"))
+                        digest.update(b"\n")
+            finally:
+                conn.execute("RELEASE completed_history_revision")
     except Exception as error:
         # A legacy/uninitialized path is not cacheable; callers retain the
         # existing uncached degradation path. Real query failures still occur
@@ -953,7 +958,7 @@ def query_completed_history_revision(
         if "no such table" in str(error).casefold():
             return None
         raise
-    return tuple(row) if row is not None else ()
+    return ("history-content-v2", digest.hexdigest())
 
 
 def query_category_detail(read_conn, db_path: str, date_str: str, category_key: str, limit: int = 5) -> list[dict]:
