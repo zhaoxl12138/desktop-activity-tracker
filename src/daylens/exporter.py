@@ -394,7 +394,13 @@ def _export_v2(db_path, kind, dates, filepath):
     if kind == 'daily':
         model['attention'] = _daily_attention_fields(model['stats']['totals'], dates[0])
     content = render_report(model)
-    _atomic_write_text(filepath, content)
+    from .services.report_sections import REPORT_WRITE_LOCK, preserve_summary
+    from .services.report_freshness_service import annotate_summary_freshness
+    with REPORT_WRITE_LOCK:
+        # Revalidate preserved evidence only on a requested native generation;
+        # selection/opening never rewrites old reports or regenerates AI.
+        content = preserve_summary(filepath, content)
+        _atomic_write_text(filepath, annotate_summary_freshness(db_path, content))
     return filepath
 
 

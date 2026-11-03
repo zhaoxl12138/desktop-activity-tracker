@@ -50,6 +50,9 @@ class ReportsPage(QWidget):
         self._generation_errors = {}
         self.background_tasks.task_completed.connect(self._generation_completed)
         self.background_tasks.task_failed.connect(self._generation_failed)
+        from ..report_freshness_controller import ReportFreshnessController
+        self.freshness_controller = ReportFreshnessController(db_path, reports_dir, self)
+        self.freshness_controller.ready.connect(self._apply_freshness)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 12, 14, 12)
@@ -98,6 +101,7 @@ class ReportsPage(QWidget):
     def deactivate(self) -> None:
         self._is_active = False
         self.timer.stop()
+        self.freshness_controller.cancel()
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -231,6 +235,12 @@ class ReportsPage(QWidget):
         self.detail_meta.setWordWrap(True)
         self.detail_meta.setStyleSheet(f"font-size:12px;color:{ui_style.COLORS['text_secondary']};")
         layout.addWidget(self.detail_meta)
+        self.freshness_label = QLabel()
+        self.freshness_label.setWordWrap(True)
+        self.freshness_label.setTextFormat(Qt.PlainText)
+        self.freshness_label.setStyleSheet(f"color: {ui_style.COLORS['text']}; font-weight: 600;")
+        self.freshness_label.hide()
+        layout.addWidget(self.freshness_label)
         layout.addStretch()
         self.btn_download = self._button("下载 Markdown",self._download_selected,primary=True)
         self.btn_open = self._button("打开报告",self._open_selected)
@@ -254,6 +264,7 @@ class ReportsPage(QWidget):
 
     def closeEvent(self,event):
         self.deactivate()
+        self.freshness_controller.close()
         if self._owns_tasks:
             self.background_tasks.shutdown()
         super().closeEvent(event)
@@ -374,6 +385,8 @@ class ReportsPage(QWidget):
             self._last_signature[index] = signature
             if table is self.tabs.currentWidget():
                 self._select_from_table(table)
+        elif table is self.tabs.currentWidget() and self.selected_report:
+            self._request_freshness()
         self._update_pager()
 
     def _current_subdir(self) -> str:
@@ -463,9 +476,11 @@ class ReportsPage(QWidget):
             self.btn_download.setText("下载 Markdown")
             self._set_action_enabled(True, allow_single_actions=True)
             self._apply_responsive()
+            self._request_freshness()
             return
 
         self.selected_report = None
+        self._clear_freshness()
         total_bytes = sum(
             os.path.getsize(report["file_path"])
             for report in reports
@@ -495,6 +510,28 @@ class ReportsPage(QWidget):
         self.detail_meta.hide()
         self.btn_download.setText("下载 Markdown")
         self._set_action_enabled(False, allow_single_actions=False)
+        self._clear_freshness()
+
+    def _clear_freshness(self):
+        self.freshness_controller.cancel()
+        self.freshness_label.clear()
+        self.freshness_label.hide()
+        self.btn_open.setToolTip("")
+
+    def _request_freshness(self):
+        self._clear_freshness()
+        if self.selected_report:
+            self.btn_open.setToolTip("正在本地核验汇总依据，不调用 AI")
+            self.freshness_controller.request(self.selected_report["file_path"])
+
+    def _apply_freshness(self, state):
+        path = self._selected_path()
+        if not path or os.path.normcase(path) != os.path.normcase(state["path"]):
+            return
+        self.btn_open.setToolTip(state["message"])
+        self.freshness_label.setText(state["label"])
+        self.freshness_label.setToolTip(state["message"])
+        self.freshness_label.setVisible(bool(state["label"]))
 
     def _set_action_enabled(self, enabled: bool, allow_single_actions: bool = True) -> None:
         self.btn_download.setEnabled(enabled)
