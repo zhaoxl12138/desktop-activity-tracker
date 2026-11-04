@@ -423,7 +423,7 @@ def _extract_title_key(window_title):
     return window_title[:40]
 
 
-def sync_to_obsidian(filepath, obsidian_output_path):
+def sync_to_obsidian(filepath, obsidian_output_path, *, strict=False):
     """Atomically refresh one calendar-organized report in the vault."""
     if not obsidian_output_path or not os.path.exists(filepath):
         return
@@ -440,6 +440,8 @@ def sync_to_obsidian(filepath, obsidian_output_path):
         os.replace(temporary, destination)
         return str(destination)
     except Exception as e:
+        if strict:
+            raise
         print(f"[WARN] Obsidian 同步失败: {e}")
         return None
     finally:

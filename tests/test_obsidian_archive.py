@@ -47,3 +47,21 @@ def test_sync_failure_preserves_existing_report(tmp_path, monkeypatch):
     assert exporter.sync_to_obsidian(str(source), str(root)) is None
     assert destination.read_text(encoding='utf-8') == 'original'
     assert list(destination.parent.iterdir()) == [destination]
+
+
+def test_report_service_propagates_sync_failure(tmp_path, monkeypatch):
+    from daylens.services.reports_service import sync_report_to_obsidian
+    source = tmp_path / '2026-10-28.md'
+    source.write_text('native report', encoding='utf-8')
+    def fail(*_a, **_k):
+        raise PermissionError('cannot write destination')
+    monkeypatch.setattr(exporter.shutil, 'copy2', fail)
+    with pytest.raises(PermissionError):
+        sync_report_to_obsidian(str(source), str(tmp_path / 'vault'))
+    assert source.read_text(encoding='utf-8') == 'native report'
+
+
+def test_report_service_rejects_missing_sync_source(tmp_path):
+    from daylens.services.reports_service import sync_report_to_obsidian
+    with pytest.raises(FileNotFoundError):
+        sync_report_to_obsidian(str(tmp_path / 'missing.md'), str(tmp_path / 'vault'))

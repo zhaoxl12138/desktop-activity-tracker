@@ -95,8 +95,11 @@ class ReportsPage(QWidget):
         self._is_active = True
         if not self.timer.isActive():
             self.timer.start()
-        if force or self._last_signature is None:
+        loaded_at = self._report_loaded_at.get(self._current_subdir())
+        if force or loaded_at is None or time.monotonic() - loaded_at >= 60:
             self.refresh()
+        else:
+            self._select_from_table(self.tabs.currentWidget())
 
     def deactivate(self) -> None:
         self._is_active = False
@@ -399,6 +402,7 @@ class ReportsPage(QWidget):
         if loaded_at is None or time.monotonic() - loaded_at >= 60:
             self.refresh(force_subdir=subdir)
             return
+        self._select_from_table(self.tabs.currentWidget())
         self._update_pager()
 
     def _previous_page(self) -> None:
@@ -697,5 +701,4 @@ class ReportsPage(QWidget):
             QMessageBox.warning(self, "同步失败", str(exc))
 
     def _sync_one(self, filepath):
-        if self.obsidian_path and os.path.exists(filepath):
-            reports_service.sync_report_to_obsidian(filepath, self.obsidian_path)
+        return reports_service.sync_report_to_obsidian(filepath, self.obsidian_path)

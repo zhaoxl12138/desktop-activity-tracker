@@ -324,9 +324,12 @@ def generate_monthly_report(db_path: str, reports_dir: str) -> str:
     return exporter.export_monthly_report(db_path, today.year, today.month, os.path.join(reports_dir, "monthly"))
 
 
-def sync_report_to_obsidian(filepath: str, obsidian_path: str) -> None:
-    if obsidian_path and os.path.exists(filepath):
-        exporter.sync_to_obsidian(filepath, obsidian_path)
+def sync_report_to_obsidian(filepath: str, obsidian_path: str) -> str | None:
+    if not obsidian_path:
+        return None
+    if not os.path.isfile(filepath):
+        raise FileNotFoundError(f"报告文件不存在：{filepath}")
+    return exporter.sync_to_obsidian(filepath, obsidian_path, strict=True)
 
 
 def today_report_path(reports_dir: str) -> str:

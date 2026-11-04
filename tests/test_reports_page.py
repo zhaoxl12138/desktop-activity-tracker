@@ -50,6 +50,59 @@ def _select_rows(table: QTableWidget, rows: list[int]) -> None:
         )
 
 
+def test_sync_copy_failure_is_not_reported_as_success(tmp_path, monkeypatch):
+    from daylens import exporter
+    app = _app()
+    reports = tmp_path / "reports"
+    _create_report(reports, "daily", "2026-10-28.md")
+    page = ReportsPage(str(tmp_path / "usage.db"), str(reports), str(tmp_path / "vault"))
+    page.activate()
+    page.tab_daily.selectRow(0)
+    messages = []
+    def fail(*_a, **_k):
+        raise PermissionError("destination unavailable")
+    monkeypatch.setattr(exporter.shutil, "copy2", fail)
+    monkeypatch.setattr(QMessageBox, "information", lambda *_a: messages.append("success"))
+    monkeypatch.setattr(QMessageBox, "warning", lambda *_a: messages.append("failure"))
+    page._sync_selected()
+    assert messages == ["failure"]
+    page.close()
+    app.processEvents()
+
+
+def test_cached_tab_restores_selected_report_actions(tmp_path):
+    app = _app()
+    reports = tmp_path / "reports"
+    _create_report(reports, "daily", "2026-10-28.md")
+    _create_report(reports, "weekly", "2026-W44.md")
+    page = ReportsPage(str(tmp_path / "usage.db"), str(reports))
+    page.activate()
+    page.tab_daily.selectRow(0)
+    page.tabs.setCurrentIndex(1)
+    page.tabs.setCurrentIndex(0)
+    assert len(page.tab_daily.selectionModel().selectedRows()) == 1
+    assert page.selected_report is not None
+    assert page.btn_open.isEnabled() and page.btn_download.isEnabled()
+    page.close()
+    app.processEvents()
+
+
+def test_reactivation_refreshes_a_stale_report_listing(tmp_path):
+    import time
+    app = _app()
+    reports = tmp_path / "reports"
+    _create_report(reports, "daily", "2026-10-28.md")
+    page = ReportsPage(str(tmp_path / "usage.db"), str(reports))
+    page.activate()
+    page.deactivate()
+    page._report_loaded_at["daily"] = time.monotonic() - 61
+    _create_report(reports, "daily", "2026-10-29.md")
+    page.activate()
+    assert page.tab_daily.rowCount() == 2
+    page.close()
+    app.processEvents()
+
+
 def test_reports_page_starts_with_disabled_selection_actions(tmp_path: Path):
     reports_dir = tmp_path / "reports"
     _create_report(reports_dir, "daily", "2026-06-24.md")
