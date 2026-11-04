@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from PySide6.QtCore import QDate, QSignalBlocker, Qt, Signal
+from PySide6.QtCore import QDate, QEvent, QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QFrame,
@@ -101,7 +101,9 @@ class _CategoryCard(QFrame):
 
         self._time_lbl = QLabel(fmt_seconds(secs))
         self._time_lbl.setStyleSheet(f"font-size: 13px; color: {COLORS['text']}; font-weight: 600;")
-        self._time_lbl.setFixedWidth(80)
+        self._time_lbl.ensurePolished()
+        self._update_time_width()
+        self._time_lbl.installEventFilter(self)
         self._time_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         info_layout.addWidget(self._time_lbl)
 
@@ -135,12 +137,24 @@ class _CategoryCard(QFrame):
             self.clicked.emit(self._key)
         super().mousePressEvent(event)
 
+    def _update_time_width(self):
+        label = self._time_lbl
+        label.setMinimumWidth(max(80, label.fontMetrics().horizontalAdvance(label.text()) + 4))
+
+    def eventFilter(self, watched, event):  # noqa: N802
+        if watched is self._time_lbl and event.type() in (
+            QEvent.FontChange, QEvent.ApplicationFontChange, QEvent.StyleChange,
+        ):
+            self._update_time_width()
+        return super().eventFilter(watched, event)
+
     def update_values(self, secs, total_eff, cat_name=None):
         pct = int(secs / total_eff * 100) if total_eff > 0 else 0
         if cat_name is not None:
             self._name_lbl.setText(str(cat_name))
         self._bar.setValue(pct)
         self._time_lbl.setText(fmt_seconds(secs))
+        self._update_time_width()
         self._pct_lbl.setText(f"{pct}%")
 
     def set_expanded(self, expanded, detail_data=None, error_message=None, status_message=None):
