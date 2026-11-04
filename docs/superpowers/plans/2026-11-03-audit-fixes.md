@@ -19,4 +19,4 @@
 - [x] Duration: measure 120/1200-hour labels and font changes; verify both themes and three DPI scales.
 - [x] Verification: full pytest, compileall, Ruff E9/F821, GUI smoke, navigation/report/activity layouts and targeted audit layout checks, plus history-digest benchmarks. See `docs/reviews/2026-11-04-audit-fixes.md`.
 - [x] Review: independent review and follow-up passed, including real two-process Obsidian publication and quick-report partial-failure cases.
-- [ ] Release: fast-forward local main, run existing safe release build, preserve rollback binaries, restart and verify one responding formal process/heartbeat. Record hashes/results, commit documentation. Do not push without a user request.
+- [x] Release: fast-forwarded local main, verified the bundled runtime, archived the older rollback and retained the immediately previous release, then confirmed one responding window and fresh records after a clean restart. Verification is recorded; no push performed.
