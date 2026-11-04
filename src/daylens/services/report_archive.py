@@ -1,5 +1,8 @@
-"""Calendar routing for exported reports; no filesystem mutations."""
+"""Calendar routing and Windows publication coordination for vault copies."""
+import hashlib
+import os
 import re
+from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 
@@ -30,3 +33,26 @@ def obsidian_report_destination(filename: str, configured_path: str) -> Path:
     elif re.fullmatch(r'\d{4}-\d{2}', root.name) and root.parent.name == root.name[:4]:
         root = root.parent.parent
     return root / f'{day.year:04d}' / day.strftime('%Y-%m') / Path(filename).name
+
+
+@contextmanager
+def obsidian_publication_lock(destination: Path):
+    """Serialize only publication of one destination across Windows processes."""
+    if os.name != 'nt':
+        yield
+        return
+    import win32event
+
+    canonical = os.path.normcase(str(destination.resolve()))
+    key = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+    mutex = win32event.CreateMutex(None, False, 'Global\\DayLens_ObsidianSync_' + key)
+    try:
+        acquired = win32event.WaitForSingleObject(mutex, 5_000)
+        if acquired not in (win32event.WAIT_OBJECT_0, win32event.WAIT_ABANDONED):
+            raise TimeoutError('Obsidian 正在同步此报告，请稍后重试')
+        try:
+            yield
+        finally:
+            win32event.ReleaseMutex(mutex)
+    finally:
+        mutex.Close()

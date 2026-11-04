@@ -429,7 +429,7 @@ def sync_to_obsidian(filepath, obsidian_output_path, *, strict=False):
         return
     temporary = None
     try:
-        from .services.report_archive import obsidian_report_destination
+        from .services.report_archive import obsidian_publication_lock, obsidian_report_destination
         from .services.report_sections import REPORT_WRITE_LOCK, report_file_identity
         source = Path(filepath)
         if not source.is_file():
@@ -447,7 +447,7 @@ def sync_to_obsidian(filepath, obsidian_output_path, *, strict=False):
         # A slower copy of the old native file must not replace a newer vault
         # copy. Coordinate this final identity check with native publication;
         # the potentially slow copy itself does not hold the report lock.
-        with REPORT_WRITE_LOCK:
+        with obsidian_publication_lock(destination), REPORT_WRITE_LOCK:
             if report_file_identity(source) != identity:
                 raise OSError("报告已更新，请重新同步")
             os.replace(temporary, destination)
@@ -458,8 +458,13 @@ def sync_to_obsidian(filepath, obsidian_output_path, *, strict=False):
         print(f"[WARN] Obsidian 同步失败: {e}")
         return None
     finally:
-        if temporary and os.path.exists(temporary):
-            os.unlink(temporary)
+        if temporary:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                LOGGER.warning("Could not clean up a temporary Obsidian copy")
 
 
 # ── Weekly / Monthly report helpers ─────────────────────────────────

@@ -61,20 +61,16 @@ def _sync_generated_reports(paths, obsidian_path):
 def execute_report_job(job: ReportJob) -> dict[str, object]:
     """Execute a report job without touching GUI objects."""
     if job.kind == "quick":
-        from .shell_service import generate_daily_report
-
-        report_path, synced_path = generate_daily_report(
-            job.db_path,
-            os.path.join(job.reports_dir, "daily"),
-            job.obsidian_path,
-        )
+        report_path = generate_daily_report(job.db_path, job.reports_dir)
         result = {
             "kind": job.kind,
             "generated_paths": [report_path],
-            "synced_path": synced_path,
+            "synced_path": None,
         }
-        if job.obsidian_path and not synced_path:
-            result["sync_error"] = "Obsidian 同步失败，请检查输出路径后重试。"
+        try:
+            result["synced_path"] = sync_report_to_obsidian(report_path, job.obsidian_path)
+        except Exception as exc:
+            result["sync_error"] = f"Obsidian 同步失败：{exc}"
         return result
     if job.kind == "daily":
         report_path = auto_generate_daily_report(

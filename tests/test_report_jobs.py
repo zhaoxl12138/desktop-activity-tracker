@@ -23,15 +23,18 @@ def test_periodic_sync_failure_does_not_skip_later_reports(tmp_path, monkeypatch
 
 def test_quick_job_discloses_unsynced_native_report(tmp_path, monkeypatch):
     from types import SimpleNamespace
+    from daylens import database
     from daylens.gui import main_window
-    from daylens.services import reports_service, shell_service
-    source = tmp_path / '2026-10-28.md'
-    source.write_text('native report', encoding='utf-8')
-    monkeypatch.setattr(shell_service, 'generate_daily_report', lambda *_a: (str(source), None))
+    from daylens.services import reports_service
+    db = str(tmp_path / 'usage.db')
+    database.init_db(db).close()
+    def fail(*_a):
+        raise PermissionError('vault cleanup denied')
+    monkeypatch.setattr(reports_service, 'sync_report_to_obsidian', fail)
     result = reports_service.execute_report_job(reports_service.ReportJob(
-        'quick', str(tmp_path / 'usage.db'), str(tmp_path), str(tmp_path / 'vault'),
+        'quick', db, str(tmp_path), str(tmp_path / 'vault'),
     ))
-    assert result.get('sync_error')
+    assert 'vault cleanup denied' in result.get('sync_error', '')
     messages = []
     monkeypatch.setattr(main_window.QMessageBox, 'information', lambda *_a: messages.append('success'))
     monkeypatch.setattr(main_window.QMessageBox, 'warning', lambda *_a: messages.append('partial'))
@@ -79,15 +82,16 @@ def test_periodic_report_job_generates_and_syncs_in_worker_context(
 
 
 def test_quick_report_job_returns_manual_export_result(tmp_path, monkeypatch):
-    from daylens.services import shell_service
+    from daylens.services import reports_service
     from daylens.services.reports_service import ReportJob, execute_report_job
 
     report_path = str(tmp_path / "daily" / "today.md")
     monkeypatch.setattr(
-        shell_service,
+        reports_service,
         "generate_daily_report",
-        lambda *args: (report_path, "D:/Notes/today.md"),
+        lambda *args: report_path,
     )
+    monkeypatch.setattr(reports_service, 'sync_report_to_obsidian', lambda *_a: 'D:/Notes/today.md')
 
     result = execute_report_job(
         ReportJob(

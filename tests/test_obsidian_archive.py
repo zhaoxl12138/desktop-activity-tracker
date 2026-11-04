@@ -104,3 +104,67 @@ def test_slow_sync_cannot_overwrite_a_newer_native_copy(tmp_path, monkeypatch):
         with pytest.raises(OSError, match='报告已更新'):
             old.result(timeout=2)
     assert destination.read_text(encoding='utf-8') == 'new native report'
+
+
+def test_gui_and_cli_publication_do_not_interleave(tmp_path, monkeypatch):
+    import os
+    import subprocess
+    import sys
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    if os.name != 'nt':
+        pytest.skip('DayLens Windows publication lock')
+    source = tmp_path / '2026-10-28.md'
+    source.write_text('old native', encoding='utf-8')
+    vault = tmp_path / 'vault'
+    destination = vault / '2026' / '2026-10' / source.name
+    staged = tmp_path / 'child-staged'
+    publishing, release = threading.Event(), threading.Event()
+    original_replace = os.replace
+
+    def pause_replace(src, dst):
+        if Path(dst) == destination and threading.current_thread().name.startswith('gui-sync'):
+            publishing.set()
+            release.wait(5)
+        return original_replace(src, dst)
+
+    child_code = '''
+import sys, shutil
+from pathlib import Path
+sys.path.insert(0, 'src')
+from daylens import exporter
+original = shutil.copy2
+def copy(*args, **kwargs):
+    result = original(*args, **kwargs)
+    Path(sys.argv[3]).touch()
+    return result
+shutil.copy2 = copy
+exporter.sync_to_obsidian(sys.argv[1], sys.argv[2], strict=True)
+'''
+    monkeypatch.setattr(os, 'replace', pause_replace)
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix='gui-sync') as pool:
+        old = pool.submit(exporter.sync_to_obsidian, str(source), str(vault), strict=True)
+        child = None
+        try:
+            assert publishing.wait(1)
+            replacement = tmp_path / 'replacement.md'
+            replacement.write_text('new native', encoding='utf-8')
+            replacement.replace(source)
+            child = subprocess.Popen(
+                [sys.executable, '-c', child_code, str(source), str(vault), str(staged)],
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            deadline = time.monotonic() + 3
+            while not staged.exists() and child.poll() is None and time.monotonic() < deadline:
+                time.sleep(.01)
+            assert staged.exists()
+            with pytest.raises(subprocess.TimeoutExpired):
+                child.wait(timeout=.5)
+        finally:
+            release.set()
+            if child is not None:
+                assert child.wait(timeout=5) == 0
+        assert old.result(timeout=3) == str(destination)
+    assert destination.read_text(encoding='utf-8') == 'new native'
