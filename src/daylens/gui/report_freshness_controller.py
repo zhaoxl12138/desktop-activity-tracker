@@ -8,6 +8,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 
 from ..services.report_freshness_service import load_report_freshness
 from ..services.report_preview_service import PreviewCache
+from ..services.report_sections import report_file_identity
 
 
 class ReportFreshnessController(QObject):
@@ -15,7 +16,7 @@ class ReportFreshnessController(QObject):
 
     def __init__(self, db_path, reports_dir, parent=None, *, loader=None):
         super().__init__(parent)
-        cache = PreviewCache(reports_dir)
+        cache = PreviewCache(reports_dir, preview_limits=False)
         self._loader = loader or (lambda path: load_report_freshness(db_path, path, cache))
         self._results = queue.Queue()
         self._generation = 0
@@ -71,6 +72,15 @@ class ReportFreshnessController(QObject):
             return
         self._inflight = False
         if generation == self._generation:
+            identity = result.get("file_identity")
+            if identity is not None:
+                try:
+                    unchanged = report_file_identity(identity[0]) == identity
+                except OSError:
+                    unchanged = False
+                if not unchanged:
+                    result = {"level": "unverifiable", "label": "报告待核验",
+                              "message": "报告已更新，重新选择后核验"}
             self.ready.emit(dict(result, path=path))
         if self._pending is not None:
             request, self._pending = self._pending, None

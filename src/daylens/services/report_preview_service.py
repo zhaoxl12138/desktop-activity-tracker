@@ -9,14 +9,15 @@ from pathlib import Path
 import re
 import threading
 
-from .report_sections import summary_section, END
+from .report_sections import END, report_file_identity, summary_section
 
 
 class PreviewCache:
-    def __init__(self, root, *, max_entries=8, max_bytes=4 * 1024 * 1024):
+    def __init__(self, root, *, max_entries=8, max_bytes=4 * 1024 * 1024, preview_limits=True):
         self.root = Path(root).resolve()
         self.max_entries = max_entries
         self.max_bytes = max_bytes
+        self.preview_limits = preview_limits
         self._entries = OrderedDict()
         self._bytes = 0
         self._lock = threading.Lock()
@@ -35,7 +36,7 @@ class PreviewCache:
             raise ValueError("仅能预览报告目录内的 Markdown 文件")
         for _attempt in range(2):
             before = path.stat()
-            key = (str(path), before.st_mtime_ns, before.st_size)
+            key = report_file_identity(path, before)
             with self._lock:
                 if key in self._entries:
                     self._entries.move_to_end(key)
@@ -43,12 +44,7 @@ class PreviewCache:
             truncated = before.st_size > 2 * 1024 * 1024
             with path.open("rb") as handle:
                 raw = handle.read(128 * 1024 if truncated else 2 * 1024 * 1024 + 1)
-            after = path.stat()
-            if (before.st_mtime_ns, before.st_size, before.st_ino) != (
-                after.st_mtime_ns,
-                after.st_size,
-                after.st_ino,
-            ):
+            if key != report_file_identity(path):
                 continue
             # A bounded byte excerpt may end inside a UTF-8 codepoint, but
             # invalid bytes elsewhere are still rejected rather than replaced.
@@ -61,7 +57,9 @@ class PreviewCache:
             else:
                 content = raw.decode("utf-8-sig")
             content = content.replace("\r\n", "\n").replace("\r", "\n")
-            truncated = truncated or len(content) > 200000 or content.count("\n") > 1200
+            truncated = truncated or (self.preview_limits and (
+                len(content) > 200000 or content.count("\n") > 1200
+            ))
             payload = {
                 "text": content[: 128 * 1024] if truncated else content,
                 "path": str(path),
@@ -166,6 +164,14 @@ def summary_status(db_path, content):
             or (checked_dates[-1] - checked_dates[0]).days > 30
         ):
             return "汇总范围无效，无法验证"
+        native_match = re.search(r"<!-- daylens-report:(.*?) -->", content)
+        if native_match:
+            native = json.loads(native_match[1])
+            native_dates = native.get("dates")
+            if (native.get("kind") != evidence["kind"]
+                    or not isinstance(native_dates, list)
+                    or any(day not in native_dates for day in evidence["dates"])):
+                return "汇总与报告周期不一致，无法验证"
         body = section[match.end() : -len(END)]
         if hashlib.sha256(body.encode()).hexdigest() != evidence["body_hash"]:
             return "汇总内容已变化，无法验证"

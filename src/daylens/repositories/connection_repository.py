@@ -5,12 +5,14 @@ from __future__ import annotations
 import os
 import sqlite3
 import threading
+from contextlib import contextmanager
 
 WAL_CHECKPOINT_INTERVAL = 100
 
 _shared_read_conn = None
 _shared_read_db_path = None
 _shared_read_thread_id = None
+_read_snapshots = threading.local()
 
 
 class TrackedConnection(sqlite3.Connection):
@@ -117,7 +119,10 @@ class ReadConnectionContext:
         self.own = False
 
     def __enter__(self):
-        if (
+        pinned = getattr(_read_snapshots, "connections", {}).get(str(self.db_path))
+        if pinned is not None:
+            self.conn = pinned
+        elif (
             _shared_read_conn is not None
             and _shared_read_db_path == self.db_path
             and _shared_read_thread_id == threading.get_ident()
@@ -159,6 +164,26 @@ def close_shared_read_conn() -> None:
 
 def read_conn(db_path: str) -> ReadConnectionContext:
     return ReadConnectionContext(db_path)
+
+
+@contextmanager
+def read_snapshot(db_path: str):
+    """Pin nested repository reads on this thread to one SQLite snapshot."""
+    key = str(db_path)
+    connections = getattr(_read_snapshots, "connections", None)
+    if connections is None:
+        connections = _read_snapshots.connections = {}
+    if key in connections:
+        yield connections[key]
+        return
+    with read_conn(db_path) as conn:
+        conn.execute("SAVEPOINT daylens_read_snapshot")
+        connections[key] = conn
+        try:
+            yield conn
+        finally:
+            connections.pop(key)
+            conn.execute("RELEASE daylens_read_snapshot")
 
 
 def wal_checkpoint(conn) -> None:

@@ -103,6 +103,26 @@ def test_reactivation_refreshes_a_stale_report_listing(tmp_path):
     app.processEvents()
 
 
+def test_generation_feedback_distinguishes_sync_failure_from_native_failure(tmp_path, monkeypatch):
+    import time
+    from daylens import exporter
+    app = _app()
+    reports = tmp_path / "reports"
+    page = ReportsPage(str(tmp_path / "usage.db"), str(reports), str(tmp_path / "vault"))
+    def fail(*_a, **_k):
+        raise PermissionError("vault denied")
+    monkeypatch.setattr(exporter.shutil, "copy2", fail)
+    page._generate(lambda *_a: str(_create_report(reports, "daily", "2026-10-28.md")), "日报")
+    deadline = time.monotonic() + 3
+    while page._generation_jobs and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(.005)
+    assert "已生成，同步失败" in page.automation_status.text()
+    assert page.selected_report is not None
+    page.close()
+    app.processEvents()
+
+
 def test_reports_page_starts_with_disabled_selection_actions(tmp_path: Path):
     reports_dir = tmp_path / "reports"
     _create_report(reports_dir, "daily", "2026-06-24.md")

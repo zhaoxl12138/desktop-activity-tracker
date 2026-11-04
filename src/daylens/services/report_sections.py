@@ -13,6 +13,12 @@ START = '<!-- daylens-ai-summary:start -->'
 END = '<!-- daylens-ai-summary:end -->'
 
 
+def report_file_identity(path, info=None):
+    path = Path(path)
+    info = path.stat() if info is None else info
+    return (str(path), info.st_mtime_ns, info.st_size, info.st_dev, info.st_ino)
+
+
 def summary_section(text):
     start = text.find(START)
     end = text.find(END, start)
@@ -25,7 +31,9 @@ def preserve_summary(path, content):
     path = Path(path)
     if path.suffix.lower() != '.md' or START in content or not path.exists():
         return content
-    section = summary_section(path.read_text(encoding='utf-8'))
+    # Preserve original CRLF/LF bytes inside the AI appendix.
+    with path.open(encoding='utf-8', newline='') as handle:
+        section = summary_section(handle.read())
     return content.rstrip() + '\n\n' + section + '\n' if section else content
 
 

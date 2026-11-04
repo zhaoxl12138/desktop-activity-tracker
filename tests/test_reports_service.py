@@ -339,3 +339,16 @@ def test_backfill_continues_after_one_report_failure(tmp_path, monkeypatch):
     assert result["generated_count"] == 2
     assert result["failure_count"] == 1
     assert result["failures"][0]["date"] == "2026-07-20"
+
+
+def test_backfill_records_sync_failures_but_keeps_native_reports(tmp_path, monkeypatch):
+    db = _create_database_with_dates(tmp_path, ["2026-07-20", "2026-07-21"])
+    def fail(*_a, **_k):
+        raise PermissionError("vault denied")
+    monkeypatch.setattr(exporter.shutil, "copy2", fail)
+    result = reports_service.backfill_missing_daily_reports(
+        str(db), str(tmp_path / "reports"), str(tmp_path / "vault"), today_str="2026-07-22",
+    )
+    assert result["generated_count"] == 2
+    assert result["failure_count"] == 2
+    assert all(Path(path).is_file() for path in result["generated_paths"])

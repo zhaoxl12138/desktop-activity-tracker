@@ -2,21 +2,27 @@
 from __future__ import annotations
 
 from .report_preview_service import summary_status
-from .report_sections import START, summary_section
+from .report_sections import START, report_file_identity, summary_section
 
 
 def load_report_freshness(db_path, path, cache):
-    payload = cache.load(path)
-    if payload["truncated"]:
-        return {"level": "unverifiable", "label": "AI 汇总待核验",
-                "message": "报告过大，无法完整核验；原文件未修改"}
-    return report_freshness(db_path, payload["text"])
+    for _attempt in range(2):
+        payload = cache.load(path)
+        if payload["truncated"]:
+            state = {"level": "unverifiable", "label": "报告待核验",
+                     "message": "报告过大，无法完整核验；原文件未修改"}
+        else:
+            state = report_freshness(db_path, payload["text"])
+        if report_file_identity(payload["path"]) == payload["identity"]:
+            return dict(state, file_identity=payload["identity"])
+    raise OSError("报告正在更新，请稍后核验")
 
 
 def report_freshness(db_path: str, content: str) -> dict[str, str]:
     if not summary_section(content):
         return {"level": "none", "label": "", "message": "未附加 AI 汇总"}
-    message = summary_status(db_path, content)
+    # Validate canonical evidence text without modifying preserved report bytes.
+    message = summary_status(db_path, content.replace("\r\n", "\n").replace("\r", "\n"))
     if "旧数据" in message:
         return {"level": "stale", "label": "AI 汇总已过期", "message": message}
     if message == "AI 汇总证据一致":

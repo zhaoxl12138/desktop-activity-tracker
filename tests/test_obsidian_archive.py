@@ -65,3 +65,42 @@ def test_report_service_rejects_missing_sync_source(tmp_path):
     from daylens.services.reports_service import sync_report_to_obsidian
     with pytest.raises(FileNotFoundError):
         sync_report_to_obsidian(str(tmp_path / 'missing.md'), str(tmp_path / 'vault'))
+
+
+def test_strict_exporter_never_succeeds_with_a_missing_source(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        exporter.sync_to_obsidian(str(tmp_path / 'missing.md'), str(tmp_path / 'vault'), strict=True)
+
+
+def test_slow_sync_cannot_overwrite_a_newer_native_copy(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    import shutil
+    import threading
+
+    source = tmp_path / '2026-10-28.md'
+    source.write_text('old native report', encoding='utf-8')
+    vault = str(tmp_path / 'vault')
+    copied, release = threading.Event(), threading.Event()
+    original_copy = shutil.copy2
+
+    def copy_and_pause(*args, **kwargs):
+        result = original_copy(*args, **kwargs)
+        if threading.current_thread().name.startswith('old-sync'):
+            copied.set()
+            release.wait(2)
+        return result
+
+    monkeypatch.setattr(shutil, 'copy2', copy_and_pause)
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix='old-sync') as pool:
+        old = pool.submit(exporter.sync_to_obsidian, str(source), vault, strict=True)
+        try:
+            assert copied.wait(1)
+            replacement = tmp_path / 'replacement.md'
+            replacement.write_text('new native report', encoding='utf-8')
+            replacement.replace(source)
+            destination = Path(exporter.sync_to_obsidian(str(source), vault, strict=True))
+        finally:
+            release.set()
+        with pytest.raises(OSError, match='报告已更新'):
+            old.result(timeout=2)
+    assert destination.read_text(encoding='utf-8') == 'new native report'

@@ -7,17 +7,19 @@ correctness patch, not a new analytics module or a database migration.
    Audit failure rolls back sessions/rules; override failure retains the existing
    compensation path. Never change any time counter.
 2. Replace the incomplete completed-history revision with a deterministic,
-   streaming content digest of the selected session/sample rows. Pin both reads
-   to one read transaction. Today-only writes must not invalidate history.
+   streaming digest of mutable session rows. Retain a compact SQL identity for
+   append/delete-only legacy samples. Pin the digest and cache loaders to one
+   read transaction. Today-only writes must not invalidate history.
 3. Reuse local AI-evidence validation without restoring Markdown preview or the
    retired manual AI controls. Regenerated native reports mark stale/unverifiable
    appended summaries, retaining their exact original section. Selection in the
    report center checks freshness in a single-flight background reader, rejects
    obsolete results and shows only actionable short state feedback. Existing
    history is not rewritten merely by selecting/opening it. No API requests.
-4. Preserve the best-effort legacy sync API, but add explicit strict error
-   propagation for GUI/report jobs. A sync failure cannot be reported as success;
-   native source and previous destination survive failure.
+4. Preserve the best-effort legacy sync API; report configured sync failures
+   separately from native generation. Automatic batches attempt every output.
+   Revalidate the source identity before atomically publishing a vault copy;
+   a slow stale copy cannot replace a newer one.
 5. Restore the selected row's data/actions when returning to a cached report tab.
 6. Size category duration labels from their rendered text/font, including updated
    values and DPI/font changes; do not impose a five-character limit.

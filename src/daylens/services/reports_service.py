@@ -48,6 +48,16 @@ class ReportPage:
     page_size: int
 
 
+def _sync_generated_reports(paths, obsidian_path):
+    failures = []
+    for path in paths:
+        try:
+            sync_report_to_obsidian(path, obsidian_path)
+        except Exception as exc:
+            failures.append({"path": path, "error": str(exc)})
+    return {"sync_failures": failures} if failures else {}
+
+
 def execute_report_job(job: ReportJob) -> dict[str, object]:
     """Execute a report job without touching GUI objects."""
     if job.kind == "quick":
@@ -58,22 +68,24 @@ def execute_report_job(job: ReportJob) -> dict[str, object]:
             os.path.join(job.reports_dir, "daily"),
             job.obsidian_path,
         )
-        return {
+        result = {
             "kind": job.kind,
             "generated_paths": [report_path],
             "synced_path": synced_path,
         }
+        if job.obsidian_path and not synced_path:
+            result["sync_error"] = "Obsidian 同步失败，请检查输出路径后重试。"
+        return result
     if job.kind == "daily":
         report_path = auto_generate_daily_report(
             job.db_path,
             job.reports_dir,
         )
         generated = [report_path] if report_path else []
-        if report_path:
-            sync_report_to_obsidian(report_path, job.obsidian_path)
         return {
             "kind": job.kind,
             "generated_paths": generated,
+            **_sync_generated_reports(generated, job.obsidian_path),
         }
     if job.kind == "periodic":
         from pathlib import Path
@@ -87,11 +99,10 @@ def execute_report_job(job: ReportJob) -> dict[str, object]:
             directory=Path(job.db_path).resolve().parent / 'intelligence',
         )
         generated = list(dict.fromkeys(generated + ai['generated_paths']))
-        for filepath in generated:
-            sync_report_to_obsidian(filepath, job.obsidian_path)
         return {
             "kind": job.kind,
             "generated_paths": generated,
+            **_sync_generated_reports(generated, job.obsidian_path),
         }
     if job.kind == "backfill":
         summary = backfill_missing_daily_reports(
@@ -300,7 +311,7 @@ def backfill_missing_daily_reports(
             )
             generated_paths.append(generated_path)
             if obsidian_path:
-                exporter.sync_to_obsidian(generated_path, obsidian_path)
+                sync_report_to_obsidian(generated_path, obsidian_path)
         except Exception as exc:
             failures.append({"date": date_str, "error": str(exc)})
 
@@ -327,8 +338,6 @@ def generate_monthly_report(db_path: str, reports_dir: str) -> str:
 def sync_report_to_obsidian(filepath: str, obsidian_path: str) -> str | None:
     if not obsidian_path:
         return None
-    if not os.path.isfile(filepath):
-        raise FileNotFoundError(f"报告文件不存在：{filepath}")
     return exporter.sync_to_obsidian(filepath, obsidian_path, strict=True)
 
 

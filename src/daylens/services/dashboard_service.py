@@ -2269,6 +2269,19 @@ def load_today_snapshot(
     resolve_display,
     goal_settings: dict | None = None,
 ) -> dict[str, object]:
+    # History cache keys and cache-miss loaders must see the same committed
+    # evidence, even if a correction commits in between their SQL statements.
+    if os.path.isfile(db_path):
+        with database.read_snapshot(db_path):
+            return _load_today_snapshot(db_path, resolve_display, goal_settings)
+    return _load_today_snapshot(db_path, resolve_display, goal_settings)
+
+
+def _load_today_snapshot(
+    db_path: str,
+    resolve_display,
+    goal_settings: dict | None = None,
+) -> dict[str, object]:
     captured_now = datetime.now()
     today_date = captured_now.date()
     today_str = today_date.strftime("%Y-%m-%d")

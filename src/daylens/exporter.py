@@ -425,19 +425,32 @@ def _extract_title_key(window_title):
 
 def sync_to_obsidian(filepath, obsidian_output_path, *, strict=False):
     """Atomically refresh one calendar-organized report in the vault."""
-    if not obsidian_output_path or not os.path.exists(filepath):
+    if not obsidian_output_path:
         return
     temporary = None
     try:
         from .services.report_archive import obsidian_report_destination
+        from .services.report_sections import REPORT_WRITE_LOCK, report_file_identity
+        source = Path(filepath)
+        if not source.is_file():
+            if strict:
+                raise FileNotFoundError(f"报告文件不存在：{filepath}")
+            return None
+        identity = report_file_identity(source)
         destination = obsidian_report_destination(os.path.basename(filepath), obsidian_output_path)
-        if Path(filepath).resolve() == destination.resolve():
+        if source.resolve() == destination.resolve():
             return str(destination)
         destination.parent.mkdir(parents=True, exist_ok=True)
         fd, temporary = tempfile.mkstemp(prefix='.daylens-sync-', dir=str(destination.parent))
         os.close(fd)
         shutil.copy2(filepath, temporary)
-        os.replace(temporary, destination)
+        # A slower copy of the old native file must not replace a newer vault
+        # copy. Coordinate this final identity check with native publication;
+        # the potentially slow copy itself does not hold the report lock.
+        with REPORT_WRITE_LOCK:
+            if report_file_identity(source) != identity:
+                raise OSError("报告已更新，请重新同步")
+            os.replace(temporary, destination)
         return str(destination)
     except Exception as e:
         if strict:

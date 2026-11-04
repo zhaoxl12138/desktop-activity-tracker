@@ -52,6 +52,21 @@ def test_preview_cache_is_bounded_and_large_reports_degrade(tmp_path):
     assert cache.load(dense)["truncated"] is True
 
 
+def test_preview_cache_detects_same_size_and_mtime_atomic_replacement(tmp_path):
+    import os
+    from daylens.services.report_preview_service import PreviewCache
+    path = tmp_path / 'report.md'
+    path.write_text('first', encoding='utf-8')
+    cache = PreviewCache(tmp_path)
+    assert cache.load(path)['text'] == 'first'
+    previous = path.stat()
+    replacement = tmp_path / 'replacement.md'
+    replacement.write_text('later', encoding='utf-8')
+    os.utime(replacement, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+    replacement.replace(path)
+    assert cache.load(path)['text'] == 'later'
+
+
 def test_preview_rejects_outside_root_and_invalid_encoding(tmp_path):
     from daylens.services.report_preview_service import PreviewCache
 

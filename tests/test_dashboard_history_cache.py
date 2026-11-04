@@ -71,6 +71,39 @@ def test_dashboard_refresh_sees_repeated_category_correction(tmp_path, monkeypat
     assert second["entertainment_history"]["week"]["summary"]["total_seconds"] == 0
 
 
+def test_dashboard_does_not_cache_new_content_under_old_revision(tmp_path, monkeypatch):
+    from daylens.services import dashboard_service
+
+    class Today(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 10, 29, 12)
+
+    monkeypatch.setattr(dashboard_service, "datetime", Today)
+    db = _history_database(tmp_path)
+    original_revision = database.query_completed_history_revision
+
+    def edit(category, name):
+        conn = sqlite3.connect(db)
+        conn.execute("UPDATE activity_sessions SET category_key=?, category_name=?", (category, name))
+        conn.commit()
+        conn.close()
+
+    def revision_then_edit(*args):
+        revision = original_revision(*args)
+        monkeypatch.setattr(database, "query_completed_history_revision", original_revision)
+        edit("reading", "阅读学习")
+        return revision
+
+    monkeypatch.setattr(database, "query_completed_history_revision", revision_then_edit)
+    first = dashboard_service.load_today_snapshot(db, lambda p, _: p)
+    second = dashboard_service.load_today_snapshot(db, lambda p, _: p)
+    edit("gaming", "游戏娱乐")
+    restored = dashboard_service.load_today_snapshot(db, lambda p, _: p)
+    assert [s["entertainment_history"]["week"]["summary"]["total_seconds"]
+            for s in (first, second, restored)] == [600, 0, 600]
+
+
 def test_completed_history_cache_ignores_live_today_changes():
     cache = DashboardHistoryCache()
     calls = []

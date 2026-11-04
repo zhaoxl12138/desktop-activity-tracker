@@ -1,6 +1,44 @@
 from __future__ import annotations
 
 
+def test_periodic_sync_failure_does_not_skip_later_reports(tmp_path, monkeypatch):
+    from daylens.services import intelligence_report_schedule, reports_service
+    paths = [str(tmp_path / '2026-10-28.md'), str(tmp_path / '2026-10-29.md')]
+    monkeypatch.setattr(reports_service, 'auto_generate_current_reports', lambda *_a: paths)
+    monkeypatch.setattr(intelligence_report_schedule, 'run_scheduled_reviews',
+                        lambda *_a, **_k: {'generated_paths': []})
+    attempts = []
+    def sync(path, _destination):
+        attempts.append(path)
+        if path == paths[0]:
+            raise PermissionError('vault denied')
+    monkeypatch.setattr(reports_service, 'sync_report_to_obsidian', sync)
+    result = reports_service.execute_report_job(reports_service.ReportJob(
+        'periodic', str(tmp_path / 'usage.db'), str(tmp_path), str(tmp_path / 'vault'),
+    ))
+    assert attempts == paths
+    assert result['generated_paths'] == paths
+    assert result['sync_failures'] == [{'path': paths[0], 'error': 'vault denied'}]
+
+
+def test_quick_job_discloses_unsynced_native_report(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from daylens.gui import main_window
+    from daylens.services import reports_service, shell_service
+    source = tmp_path / '2026-10-28.md'
+    source.write_text('native report', encoding='utf-8')
+    monkeypatch.setattr(shell_service, 'generate_daily_report', lambda *_a: (str(source), None))
+    result = reports_service.execute_report_job(reports_service.ReportJob(
+        'quick', str(tmp_path / 'usage.db'), str(tmp_path), str(tmp_path / 'vault'),
+    ))
+    assert result.get('sync_error')
+    messages = []
+    monkeypatch.setattr(main_window.QMessageBox, 'information', lambda *_a: messages.append('success'))
+    monkeypatch.setattr(main_window.QMessageBox, 'warning', lambda *_a: messages.append('partial'))
+    main_window.MainWindow._on_background_task_completed(SimpleNamespace(), 'report:quick', result)
+    assert messages == ['partial']
+
+
 def test_periodic_report_job_generates_and_syncs_in_worker_context(
     tmp_path,
     monkeypatch,

@@ -927,9 +927,9 @@ def query_completed_history_revision(
 ) -> tuple | None:
     """Fingerprint completed evidence, including in-place classification edits.
 
-    Stream each indexed date range once rather than relying on counts/version
-    sets, which cannot detect repeated corrections or changed counters/titles.
-    The digest is local and bounded in memory; no titles leave this process.
+    Hash mutable session evidence instead of counts/version sets. Legacy samples
+    are append/delete-only in DayLens, so retain a cheap SQL identity for them;
+    pulling every per-tick sample into Python would defeat the history cache.
     """
 
     try:
@@ -937,18 +937,21 @@ def query_completed_history_revision(
             digest = hashlib.sha256()
             conn.execute("SAVEPOINT completed_history_revision")
             try:
-                for table in ("activity_sessions", "activity_logs"):
-                    digest.update(table.encode("ascii"))
-                    cursor = conn.execute(
-                        f"SELECT * FROM {table} WHERE date BETWEEN ? AND ? ORDER BY date, id",
-                        (start_date, end_date),
-                    )
-                    for row in cursor:
-                        digest.update(json.dumps(
-                            tuple(row), ensure_ascii=True, separators=(",", ":"),
-                            default=str,
-                        ).encode("utf-8"))
-                        digest.update(b"\n")
+                cursor = conn.execute(
+                    "SELECT * FROM activity_sessions WHERE date BETWEEN ? AND ? ORDER BY date, id",
+                    (start_date, end_date),
+                )
+                for row in cursor:
+                    digest.update(json.dumps(
+                        tuple(row), ensure_ascii=True, separators=(",", ":"),
+                        default=str,
+                    ).encode("utf-8"))
+                    digest.update(b"\n")
+                legacy = conn.execute(
+                    """SELECT COUNT(*), COALESCE(MAX(id), 0), COALESCE(MAX(timestamp), '')
+                       FROM activity_logs WHERE date BETWEEN ? AND ?""",
+                    (start_date, end_date),
+                ).fetchone()
             finally:
                 conn.execute("RELEASE completed_history_revision")
     except Exception as error:
@@ -958,7 +961,7 @@ def query_completed_history_revision(
         if "no such table" in str(error).casefold():
             return None
         raise
-    return ("history-content-v2", digest.hexdigest())
+    return ("history-content-v2", digest.hexdigest(), *tuple(legacy))
 
 
 def query_category_detail(read_conn, db_path: str, date_str: str, category_key: str, limit: int = 5) -> list[dict]:

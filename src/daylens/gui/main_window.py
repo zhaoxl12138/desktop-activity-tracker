@@ -1078,6 +1078,9 @@ class MainWindow(QMainWindow):
             message = f"日报已保存到\n{path}"
             if synced:
                 message += f"\n\n已同步到 Obsidian:\n{synced}"
+            if data.get("sync_error"):
+                QMessageBox.warning(self, "日报已生成，未同步", message + "\n\n" + data["sync_error"])
+                return
             QMessageBox.information(self, "生成成功", message)
             return
         if key == "report:backfill":
@@ -1094,6 +1097,8 @@ class MainWindow(QMainWindow):
             data = result if isinstance(result, dict) else {}
             for filepath in data.get("generated_paths", []):
                 print(f"[AutoReport] Generated: {filepath}", file=sys.stderr)
+            for failure in data.get("sync_failures", []):
+                print(f"[AutoReport] Obsidian sync failed: {failure['path']}: {failure['error']}", file=sys.stderr)
 
     def _on_background_task_failed(self, key: str, error: str) -> None:
         if key == "report:quick":

@@ -639,7 +639,10 @@ class ReportsPage(QWidget):
         db_path, reports_dir, obsidian = self.db_path, self.reports_dir, self.obsidian_path
         def generate():
             path = generator(db_path,reports_dir)
-            reports_service.sync_report_to_obsidian(path,obsidian)
+            try:
+                reports_service.sync_report_to_obsidian(path,obsidian)
+            except Exception as exc:
+                return {"path": path, "sync_error": str(exc)}
             return path
         self._generation_jobs[key] = report_name
         if not self.background_tasks.submit(key,generate):
@@ -656,7 +659,7 @@ class ReportsPage(QWidget):
             self._status_timer.start(5000)
 
     def _refresh_generation_status(self, completed_name: str = '') -> None:
-        messages = [f'{name}生成失败：{error}' for name, error in self._generation_errors.items()]
+        messages = list(self._generation_errors.values())
         pending = list(dict.fromkeys(self._generation_jobs.values()))
         if pending:
             messages.append('正在生成：' + '、'.join(pending))
@@ -669,6 +672,9 @@ class ReportsPage(QWidget):
         name = self._generation_jobs.pop(key,None)
         if name is None:
             return
+        if isinstance(result, dict):
+            self._generation_errors[name] = f"{name}已生成，同步失败：{result['sync_error']}"
+            result = result["path"]
         index = {'日报':0,'周报':1,'月报':2}[name]
         self.tabs.setCurrentIndex(index)
         self._report_pages[self._current_subdir()]=1
@@ -684,7 +690,7 @@ class ReportsPage(QWidget):
     def _generation_failed(self,key,error):
         name = self._generation_jobs.pop(key,None)
         if name is not None:
-            self._generation_errors[name] = str(error)
+            self._generation_errors[name] = f"{name}生成失败：{error}"
             self._refresh_generation_status()
 
     def _sync_selected(self) -> None:
