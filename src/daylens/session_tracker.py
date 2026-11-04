@@ -8,6 +8,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+from .measurement import PlaybackState
 from .window_detector import is_shell_desktop_window
 
 
@@ -1159,6 +1160,8 @@ class SessionTracker:
         audio_playing = self._is_audio_playing(
             p.get("cat_key", ""),
             p.get("pid", self._last_pid),
+            p.get("process_name", ""),
+            p.get("raw_title", ""),
         )
         work_voice_active = self._is_work_voice_active(
             p.get("cat_key", ""),
@@ -1209,12 +1212,23 @@ class SessionTracker:
 
     # ── Internals ──────────────────────────────────────────────────
 
-    def _is_audio_playing(self, category_key, pid):
-        return (
-            category_key == "video"
-            and self._audio_detector is not None
-            and self._audio_detector.is_playing(pid)
-        )
+    def _is_audio_playing(self, category_key, pid, process_name, window_title):
+        detector = self._audio_detector
+        if category_key != "video" or detector is None:
+            return False
+        if (process_name or "").casefold() == "qqlive.exe" and not (window_title or "").strip():
+            # An untitled Tencent window can just be the app shell. Neither
+            # global audio nor a failed query establishes that it is playing.
+            # A failed session write can leave Tencent as the current session
+            # after a different process has already become the foreground.
+            if (self._last_process_name or "").casefold() != "qqlive.exe":
+                return False
+            observe = getattr(detector, "observe_playback", None)
+            if not callable(observe):
+                return False
+            evidence = observe(pid)
+            return evidence.state == PlaybackState.PLAYING and evidence.source == "target_peak"
+        return detector.is_playing(pid)
 
     def _is_work_voice_active(self, category_key, pid, exe_path) -> bool:
         if _get_domain(category_key) != "work_study":
@@ -1263,6 +1277,8 @@ class SessionTracker:
         audio_playing = self._is_audio_playing(
             self._current.category_key,
             self._last_pid,
+            self._current.process_name,
+            self._current.window_title,
         )
         work_voice_active = self._is_work_voice_active(
             self._current.category_key,
@@ -1408,9 +1424,13 @@ class SessionTracker:
             p.get("active_rule", s.active_rule if s else "")
             if p else (s.active_rule if s else "")
         )
+        process_name = p.get("process_name", "") if p else (s.process_name if s else "")
+        window_title = p.get("raw_title", "") if p else (s.window_title if s else "")
         audio_playing = self._is_audio_playing(
             cat_key,
             p.get("pid", self._last_pid) if p else self._last_pid,
+            process_name,
+            window_title,
         )
         bucket = self._last_attention_state
         is_eff = bucket in {"engaged", "passive"}
@@ -1423,9 +1443,9 @@ class SessionTracker:
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "date": s.date if s else datetime.now().strftime("%Y-%m-%d"),
             "session_id": s.session_id if s else "",
-            "process_name": (p.get("process_name", s.process_name if s else "") if p else (s.process_name if s else "")),
+            "process_name": process_name,
             "exe_path": (p.get("exe_path", s.exe_path if s else "") if p else (s.exe_path if s else "")),
-            "window_title": (p.get("raw_title", s.window_title if s else "") if p else (s.window_title if s else "")),
+            "window_title": window_title,
             "normalized_title": (p.get("norm_title", s.normalized_title if s else "") if p else (s.normalized_title if s else "")),
             "category_key": cat_key,
             "category_name": cat_name,

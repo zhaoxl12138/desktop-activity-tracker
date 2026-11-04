@@ -258,6 +258,102 @@ def test_idle_video_without_audio_back_corrects_engaged_window_to_idle():
     _assert_attention_conserved(session)
 
 
+@pytest.mark.parametrize(
+    "process,title,signal,expected_passive",
+    [
+        ("QQLive.exe", "", "unrelated", 0),
+        ("qqlive.EXE", "  ", "query_error", 0),
+        ("QQLive.exe", "", "missing_pid", 0),
+        ("QQLive.exe", "", "target_silent", 0),
+        ("QQLive.exe", "", "target", 3),
+        ("QQLive.exe", "", "child", 3),
+        ("QQLive.exe", "Movie", "unrelated", 3),
+        ("VLC.exe", "", "unrelated", 3),
+    ],
+)
+def test_tencent_untitled_requires_attributed_playback(
+    monkeypatch, process, title, signal, expected_passive,
+):
+    from types import SimpleNamespace
+
+    from daylens.audio_detector import AudioDetector, AudioUtilities
+
+    monkeypatch.setitem(MappingClassifier._MAPPING, process, MappingClassifier._MAPPING["VLC.exe"])
+    detector = AudioDetector(check_interval=60)
+    monkeypatch.setattr(detector, "_process_tree_pids", lambda pid: {pid, 11})
+
+    def audio_sessions():
+        if signal == "query_error":
+            raise OSError("Audio unavailable")
+        signals = [(99, 0.3)]
+        if signal == "target_silent":
+            signals.append((10, 0.0))
+        if signal == "target":
+            signals.append((10, 0.3))
+        if signal == "child":
+            signals.append((11, 0.3))
+        return [
+            SimpleNamespace(
+                ProcessId=pid,
+                _ctl=SimpleNamespace(QueryInterface=lambda _, peak=peak:
+                    SimpleNamespace(GetPeakValue=lambda: peak)),
+            )
+            for pid, peak in signals
+        ]
+
+    monkeypatch.setattr(AudioUtilities, "GetAllSessions", audio_sessions)
+    tracker = _tracker(passive_threshold=99, audio_detector=detector)
+    window = {
+        "process_name": process, "window_title": title, "exe_path": "",
+        "pid": None if signal == "missing_pid" else 10,
+    }
+
+    for _ in range(3):
+        snapshot = tracker.tick(0, window)
+
+    session = tracker.current_session
+    assert session.passive_seconds == expected_passive
+    assert session.idle_seconds == 3 - expected_passive
+    assert snapshot["audio_playing"] is bool(expected_passive)
+    _assert_attention_conserved(session)
+
+    tracker.mark_user_active()
+    snapshot = tracker.tick(0, window)
+    assert snapshot["attention_state"] == "engaged"
+    assert session.engaged_seconds == 1
+    _assert_attention_conserved(session)
+
+
+def test_tencent_does_not_credit_new_foreground_pid_when_session_end_fails(monkeypatch):
+    from daylens.measurement import PlaybackEvidence, PlaybackState
+
+    class EvidenceAudio(AudioForPid):
+        def observe_playback(self, pid):
+            playing = self.is_playing(pid)
+            return PlaybackEvidence(
+                PlaybackState.PLAYING if playing else PlaybackState.PAUSED,
+                "target_peak" if playing else "target_silent", 0, 3, playing,
+            )
+
+    def fail_end(_session):
+        raise OSError("database busy")
+
+    monkeypatch.setitem(MappingClassifier._MAPPING, "QQLive.exe", MappingClassifier._MAPPING["VLC.exe"])
+    tracker = _tracker(passive_threshold=99, audio_detector=EvidenceAudio(playing_pid=20))
+    tracker._on_session_end = fail_end
+    window = {"process_name": "QQLive.exe", "window_title": "", "pid": 10}
+    tracker.tick(0, window)
+    tracker.tick(0, window)
+
+    with pytest.raises(OSError, match="database busy"):
+        tracker.tick(0, {"process_name": "VLC.exe", "window_title": "Movie", "pid": 20})
+
+    session = tracker.current_session
+    assert session.process_name == "QQLive.exe"
+    assert session.passive_seconds == 0
+    _assert_attention_conserved(session)
+
+
 def test_audio_from_non_video_process_never_counts_as_passive():
     tracker = _tracker(
         idle_threshold=1,
