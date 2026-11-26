@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from types import SimpleNamespace
 
 
@@ -59,3 +60,29 @@ def test_scheduled_reports_are_submitted_to_background_queue(monkeypatch):
         "report:daily",
         "report:backfill",
     ]
+
+
+def test_phone_archive_runs_once_after_0005_on_the_report_timer(monkeypatch):
+    from daylens.gui import main_window
+
+    now = datetime(2026, 11, 27, 0, 4)
+
+    class Clock:
+        @staticmethod
+        def now():
+            return now
+
+    monkeypatch.setattr(main_window, "datetime", Clock)
+    window = _window()
+    window._phone_sync_day = None
+    window.paths = SimpleNamespace(phone_archive="local")
+    assert main_window.MainWindow._queue_phone_archive_sync(window)
+    window._queue_phone_archive_sync = lambda: main_window.MainWindow._queue_phone_archive_sync(window)
+    main_window.MainWindow._check_phone_archive_schedule(window)
+    assert len(window.background_tasks.submissions) == 1
+
+    now = now.replace(minute=5)
+    main_window.MainWindow._check_phone_archive_schedule(window)
+    main_window.MainWindow._check_phone_archive_schedule(window)
+    assert len(window.background_tasks.submissions) == 2
+    assert window._phone_sync_day == now.date()

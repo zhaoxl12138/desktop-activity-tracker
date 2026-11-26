@@ -116,7 +116,7 @@ def test_sidebar_stats_reentry_defaults_live_but_explicit_navigation_keeps_targe
         app.processEvents()
         assert stats.tabs.currentWidget() is window.pages["live"]
         assert window.lbl_page_title.text() == "实时监控"
-        for tab in ("software", "category", "goals"):
+        for tab in ("software", "category", "goals", "phone"):
             window.navigate_to("today")
             window.navigate_to("stats", tab=tab)
             app.processEvents()
@@ -131,7 +131,7 @@ def test_task_analysis_entry_is_removed_even_with_legacy_switches():
     try:
         stats = window.pages["stats"]
         assert [stats.tabs.tabText(i) for i in range(stats.tabs.count())] == [
-            "实时监控", "软件统计", "分类统计", "目标与成果",
+            "实时监控", "软件统计", "分类统计", "目标与成果", "手机使用时间",
         ]
         assert "tasks" not in window.pages
         window.navigate_to("stats", tab="goals")

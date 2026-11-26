@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import sys
 import time
-from datetime import date, datetime
+from datetime import date, datetime, time as clock_time
 
 from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QFont, QPixmap
@@ -37,6 +37,7 @@ from ..services.daily_observation import (
     load_daily_observation,
 )
 from ..services.intelligence_state import load_settings as load_intelligence_settings
+from ..services.phone_usage import find_phone_archive, sync_phone_archive
 from ..services.reports_service import (
     ReportJob,
     execute_report_job,
@@ -57,6 +58,7 @@ from .pages.rule_config import RuleConfigPage
 from .pages.settings import SettingsPage
 from .pages.software_stats import SoftwareStatsPage
 from .pages.statistics import StatisticsPage
+from .pages.phone_usage import PhoneUsagePage
 from .pages.daily_goals import DailyGoalsPage
 from .pages.today_overview import TodayOverviewPage
 from .widgets.elided_label import ElidedLabel
@@ -119,6 +121,7 @@ class MainWindow(QMainWindow):
         self._stats_navigation_override: str | None = None
         self._dashboard_snapshot: DashboardSnapshot | None = None
         self._day_activity_dialog = None
+        self._phone_sync_day: date | None = None
         self.current_theme = ui_style.apply_theme(self.config.get("theme", "dark"))
         self.background_tasks = BackgroundTaskQueue(parent=self)
         self.background_tasks.task_completed.connect(
@@ -169,11 +172,14 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(5000, self._check_report_schedule)
         self.report_schedule_timer = QTimer(self)
         self.report_schedule_timer.timeout.connect(self._check_report_schedule)
+        self.report_schedule_timer.timeout.connect(self._check_phone_archive_schedule)
         self.report_schedule_timer.start(60000)  # check the 23:00 boundary each minute
         self.daily_report_timer = QTimer(self)
         self.daily_report_timer.timeout.connect(self._auto_generate_daily_report)
+        self.daily_report_timer.timeout.connect(self._queue_phone_archive_sync)
         self.daily_report_timer.start(3600000)  # refresh today's report every hour
         QTimer.singleShot(10000, self._auto_generate_daily_report)
+        QTimer.singleShot(10000, self._queue_phone_archive_sync)
         QTimer.singleShot(15000, self._start_report_backfill)
         self.maintenance_timer = QTimer(self)
         self.maintenance_timer.timeout.connect(self._check_maintenance_request)
@@ -214,9 +220,11 @@ class MainWindow(QMainWindow):
             ),
         }
         self.pages["goals"] = DailyGoalsPage(self.paths.intelligence_dir)
+        self.pages["phone"] = PhoneUsagePage(self.paths.phone_archive)
+        self.pages["phone"].refresh_requested.connect(self._queue_phone_archive_sync)
         self.pages["stats"] = StatisticsPage(
             self.pages["software"], self.pages["category"],
-            self.pages["goals"], live_page=self.pages["live"]
+            self.pages["goals"], live_page=self.pages["live"], phone_page=self.pages["phone"],
         )
         self.pages["stats"].tabs.currentChanged.connect(self._sync_statistics_header)
         self.pages["today"].top_app_card.activated.connect(
@@ -351,7 +359,7 @@ class MainWindow(QMainWindow):
         )
         status_layout.addWidget(self.sidebar_record_streak)
 
-        self.sidebar_version = QLabel("v1.5.3")
+        self.sidebar_version = QLabel("v1.5.5")
         self.sidebar_version.setStyleSheet(
             f"font-size: 12px; color: {ui_style.COLORS['text_muted']};"
         )
@@ -694,7 +702,7 @@ class MainWindow(QMainWindow):
 
     def navigate_to(self, key: str, *, tab: str | None = None) -> None:
         """Navigate by stable page key; optional tab keeps callers index-free."""
-        if key in {"software", "category", "live"}:
+        if key in {"software", "category", "live", "phone"}:
             tab = key
             key = "stats"
         if key == "stats" and tab:
@@ -870,7 +878,7 @@ class MainWindow(QMainWindow):
         self.sidebar_record_streak.setText(
             f"连续记录：第{consecutive_days}天" if consecutive_days > 0 else "连续记录：--"
         )
-        self.sidebar_version.setText("v1.5.3")
+        self.sidebar_version.setText("v1.5.5")
         self._update_recording_health_ui()
 
     def _toggle_pause(self) -> None:
@@ -1036,6 +1044,27 @@ class MainWindow(QMainWindow):
         )
         self.background_tasks.submit(job.key, lambda: execute_report_job(job))
 
+    def _check_phone_archive_schedule(self) -> None:
+        now = datetime.now()
+        day = now.date()
+        if now.time() >= clock_time(0, 5) and day != self._phone_sync_day:
+            if self._queue_phone_archive_sync():
+                self._phone_sync_day = day
+
+    def _queue_phone_archive_sync(self) -> bool:
+        obsidian_path = self._live_obsidian_path()
+        if not obsidian_path:
+            return False
+        archive = self.paths.phone_archive
+
+        def copy_records():
+            source = find_phone_archive(obsidian_path)
+            if source is None:
+                return 0
+            return sync_phone_archive(source, archive, date.today())
+
+        return self.background_tasks.submit("phone:sync", copy_records)
+
     def _start_report_backfill(self) -> None:
         job = ReportJob(
             kind="backfill",
@@ -1065,6 +1094,10 @@ class MainWindow(QMainWindow):
 
         if key.startswith("observation:"):
             self._show_daily_observation()
+            return
+        if key == "phone:sync":
+            if result:
+                self.pages["phone"].archive_changed()
             return
         if key == "report:quick":
             button = getattr(self, "btn_report", None)
@@ -1127,6 +1160,8 @@ class MainWindow(QMainWindow):
         reports_page = self.pages.get("reports")
         if reports_page is not None:
             reports_page.obsidian_path = obsidian_path
+        if "phone" in self.pages:
+            self._queue_phone_archive_sync()
         tray = getattr(self, "tray", None)
         if tray is not None:
             tray.config = config

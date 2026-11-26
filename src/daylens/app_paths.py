@@ -12,6 +12,10 @@ class AppPaths:
     recovery_file: Path
     logs_dir: Path
 
+    @property
+    def phone_archive(self) -> Path:
+        return self.database.parent / "iphone-screen-time"
+
     @classmethod
     def from_database(cls, database, *, program_dir=None, reports_dir=None):
         from . import get_app_root

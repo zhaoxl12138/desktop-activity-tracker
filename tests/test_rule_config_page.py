@@ -4,6 +4,7 @@ import copy
 import os
 import sqlite3
 import tempfile
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -141,6 +142,7 @@ def test_clicking_category_group_header_does_not_change_editor_selection(tmp_pat
 
 def test_rule_page_shows_recent_and_learned_apps_without_unused_factory_candidates(tmp_path):
     app = _app()
+    recent_day = (date.today() - timedelta(days=1)).isoformat()
     config_path = tmp_path / "config.yaml"
     db_path = tmp_path / "usage.db"
     _write_config(config_path)
@@ -171,9 +173,9 @@ def test_rule_page_shows_recent_and_learned_apps_without_unused_factory_candidat
             """,
             (
                 "rule-visible",
-                "2026-10-27 10:00:00",
-                "2026-10-27 10:02:00",
-                "2026-10-27",
+                f"{recent_day} 10:00:00",
+                f"{recent_day} 10:02:00",
+                recent_day,
                 "code.exe",
                 "coding",
                 "编程开发",

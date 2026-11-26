@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "desktop-activity-tracker"
-version = "1.5.3"
+version = "1.5.5"
 description = "Windows desktop activity tracking and analysis"
 authors = [{ name = "zhaoxl12138", email = "zhaoxl12138@github.com" }]
 license = { text = "MIT" }

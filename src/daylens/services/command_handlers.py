@@ -66,7 +66,7 @@ def handle_start(config: dict, config_path: str) -> None:
         on_session_rewrite=store.rewrite_session,
     )
 
-    print("DayLens v1.5.3")
+    print("DayLens v1.5.5")
     print(f"配置: {config_path}")
     print(f"数据库: {db_path}")
     print(f"采样间隔: {sample_interval}s | 刷盘间隔: {flush_interval}s")

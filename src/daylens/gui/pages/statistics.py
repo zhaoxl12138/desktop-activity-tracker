@@ -9,13 +9,15 @@ from .. import style as ui_style
 
 class StatisticsPage(QWidget):
     def __init__(self, software_page: QWidget, category_page: QWidget,
-                 goal_page: QWidget | None = None, parent=None, *, live_page: QWidget | None = None):
+                 goal_page: QWidget | None = None, parent=None, *, live_page: QWidget | None = None,
+                 phone_page: QWidget | None = None):
         super().__init__(parent)
         self.software_page = software_page
         self.category_page = category_page
         self.goal_page = goal_page
         self.live_page = live_page
-        self._pages = (software_page, category_page, goal_page, live_page)
+        self.phone_page = phone_page
+        self._pages = (software_page, category_page, goal_page, live_page, phone_page)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 14, 18, 18)
         layout.setSpacing(10)
@@ -34,6 +36,8 @@ class StatisticsPage(QWidget):
         self.tabs.addTab(category_page, "分类统计")
         if goal_page is not None:
             self.tabs.addTab(goal_page, "目标与成果")
+        if phone_page is not None:
+            self.tabs.addTab(phone_page, "手机使用时间")
         if live_page is not None:
             self.tabs.setCurrentWidget(live_page)
         self.tabs.currentChanged.connect(self._activate_current)
@@ -42,7 +46,7 @@ class StatisticsPage(QWidget):
 
     def select_tab(self, tab: str) -> None:
         page = {"software": self.software_page, "category": self.category_page,
-                "goals": self.goal_page, "live": self.live_page}.get(tab)
+                "goals": self.goal_page, "live": self.live_page, "phone": self.phone_page}.get(tab)
         index = self.tabs.indexOf(page) if page is not None else -1
         self.tabs.setCurrentIndex(max(0, index))
 
