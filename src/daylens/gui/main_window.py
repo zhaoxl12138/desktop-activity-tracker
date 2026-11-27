@@ -222,6 +222,7 @@ class MainWindow(QMainWindow):
         self.pages["goals"] = DailyGoalsPage(self.paths.intelligence_dir)
         self.pages["phone"] = PhoneUsagePage(self.paths.phone_archive)
         self.pages["phone"].refresh_requested.connect(self._queue_phone_archive_sync)
+        self.pages["phone"].receiver_settings_requested.connect(self._open_phone_receiver_settings)
         self.pages["stats"] = StatisticsPage(
             self.pages["software"], self.pages["category"],
             self.pages["goals"], live_page=self.pages["live"], phone_page=self.pages["phone"],
@@ -699,6 +700,10 @@ class MainWindow(QMainWindow):
             self.lbl_page_title.setText("数据统计")
         self.lbl_today.clear()
         self.lbl_today.hide()
+
+    def _open_phone_receiver_settings(self) -> None:
+        self.navigate_to("settings")
+        QTimer.singleShot(0, self.pages["settings"].show_phone_receiver)
 
     def navigate_to(self, key: str, *, tab: str | None = None) -> None:
         """Navigate by stable page key; optional tab keeps callers index-free."""

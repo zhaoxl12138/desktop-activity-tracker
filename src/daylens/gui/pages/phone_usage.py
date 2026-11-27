@@ -16,6 +16,7 @@ from .. import style as ui_style
 
 class PhoneUsagePage(QWidget):
     refresh_requested = Signal()
+    receiver_settings_requested = Signal()
 
     def __init__(self, archive: Path):
         super().__init__()
@@ -47,6 +48,10 @@ class PhoneUsagePage(QWidget):
         controls.addWidget(self.day)
         controls.addWidget(refresh)
         controls.addStretch()
+        receiver_settings = QPushButton("Windows 接收端")
+        receiver_settings.setStyleSheet(ui_style.get_button_secondary_style())
+        receiver_settings.clicked.connect(self.receiver_settings_requested)
+        controls.addWidget(receiver_settings)
         layout.addLayout(controls)
 
         self.status = QLabel()

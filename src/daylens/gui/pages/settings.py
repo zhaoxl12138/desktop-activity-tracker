@@ -17,6 +17,7 @@ from ...services.data_quality_service import (
 from ...services.restart_service import database_path_changed
 from ...utils import fmt_seconds
 from .. import style as ui_style
+from ..widgets.phone_receiver_settings import PhoneReceiverSettings
 
 
 def build_group_style() -> str:
@@ -78,9 +79,9 @@ class SettingsPage(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
         content = QWidget()
         content.setStyleSheet("background: transparent;")
@@ -220,6 +221,14 @@ class SettingsPage(QWidget):
 
         layout.addWidget(g2)
 
+        self.phone_receiver = PhoneReceiverSettings(
+            lambda: self.config.get("obsidian_output_path", ""),
+            self.paths.phone_archive,
+            self.background_tasks,
+        )
+        self.phone_receiver.setStyleSheet(build_group_style())
+        layout.addWidget(self.phone_receiver)
+
         # ── Data management ──
         g3 = QGroupBox("数据维护")
         g3.setStyleSheet(build_group_style())
@@ -264,8 +273,8 @@ class SettingsPage(QWidget):
         self.intelligence_settings.monthly_usage_changed.connect(self.monthly_ai_cost.setText)
         layout.addWidget(self.monthly_ai_cost)
 
-        scroll.setWidget(content)
-        outer.addWidget(scroll)
+        self.scroll.setWidget(content)
+        outer.addWidget(self.scroll)
         if self.background_tasks is not None:
             completed = getattr(self.background_tasks, "task_completed", None)
             failed = getattr(self.background_tasks, "task_failed", None)
@@ -273,6 +282,12 @@ class SettingsPage(QWidget):
                 completed.connect(self._on_background_task_completed)
             if failed is not None:
                 failed.connect(self._on_background_task_failed)
+
+    def activate(self, force: bool = False) -> None:
+        self.phone_receiver.refresh()
+
+    def show_phone_receiver(self) -> None:
+        self.scroll.ensureWidgetVisible(self.phone_receiver, 0, 20)
 
     def _load_config(self):
         try:
@@ -332,6 +347,7 @@ class SettingsPage(QWidget):
         if self.worker:
             self.worker.update_settings(self.config)
 
+        self.phone_receiver.refresh()
         QMessageBox.information(self, "成功", "设置已保存，采样间隔和空闲阈值已实时生效。")
 
     @staticmethod

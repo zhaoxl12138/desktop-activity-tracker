@@ -2,6 +2,8 @@
 
 DayLens 可以读取 Daylog 导出的 iPhone 屏幕使用时间。在 Daylog 配好接收端后，将 DayLens 设置里的 Obsidian 输出路径指向该库。手机归档应位于库内的 `时间追踪/手机屏幕使用时间/YYYY/YYYY-MM/YYYY-MM-DD.md`。
 
+在「设置中心 → Windows 手机接收端」可以查看运行状态，复制 iPhone 发送地址，启动接收端并打开 Daylog 的部署说明。手机使用时间页也提供直达入口。
+
 ## DayLens 本地副本
 
 iPhone 每天 00:00 把昨天的数据发到 Daylog。DayLens 运行时从 00:05 起检查并复制已收到的记录，启动后和每次小时日报刷新时也会补查。点「数据统计 → 手机使用时间 → 刷新」可立即请求同步。
